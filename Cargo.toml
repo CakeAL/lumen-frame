@@ -7,3 +7,4 @@ edition = "2024"
 tokio = { version = "1", features = ["full"] }
 nom-exif = "3"
 anyhow = "1"
+libvips = "2.3.0"
