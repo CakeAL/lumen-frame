@@ -4,27 +4,7 @@ use libvips::VipsApp;
 use nom_exif::{EntryValue, Exif, ExifTag, MediaParser};
 
 use crate::params::*;
-use crate::parse::dump_exif;
-
-/// 从 [`Exif`] 中提取拍摄参数。
-pub fn extract_capture_info(exif: &Exif) -> CaptureInfo {
-    let get = |tag| find_value(exif, tag);
-
-    CaptureInfo {
-        iso: get(ExifTag::ISOSpeedRatings).and_then(format_iso),
-        shutter_speed: get(ExifTag::ExposureTime).and_then(format_shutter_speed),
-        aperture: get(ExifTag::FNumber).and_then(format_aperture),
-        focal_length: get(ExifTag::FocalLength).and_then(format_focal_length),
-        focal_length_35mm: get(ExifTag::FocalLengthIn35mmFilm).and_then(format_focal_length_35mm),
-    }
-}
-
-/// 在所有 IFD 中查找指定 tag 的首个条目（拍摄参数通常位于 Exif 子 IFD 中）。
-fn find_value<'a>(exif: &'a Exif, tag: ExifTag) -> Option<&'a EntryValue> {
-    exif.iter()
-        .find(|e| e.tag.tag() == Some(tag))
-        .map(|e| e.value)
-}
+use crate::photo::dump_exif;
 
 fn format_iso(value: &EntryValue) -> Option<String> {
     match value {
@@ -90,8 +70,8 @@ pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
     let img_h = img.get_height();
 
     // 计算带边框画布尺寸（宽高分别乘以 1 + 比例）。
-    let canvas_w = (img_w as f64 * (1.0 + params.border_ratio)).round() as i32;
-    let canvas_h = (img_h as f64 * (1.0 + params.border_ratio)).round() as i32;
+    let canvas_h = (img_h as f64 * (1.0 + params.border_ratio.1)).round() as i32;
+    let canvas_w = (img_w as f64 * (1.0 + params.border_ratio.0)).round() as i32;
 
     // 把原图居中放到画布上。
     let [br, bg, bb] = params.background;
@@ -186,7 +166,7 @@ fn render_caption(
     };
 
     // 上色并合成 alpha：RGB 用目标颜色，alpha 用文字掩码。
-    let [tr, tg, tb] = params.text_color;
+    let [tr, tg, tb] = params.text_params.color;
     let color = libvips::VipsImage::new_from_image(&mask, &[tr as f64, tg as f64, tb as f64])
         .context("failed to build text color")?;
     let mut bands = [color, mask];
