@@ -3,88 +3,13 @@
 //! 流程：载入 JPEG → 按边框比例扩展画布 → 将原图居中放置 → 从 Exif 中提取
 //! 拍摄参数（ISO / 快门 / 光圈 / 焦距 / 等效 35mm 焦距）并渲染到底部。
 
-use std::path::PathBuf;
-
 use anyhow::{Context, Result};
 use libvips::ops::{self, BlendMode, CompassDirection, Extend, Interpretation};
 use libvips::VipsApp;
 use nom_exif::{EntryValue, Exif, ExifTag, MediaParser};
 
+use crate::params::*;
 use crate::parse::dump_exif;
-
-/// 水印生成参数。
-#[derive(Debug, Clone)]
-pub struct WatermarkParams {
-    /// 源照片路径。
-    pub input_path: PathBuf,
-    /// 输出图片路径。
-    pub output_path: PathBuf,
-    /// 边框比例，同时作用于宽高。例如 `0.05` 表示输出尺寸 = 原尺寸 * `1.05`。
-    pub border_ratio: f64,
-    /// 背景颜色 (R, G, B)，默认纯白。
-    pub background: [u8; 3],
-    /// 信息文字颜色 (R, G, B)，默认深灰。
-    pub text_color: [u8; 3],
-    /// 信息文字字体（Pango 描述，例如 `"sans 48"`）；`None` 时按边框高度自动估算。
-    pub font: Option<String>,
-    /// 文字渲染 DPI，默认 72（此时 Pango 字号 1pt ≈ 1px）。
-    pub dpi: i32,
-    /// 输出 JPEG 质量 1-100，默认 95。
-    pub quality: i32,
-}
-
-impl WatermarkParams {
-    /// 使用默认参数创建实例：边框 5%、纯白背景、深灰文字。
-    pub fn new(input_path: impl Into<PathBuf>, output_path: impl Into<PathBuf>) -> Self {
-        Self {
-            input_path: input_path.into(),
-            output_path: output_path.into(),
-            border_ratio: 0.05,
-            background: [255, 255, 255],
-            text_color: [60, 60, 60],
-            font: None,
-            dpi: 72,
-            quality: 95,
-        }
-    }
-}
-
-/// 从 Exif 中提取、用于水印的拍摄参数（每一项都是可选的）。
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct CaptureInfo {
-    /// 感光度，如 `"ISO 100"`。
-    pub iso: Option<String>,
-    /// 快门速度，如 `"1/250s"`。
-    pub shutter_speed: Option<String>,
-    /// 光圈，如 `"f/1.8"`。
-    pub aperture: Option<String>,
-    /// 焦距，如 `"50mm"`。
-    pub focal_length: Option<String>,
-    /// 等效 35mm 焦距，如 `"35mm: 75mm"`。
-    pub focal_length_35mm: Option<String>,
-}
-
-impl CaptureInfo {
-    /// 渲染为底部水印文字，缺失的项自动跳过；全部缺失时返回 `None`。
-    pub fn to_caption(&self) -> Option<String> {
-        let parts: Vec<&str> = [
-            self.iso.as_deref(),
-            self.shutter_speed.as_deref(),
-            self.aperture.as_deref(),
-            self.focal_length.as_deref(),
-            self.focal_length_35mm.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("  "))
-        }
-    }
-}
 
 /// 从 [`Exif`] 中提取拍摄参数。
 pub fn extract_capture_info(exif: &Exif) -> CaptureInfo {
@@ -151,7 +76,6 @@ fn trim_f64(x: f64) -> String {
 }
 
 /// 生成带边框与水印的照片。
-///
 /// Exif 读取失败（例如照片本身没有 Exif）不会导致整体失败，仅会跳过水印文字。
 pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
     // 初始化 libvips。
@@ -214,7 +138,9 @@ pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
             compositing_space: Interpretation::Srgb,
             premultiplied: false,
         };
-        let composed = ops::composite2_with_opts(&canvas, &text, BlendMode::Over, &composite_opts)
+        // composite2 要求两张图 band 数一致：给画布补一个不透明 alpha，与 4-band 文字对齐。
+        let canvas_rgba = ops::addalpha(&canvas).context("failed to add alpha")?;
+        let composed = ops::composite2_with_opts(&canvas_rgba, &text, BlendMode::Over, &composite_opts)
             .context("failed to composite caption")?;
 
         // composite2 之后带上了 alpha 通道，写出 JPEG 前先压平为 RGB。
@@ -240,40 +166,43 @@ pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
     Ok(())
 }
 
-/// 渲染底部水印文字：白色文字 → 目标颜色（保持 alpha 不变）。
+/// 渲染底部水印文字为带 alpha 的 RGBA 图像。
+///
+/// 注意：`libvips` crate 的 `text_with_opts` 会把只读的 `autofit-dpi` 输出属性
+/// 当成输入传入，与 libvips 8.18 不兼容，会导致段错误。因此这里改用
+/// `ops::text`（渲染成 1-band 白字黑底掩码）→ `resize` 放大 → 上色并合成 alpha。
 fn render_caption(
     caption: &str,
     params: &WatermarkParams,
     img_h: i32,
     canvas_h: i32,
 ) -> Result<libvips::VipsImage> {
-    // 自动估算字号：约为底部边框高度的 55%，并限制在合理范围内。
-    let border = ((canvas_h - img_h) / 2).max(1);
-    let auto_size = ((border as f64) * 0.55).round().clamp(10.0, 400.0) as i32;
-    let font = params
-        .font
-        .clone()
-        .unwrap_or_else(|| format!("sans {auto_size}"));
+    // 用默认字体渲染成 1-band 掩码（白色文字、黑色背景）。
+    let small = ops::text(caption).context("failed to render text")?;
 
-    let text_opts = ops::TextOptions {
-        font: Some(font),
-        dpi: params.dpi,
-        rgba: true,
+    // 放大到目标高度：约为底部边框高度的 55%，并限制在合理范围内。
+    let border = ((canvas_h - img_h) / 2).max(1);
+    let target_h = ((border as f64) * 0.55).round().clamp(12.0, 400.0) as i32;
+    let scale = target_h as f64 / small.get_height() as f64;
+    let mask = if (scale - 1.0).abs() > 0.01 {
+        ops::resize(&small, scale).context("failed to resize text")?
+    } else {
+        small
+    };
+
+    // 上色并合成 alpha：RGB 用目标颜色，alpha 用文字掩码。
+    let [tr, tg, tb] = params.text_color;
+    let color = libvips::VipsImage::new_from_image(&mask, &[tr as f64, tg as f64, tb as f64])
+        .context("failed to build text color")?;
+    let mut bands = [color, mask];
+    let rgba = ops::bandjoin(&mut bands).context("failed to build rgba text")?;
+
+    // bandjoin 产出的 interpretation 为 multiband，标记为 sRGB 以便 composite2 合成。
+    let copy_opts = ops::CopyOptions {
+        interpretation: Interpretation::Srgb,
         ..Default::default()
     };
-    let white = ops::text_with_opts(caption, &text_opts).context("failed to render text")?;
-
-    // 白色 (255) * (color / 255) = color；alpha 系数为 1，保持不变。
-    let [tr, tg, tb] = params.text_color;
-    let mut a = [
-        tr as f64 / 255.0,
-        tg as f64 / 255.0,
-        tb as f64 / 255.0,
-        1.0,
-    ];
-    let mut b = [0.0, 0.0, 0.0, 0.0];
-    let linear_opts = ops::LinearOptions { uchar: true };
-    ops::linear_with_opts(&white, &mut a, &mut b, &linear_opts).context("failed to color text")
+    ops::copy_with_opts(&rgba, &copy_opts).context("failed to set interpretation")
 }
 
 #[cfg(test)]
@@ -332,8 +261,8 @@ mod tests {
     /// 端到端测试：读取真实照片，生成带边框与拍摄参数水印的输出。
     #[tokio::test]
     async fn generate_watermark_to_file() {
-        let input = "/Users/cakeal/Downloads/DSC_7379.jpg";
-        let output = "/Users/cakeal/Downloads/DSC_7379_watermark.jpg";
+        let input = "./test_images/DSC_4587.jpg";
+        let output = "./test_images/DSC_4587_watermark.jpg";
 
         let params = WatermarkParams::new(input, output);
         generate_watermark(&params).await.expect("generate watermark");
