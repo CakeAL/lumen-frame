@@ -7,32 +7,85 @@ pub struct WatermarkParams {
     pub input_path: PathBuf,
     /// 输出图片路径。
     pub output_path: PathBuf,
-    /// 边框比例，同时作用于宽高。例如 `0.05` 表示输出尺寸 = 原尺寸 * `1.05`。
-    pub border_ratio: f64,
+    /// 边框比例(上下，左右)。例如 `0.10` 表示输出尺寸 = 原尺寸 * `1.10`。
+    pub border_ratio: (f32, f32),
+    /// 固定宽高比(长，宽)
+    pub aspect_ratio: Option<(u8, u8)>,
     /// 背景颜色 (R, G, B)，默认纯白。
     pub background: [u8; 3],
-    /// 信息文字颜色 (R, G, B)，默认深灰。
-    pub text_color: [u8; 3],
-    /// 信息文字字体（Pango 描述，例如 `"sans 48"`）；`None` 时按边框高度自动估算。
-    pub font: Option<String>,
-    /// 文字渲染 DPI，默认 72（此时 Pango 字号 1pt ≈ 1px）。
-    pub dpi: i32,
+    /// 圆角大小，相对于图片高度的比例，默认为0.02，即如果图片高度1000px，那么圆角半径为20px
+    pub border_radius: f32,
+    /// 阴影大小，相对于图片高度的比例，默认为0.06，即如果图片高度1000px，那么阴影宽度为60px
+    pub shadow_size: f32,
+    /// 背景模糊程度，默认为0.15
+    pub blur_sigma: f32,
+    /// 字体参数
+    pub text_params: TextParams,
     /// 输出 JPEG 质量 1-100，默认 95。
     pub quality: i32,
 }
 
 impl WatermarkParams {
-    /// 使用默认参数创建实例：边框 5%、纯白背景、深灰文字。
     pub fn new(input_path: impl Into<PathBuf>, output_path: impl Into<PathBuf>) -> Self {
         Self {
             input_path: input_path.into(),
             output_path: output_path.into(),
-            border_ratio: 0.05,
+            border_ratio: (0.10, 0.10),
+            aspect_ratio: None,
             background: [255, 255, 255],
-            text_color: [60, 60, 60],
-            font: None,
-            dpi: 72,
+            text_params: TextParams::default(),
             quality: 95,
+            border_radius: 0.02,
+            shadow_size: 0.06,
+            blur_sigma: 0.15,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TextAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TextDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextParams {
+    pub font: String,
+    /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
+    pub size: f32,
+    /// 行间距，默认为1.3
+    pub line_spacing: f32,
+    pub color: [u8; 3],
+    pub italic: bool,
+    pub bold: bool,
+    pub align: TextAlign,
+    /// 相对于图片的位置(上下左右：0123)
+    pub position: u8,
+    /// 文字方向
+    pub direction: TextDirection,
+}
+
+impl Default for TextParams {
+    fn default() -> Self {
+        Self {
+            font: "Arial".to_string(),
+            size: 0.03,
+            line_spacing: 1.3,
+            color: [0, 0, 0],
+            italic: false,
+            bold: false,
+            align: TextAlign::default(),
+            position: 1,
+            direction: TextDirection::default(),
         }
     }
 }

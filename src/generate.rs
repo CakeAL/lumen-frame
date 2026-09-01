@@ -1,8 +1,3 @@
-//! 生成带边框与拍摄参数水印的照片。
-//!
-//! 流程：载入 JPEG → 按边框比例扩展画布 → 将原图居中放置 → 从 Exif 中提取
-//! 拍摄参数（ISO / 快门 / 光圈 / 焦距 / 等效 35mm 焦距）并渲染到底部。
-
 use anyhow::{Context, Result};
 use libvips::ops::{self, BlendMode, CompassDirection, Extend, Interpretation};
 use libvips::VipsApp;
