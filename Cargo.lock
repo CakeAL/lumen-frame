@@ -498,6 +498,7 @@ dependencies = [
  "nom 8.0.0",
  "regex",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

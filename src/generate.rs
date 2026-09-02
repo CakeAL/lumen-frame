@@ -4,51 +4,6 @@ use libvips::VipsApp;
 use nom_exif::{EntryValue, Exif, ExifTag, MediaParser};
 
 use crate::params::*;
-use crate::photo::dump_exif;
-
-fn format_iso(value: &EntryValue) -> Option<String> {
-    match value {
-        // 部分相机将 ISO 存为数组（如 [100]）。
-        EntryValue::U16Array(v) => v.first().map(|n| format!("ISO {n}")),
-        EntryValue::U32Array(v) => v.first().map(|n| format!("ISO {n}")),
-        _ => value.try_as_integer().map(|n| format!("ISO {n}")),
-    }
-}
-
-fn format_shutter_speed(value: &EntryValue) -> Option<String> {
-    if let Some(r) = value.as_urational() {
-        let n = r.numerator();
-        let d = r.denominator();
-        if d == 0 {
-            return None;
-        }
-        if n == 1 {
-            return Some(format!("1/{d}s"));
-        }
-        return Some(format!("{}s", trim_f64(r.to_f64()?)));
-    }
-    value.try_as_float().map(|s| format!("{}s", trim_f64(s)))
-}
-
-fn format_aperture(value: &EntryValue) -> Option<String> {
-    let f = value.as_urational()?.to_f64()?;
-    Some(format!("f/{}", trim_f64(f)))
-}
-
-fn format_focal_length(value: &EntryValue) -> Option<String> {
-    let f = value.as_urational()?.to_f64()?;
-    Some(format!("{}mm", trim_f64(f)))
-}
-
-fn format_focal_length_35mm(value: &EntryValue) -> Option<String> {
-    value.try_as_integer().map(|n| format!("35mm: {n}mm"))
-}
-
-/// 将浮点数格式化为最多两位小数，并去掉多余的末尾 `0`。
-fn trim_f64(x: f64) -> String {
-    let s = format!("{x:.2}");
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
-}
 
 /// 生成带边框与水印的照片。
 /// Exif 读取失败（例如照片本身没有 Exif）不会导致整体失败，仅会跳过水印文字。
