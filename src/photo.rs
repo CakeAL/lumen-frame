@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
+use libvips::{VipsApp, ops};
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
 };
+
+use crate::params::WatermarkParams;
 
 #[derive(Debug, Clone)]
 pub struct Photo {
@@ -21,6 +24,34 @@ impl Photo {
             is_ultra_hdr_photo: false,
             exif: Some(ExifInfo::new(path.as_ref()).await?),
         })
+    }
+
+    pub async fn generate_watermark(&self, params: &WatermarkParams) -> Result<()> {
+        let _app = VipsApp::default("luman-frame").context("failed to init libvips")?;
+
+        // 摆正原图
+        let img = ops::jpegload_with_opts(
+            &self.path.to_string_lossy(),
+            &ops::JpegloadOptions {
+                autorotate: true,
+                ..Default::default()
+            },
+        )
+        .context("failed to load image")?;
+
+        // 计算水印照片的图片尺寸
+        let (img_w, img_h) = (img.get_width(), img.get_height());
+        let canvas_h = (img_h as f64 * (1.0 + params.border_ratio.0)).round() as i32;
+        let canvas_w = (img_w as f64
+            * (1.0
+                + if params.border_equal {
+                    params.border_ratio.0
+                } else {
+                    params.border_ratio.1
+                }))
+        .round() as i32;
+
+        Ok(())
     }
 }
 

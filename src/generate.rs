@@ -1,12 +1,10 @@
 use anyhow::{Context, Result};
-use libvips::ops::{self, BlendMode, CompassDirection, Extend, Interpretation};
 use libvips::VipsApp;
-use nom_exif::{EntryValue, Exif, ExifTag, MediaParser};
+use libvips::ops::{self, BlendMode, CompassDirection, Extend, Interpretation};
+use nom_exif::MediaParser;
 
 use crate::params::*;
 
-/// 生成带边框与水印的照片。
-/// Exif 读取失败（例如照片本身没有 Exif）不会导致整体失败，仅会跳过水印文字。
 pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
     // 初始化 libvips。
     let _app = VipsApp::default("lumen-frame").context("failed to init libvips")?;
@@ -70,16 +68,17 @@ pub async fn generate_watermark(params: &WatermarkParams) -> Result<()> {
         };
         // composite2 要求两张图 band 数一致：给画布补一个不透明 alpha，与 4-band 文字对齐。
         let canvas_rgba = ops::addalpha(&canvas).context("failed to add alpha")?;
-        let composed = ops::composite2_with_opts(&canvas_rgba, &text, BlendMode::Over, &composite_opts)
-            .context("failed to composite caption")?;
+        let composed =
+            ops::composite2_with_opts(&canvas_rgba, &text, BlendMode::Over, &composite_opts)
+                .context("failed to composite caption")?;
 
         // composite2 之后带上了 alpha 通道，写出 JPEG 前先压平为 RGB。
         let flatten_opts = ops::FlattenOptions {
             background: vec![br as f64, bg as f64, bb as f64],
             ..Default::default()
         };
-        canvas = ops::flatten_with_opts(&composed, &flatten_opts)
-            .context("failed to flatten image")?;
+        canvas =
+            ops::flatten_with_opts(&composed, &flatten_opts).context("failed to flatten image")?;
     }
 
     // 写出 JPEG。
@@ -138,55 +137,6 @@ fn render_caption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nom_exif::{EntryValue, URational};
-
-    #[test]
-    fn shutter_speed_is_fraction_when_numerator_is_one() {
-        let v = EntryValue::URational(URational::new(1, 250));
-        assert_eq!(format_shutter_speed(&v).as_deref(), Some("1/250s"));
-    }
-
-    #[test]
-    fn shutter_speed_is_decimal_otherwise() {
-        let v = EntryValue::URational(URational::new(3, 10));
-        assert_eq!(format_shutter_speed(&v).as_deref(), Some("0.3s"));
-    }
-
-    #[test]
-    fn aperture_and_focal_length_format() {
-        assert_eq!(
-            format_aperture(&EntryValue::URational(URational::new(18, 10))).as_deref(),
-            Some("f/1.8")
-        );
-        assert_eq!(
-            format_focal_length(&EntryValue::URational(URational::new(50, 1))).as_deref(),
-            Some("50mm")
-        );
-    }
-
-    #[test]
-    fn iso_and_35mm_format() {
-        assert_eq!(format_iso(&EntryValue::U16(100)).as_deref(), Some("ISO 100"));
-        assert_eq!(
-            format_focal_length_35mm(&EntryValue::U16(75)).as_deref(),
-            Some("35mm: 75mm")
-        );
-    }
-
-    #[test]
-    fn caption_skips_missing_fields() {
-        let info = CaptureInfo {
-            iso: Some("ISO 100".into()),
-            aperture: Some("f/1.8".into()),
-            ..Default::default()
-        };
-        assert_eq!(info.to_caption().as_deref(), Some("ISO 100  f/1.8"));
-    }
-
-    #[test]
-    fn caption_is_none_when_everything_is_missing() {
-        assert_eq!(CaptureInfo::default().to_caption(), None);
-    }
 
     /// 端到端测试：读取真实照片，生成带边框与拍摄参数水印的输出。
     #[tokio::test]
@@ -195,7 +145,9 @@ mod tests {
         let output = "./test_images/DSC_4587_watermark.jpg";
 
         let params = WatermarkParams::new(input, output);
-        generate_watermark(&params).await.expect("generate watermark");
+        generate_watermark(&params)
+            .await
+            .expect("generate watermark");
 
         let out = std::path::Path::new(output);
         assert!(out.exists(), "output image not written: {output}");

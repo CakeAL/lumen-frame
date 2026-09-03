@@ -3,12 +3,12 @@ use std::path::PathBuf;
 /// 水印生成参数。
 #[derive(Debug, Clone)]
 pub struct WatermarkParams {
-    /// 源照片路径。
-    pub input_path: PathBuf,
-    /// 输出图片路径。
-    pub output_path: PathBuf,
+    /// 输出文件夹
+    pub output_folder: PathBuf,
     /// 边框比例(上下，左右)。例如 `0.10` 表示输出尺寸 = 原尺寸 * `1.10`。
     pub border_ratio: (f64, f64),
+    /// 左右边框是否应该和上下边框等宽
+    pub border_equal: bool,
     /// 固定宽高比(长，宽)
     pub aspect_ratio: Option<(u8, u8)>,
     /// 背景颜色 (R, G, B)，默认纯白。
@@ -26,11 +26,11 @@ pub struct WatermarkParams {
 }
 
 impl WatermarkParams {
-    pub fn new(input_path: impl Into<PathBuf>, output_path: impl Into<PathBuf>) -> Self {
+    pub fn new(output_folder: impl Into<PathBuf>) -> Self {
         Self {
-            input_path: input_path.into(),
-            output_path: output_path.into(),
+            output_folder: output_folder.into(),
             border_ratio: (0.10, 0.10),
+            border_equal: false,
             aspect_ratio: None,
             background: [255, 255, 255],
             text_params: TextParams::default(),
