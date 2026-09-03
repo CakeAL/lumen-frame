@@ -1,6 +1,59 @@
 use anyhow::{Context, Result};
 use libvips::{VipsImage, ops};
 
+use crate::params::{Position, WatermarkParams};
+
+// 计算画布大小
+pub fn cal_canvas_size(img_w: i32, img_h: i32, params: &WatermarkParams) -> (i32, i32) {
+    let mut canvas_h = (img_h as f64 * (1.0 + params.border_ratio.0)).round() as i32;
+    let mut canvas_w = if params.border_equal {
+        // 边框等宽
+        img_w + (canvas_h - img_h)
+    } else {
+        (img_w as f64 * (1.0 + params.border_ratio.1)).round() as i32
+    };
+    if let Some(aspect_ratio) = params.aspect_ratio {
+        let new_h = (canvas_w as f64 / aspect_ratio.0 * aspect_ratio.1).round() as i32;
+        if new_h < canvas_w {
+            canvas_w = (canvas_h as f64 / aspect_ratio.1 * aspect_ratio.0).round() as i32;
+        } else {
+            canvas_h = new_h;
+        }
+    }
+    (canvas_w, canvas_h)
+}
+
+// 计算图片放置位置
+pub fn cal_image_coordinates(
+    canvas_w: i32,
+    canvas_h: i32,
+    img_w: i32,
+    img_h: i32,
+    params: &WatermarkParams,
+) -> (i32, i32) {
+    let margin_up = (img_h as f64 * params.border_ratio.0 / 2.0).round() as i32;
+    let margin_left = if params.border_equal {
+        margin_up
+    } else {
+        (img_w as f64 * params.border_ratio.1 / 2.0) as i32
+    };
+    let center_x = (canvas_w - img_w) / 2;
+    let center_y = (canvas_h - img_h) / 2;
+    match params.position {
+        Position::Center => (center_x, center_y),
+        Position::Up => (center_x, margin_up),
+        Position::Right => {
+            let img_x = canvas_w - img_w - margin_left;
+            (img_x, center_y)
+        }
+        Position::Bottom => {
+            let img_y = canvas_h - img_h - margin_up;
+            (center_x, img_y)
+        }
+        Position::Left => (margin_left, center_y),
+    }
+}
+
 /// 给图片添加圆角
 pub async fn add_round_corner(img: &VipsImage, border_radius: f64) -> Result<()> {
     let (img_w, img_h) = (img.get_width(), img.get_height());
@@ -106,25 +159,16 @@ pub async fn generate_shadow(
         shadow_mask
     };
     // 对mask进行模糊
-     let shadow_mask =
-        ops::gaussblur(&shadow_mask, shadow_sigma)?;
-        // 生成黑色阴影 + alpha
-    let shadow_rgb =
-        ops::black(shadow_w, shadow_h)?;
-    let shadow_rgb =
-        ops::bandjoin(&[
-            shadow_rgb.extract_band(0)?,
-            shadow_rgb.extract_band(0)?,
-            shadow_rgb.extract_band(0)?,
-        ])?;
-     // 根据 shadow_opacity 调整 alpha
-    let shadow_alpha =
-        ops::linear(
-            &shadow_mask,
-            &mut [shadow_opacity],
-            &mut [0.0],
-        )?;
-    let shadow =
-        shadow_rgb.bandjoin(&shadow_alpha)?;
+    let shadow_mask = ops::gaussblur(&shadow_mask, shadow_sigma)?;
+    // 生成黑色阴影 + alpha
+    let shadow_rgb = ops::black(shadow_w, shadow_h)?;
+    let shadow_rgb = ops::bandjoin(&[
+        shadow_rgb.extract_band(0)?,
+        shadow_rgb.extract_band(0)?,
+        shadow_rgb.extract_band(0)?,
+    ])?;
+    // 根据 shadow_opacity 调整 alpha
+    let shadow_alpha = ops::linear(&shadow_mask, &mut [shadow_opacity], &mut [0.0])?;
+    let shadow = shadow_rgb.bandjoin(&shadow_alpha)?;
     Ok(shadow)
 }

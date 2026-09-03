@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::params::WatermarkParams;
+use crate::{params::WatermarkParams, process::{cal_canvas_size, cal_image_coordinates}};
 
 #[derive(Debug, Clone)]
 pub struct Photo {
@@ -44,15 +44,9 @@ impl Photo {
 
         // 计算水印照片的图片尺寸
         let (img_w, img_h) = (img.get_width(), img.get_height());
-        let canvas_h = (img_h as f64 * (1.0 + params.border_ratio.0)).round() as i32;
-        let canvas_w = (img_w as f64
-            * (1.0
-                + if params.border_equal {
-                    params.border_ratio.0
-                } else {
-                    params.border_ratio.1
-                }))
-        .round() as i32;
+        let (canvas_w, canvas_h) = cal_canvas_size(img_w, img_h, params);
+        // 计算图片坐标
+        let (img_x, img_y) = cal_image_coordinates(canvas_w, canvas_h, img_w, img_h, params);
 
         // 生成画布
         let canvas = if params.solid_background {

@@ -1,5 +1,14 @@
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
+pub enum Position {
+    Center,
+    Up,
+    Right,
+    Bottom,
+    Left
+}
+
 /// 水印生成参数。
 #[derive(Debug, Clone)]
 pub struct WatermarkParams {
@@ -9,8 +18,10 @@ pub struct WatermarkParams {
     pub border_ratio: (f64, f64),
     /// 左右边框是否应该和上下边框等宽
     pub border_equal: bool,
-    /// 固定宽高比(长，宽)
-    pub aspect_ratio: Option<(u8, u8)>,
+    /// 固定宽高比(长，高)
+    pub aspect_ratio: Option<(f64, f64)>,
+    /// 图片位置，默认为Center
+    pub position: Position,
     /// 背景颜色 (R, G, B)，默认纯白。
     pub background: [u8; 3],
     /// 圆角大小，相对于图片高度的比例，默认为0.02，即如果图片高度1000px，那么圆角半径为20px
@@ -44,6 +55,7 @@ impl WatermarkParams {
             shadow_opacity: 0.5,
             blur_sigma: 1.5,
             solid_background: false,
+            position: Position::Center
         }
     }
 }
@@ -74,8 +86,8 @@ pub struct TextParams {
     pub italic: bool,
     pub bold: bool,
     pub align: TextAlign,
-    /// 相对于图片的位置(上下左右：0123)
-    pub position: u8,
+    /// 相对于图片的位置
+    pub position: Position,
     /// 文字方向
     pub direction: TextDirection,
 }
@@ -90,7 +102,7 @@ impl Default for TextParams {
             italic: false,
             bold: false,
             align: TextAlign::default(),
-            position: 1,
+            position: Position::Bottom,
             direction: TextDirection::default(),
         }
     }
