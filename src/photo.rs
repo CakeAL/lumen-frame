@@ -1,5 +1,8 @@
 use anyhow::{Context, Result};
-use libvips::{VipsApp, ops};
+use libvips::{
+    VipsApp,
+    ops::{self, CompassDirection},
+};
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
 use std::{
     fmt::Display,
@@ -50,6 +53,46 @@ impl Photo {
                     params.border_ratio.1
                 }))
         .round() as i32;
+
+        // 生成画布
+        let canvas = if params.solid_background {
+            // 纯色背景
+            let [r, g, b] = params.background;
+            let background = ops::black(canvas_w, canvas_h)?;
+            ops::linear(&background, &mut [1.0], &mut [r as f64, g as f64, b as f64])
+                .context("failed to generate canvas")?
+        } else {
+            // 模糊背景
+            // 1. 计算缩放比例，使原图完全覆盖画布 (Cover 模式)
+            let scale = f64::max(
+                canvas_w as f64 / img_w as f64,
+                canvas_h as f64 / img_h as f64,
+            );
+
+            // 2. 等比缩放原图
+            let scaled_img = ops::resize(&img, scale)?;
+
+            // 3. 从缩放后的图片中心裁剪出画布大小（居中裁剪）
+            let (scaled_w, scaled_h) = (scaled_img.get_width(), scaled_img.get_height());
+            let crop_x = (scaled_w - canvas_w) / 2;
+            let crop_y = (scaled_h - canvas_h) / 2;
+            let background_img =
+                ops::extract_area(&scaled_img, crop_x, crop_y, canvas_w, canvas_h)?;
+
+            // 4. 对裁剪后的背景图片应用高斯模糊
+            ops::gaussblur(&background_img, params.blur_sigma)
+                .context("failed to generate canvas")?
+        };
+        // 给图片添加圆角
+        if params.border_radius > 0.0 {
+            crate::process::add_round_corner(&img, params.border_radius).await.context("add round corner failed")?;
+        }
+
+        // 为画布添加阴影
+        let canvas = if params.shadow_size > 0.0 {
+           let shadow = crate::process::generate_shadow(&img, params.shadow_size, params.shadow_opacity, params.border_radius).await.context("generate shadow failed")?;
+           ops::composite2_with_opts(&canvas, &shadow, ops::BlendMode::Over, composite2_options)
+        }
 
         Ok(())
     }
