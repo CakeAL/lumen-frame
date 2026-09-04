@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-use libvips::{VipsApp, ops};
+use anyhow::{Context, Result, anyhow};
+use libvips::{VipsApp, VipsImage, ops};
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
 use std::{
     fmt::Display,
@@ -29,7 +29,7 @@ impl Photo {
         })
     }
 
-    pub fn generate_watermark(&self, params: &WatermarkParams) -> Result<()> {
+    pub fn generate_watermark(&self, params: &WatermarkParams) -> Result<VipsImage> {
         let _app = VipsApp::default("luman-frame").context("failed to init libvips")?;
 
         // 摆正原图
@@ -49,7 +49,8 @@ impl Photo {
         let (img_x, img_y) = cal_image_coordinates(canvas_w, canvas_h, img_w, img_h, params);
 
         // 生成画布
-        let canvas = crate::process::new_canvas(canvas_w, canvas_h, &img, params).context("failed to generate canvas")?;
+        let canvas = crate::process::new_canvas(canvas_w, canvas_h, &img, params)
+            .context("failed to generate canvas")?;
 
         // 给图片添加圆角
         let img = if params.border_radius > 0.0 {
@@ -79,9 +80,34 @@ impl Photo {
             },
         )?;
 
-        // 保存照片
+        Ok(canvas)
+    }
 
-        Ok(())
+    pub fn save_image(&self, params: &WatermarkParams, watermark: &VipsImage) -> Result<()> {
+        let stem = self
+            .path
+            .file_stem()
+            .and_then(|x| x.to_str())
+            .unwrap_or("_");
+        // [TODO]多格式支持
+        let extension = "jpg";
+        if let Some(output_folder) = &params.output_folder {
+            if !output_folder.exists() {
+                std::fs::create_dir_all(output_folder)?
+            }
+            let output_path = output_folder.join(format!("{stem}.{extension}"));
+            ops::jpegsave_with_opts(
+                &watermark,
+                &output_path.to_string_lossy(),
+                &ops::JpegsaveOptions {
+                    q: 95,
+                    ..Default::default()
+                },
+            )
+            .context("save jpg failed")
+        } else {
+            Err(anyhow!("no output folder specified"))
+        }
     }
 }
 

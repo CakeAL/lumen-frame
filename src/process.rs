@@ -198,6 +198,25 @@ pub fn add_shadow(
     let shadow = ops::bandjoin(&mut [shadow_rgb, shadow_alpha])?;
     let shadow_x = img_x - shadow_margin;
     let shadow_y = img_y - shadow_margin;
+
+    println!(
+        "canvas: {}x{}, {} bands, {:?}",
+        canvas.get_width(),
+        canvas.get_height(),
+        canvas.get_bands(),
+        canvas.get_format(),
+    );
+
+    println!(
+        "shadow: {}x{}, {} bands, {:?}",
+        shadow.get_width(),
+        shadow.get_height(),
+        shadow.get_bands(),
+        shadow.get_format(),
+    );
+
+    println!("shadow position: {}, {}", shadow_x, shadow_y);
+
     ops::composite2_with_opts(
         &canvas,
         &shadow,

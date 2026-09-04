@@ -13,7 +13,7 @@ pub enum Position {
 #[derive(Debug, Clone)]
 pub struct WatermarkParams {
     /// 输出文件夹
-    pub output_folder: PathBuf,
+    pub output_folder: Option<PathBuf>,
     /// 边框比例(上下，左右)。例如 `0.10` 表示输出尺寸 = 原尺寸 * `1.10`。
     pub border_ratio: (f64, f64),
     /// 左右边框是否应该和上下边框等宽
@@ -40,10 +40,11 @@ pub struct WatermarkParams {
     pub quality: i32,
 }
 
-impl WatermarkParams {
-    pub fn new(output_folder: impl Into<PathBuf>) -> Self {
+impl Default for WatermarkParams {
+    fn default() -> Self {
+        let picture_folder = dirs::picture_dir().map(|p| p.join("watermark"));
         Self {
-            output_folder: output_folder.into(),
+            output_folder: picture_folder,
             border_ratio: (0.10, 0.10),
             border_equal: false,
             aspect_ratio: None,

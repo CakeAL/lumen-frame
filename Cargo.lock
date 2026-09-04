@@ -438,6 +438,7 @@ name = "lumen-frame"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "font-kit",
  "libvips",
  "nom-exif",

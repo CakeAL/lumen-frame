@@ -9,3 +9,4 @@ nom-exif = { version = "3", features = ["tokio-fs"] }
 anyhow = "1"
 libvips = "2.3.0"
 font-kit = "0.14.3"
+dirs = "6"
