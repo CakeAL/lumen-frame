@@ -6,7 +6,7 @@ pub enum Position {
     Up,
     Right,
     Bottom,
-    Left
+    Left,
 }
 
 /// 水印生成参数。
@@ -55,7 +55,7 @@ impl WatermarkParams {
             shadow_opacity: 0.5,
             blur_sigma: 1.5,
             solid_background: false,
-            position: Position::Center
+            position: Position::Center,
         }
     }
 }

@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
-use libvips::{
-    VipsApp,
-    ops::{self, CompassDirection},
-};
+use libvips::{VipsApp, ops};
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
 };
 
-use crate::{params::WatermarkParams, process::{cal_canvas_size, cal_image_coordinates}};
+use crate::{
+    params::WatermarkParams,
+    process::{cal_canvas_size, cal_image_coordinates},
+};
 
 #[derive(Debug, Clone)]
 pub struct Photo {
@@ -29,7 +29,7 @@ impl Photo {
         })
     }
 
-    pub async fn generate_watermark(&self, params: &WatermarkParams) -> Result<()> {
+    pub fn generate_watermark(&self, params: &WatermarkParams) -> Result<()> {
         let _app = VipsApp::default("luman-frame").context("failed to init libvips")?;
 
         // 摆正原图
@@ -49,44 +49,37 @@ impl Photo {
         let (img_x, img_y) = cal_image_coordinates(canvas_w, canvas_h, img_w, img_h, params);
 
         // 生成画布
-        let canvas = if params.solid_background {
-            // 纯色背景
-            let [r, g, b] = params.background;
-            let background = ops::black(canvas_w, canvas_h)?;
-            ops::linear(&background, &mut [1.0], &mut [r as f64, g as f64, b as f64])
-                .context("failed to generate canvas")?
-        } else {
-            // 模糊背景
-            // 1. 计算缩放比例，使原图完全覆盖画布 (Cover 模式)
-            let scale = f64::max(
-                canvas_w as f64 / img_w as f64,
-                canvas_h as f64 / img_h as f64,
-            );
+        let canvas = crate::process::new_canvas(canvas_w, canvas_h, &img, params).context("failed to generate canvas")?;
 
-            // 2. 等比缩放原图
-            let scaled_img = ops::resize(&img, scale)?;
-
-            // 3. 从缩放后的图片中心裁剪出画布大小（居中裁剪）
-            let (scaled_w, scaled_h) = (scaled_img.get_width(), scaled_img.get_height());
-            let crop_x = (scaled_w - canvas_w) / 2;
-            let crop_y = (scaled_h - canvas_h) / 2;
-            let background_img =
-                ops::extract_area(&scaled_img, crop_x, crop_y, canvas_w, canvas_h)?;
-
-            // 4. 对裁剪后的背景图片应用高斯模糊
-            ops::gaussblur(&background_img, params.blur_sigma)
-                .context("failed to generate canvas")?
-        };
         // 给图片添加圆角
-        if params.border_radius > 0.0 {
-            crate::process::add_round_corner(&img, params.border_radius).await.context("add round corner failed")?;
-        }
+        let img = if params.border_radius > 0.0 {
+            crate::process::add_round_corner(img, params.border_radius)
+                .context("add round corner failed")?
+        } else {
+            img
+        };
 
         // 为画布添加阴影
         let canvas = if params.shadow_size > 0.0 {
-           let shadow = crate::process::generate_shadow(&img, params.shadow_size, params.shadow_opacity, params.border_radius).await.context("generate shadow failed")?;
-           ops::composite2_with_opts(&canvas, &shadow, ops::BlendMode::Over, composite2_options)
-        }
+            crate::process::add_shadow(canvas, &img, params, img_x, img_y)
+                .context("generate shadow failed")?
+        } else {
+            canvas
+        };
+
+        // 合成照片
+        let canvas = ops::composite2_with_opts(
+            &canvas,
+            &img,
+            ops::BlendMode::Over,
+            &ops::Composite2Options {
+                x: img_x,
+                y: img_y,
+                ..Default::default()
+            },
+        )?;
+
+        // 保存照片
 
         Ok(())
     }
