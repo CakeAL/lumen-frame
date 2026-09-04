@@ -7,6 +7,8 @@ async fn test_generate_watermark() {
     let photo = Photo::new(photo_path).await.unwrap();
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
+        aspect_ratio: Some((16.0, 9.0)),
+        position: lumen_frame::params::Position::Left,
         ..Default::default()
     };
     let watermark = photo.generate_watermark(&params).unwrap();

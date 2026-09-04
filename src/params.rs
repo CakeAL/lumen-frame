@@ -32,7 +32,7 @@ pub struct WatermarkParams {
     pub shadow_opacity: f64,
     /// 是否纯色背景
     pub solid_background: bool,
-    /// 背景模糊程度, min: 0, max: 1000, default: 1.5
+    /// 背景模糊程度, min: 0, max: 1000, default: 15.0
     pub blur_sigma: f64,
     /// 字体参数
     pub text_params: TextParams,
@@ -54,7 +54,7 @@ impl Default for WatermarkParams {
             border_radius: 0.02,
             shadow_size: 0.06,
             shadow_opacity: 0.5,
-            blur_sigma: 1.5,
+            blur_sigma: 15.0,
             solid_background: false,
             position: Position::Center,
         }

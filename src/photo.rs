@@ -4,12 +4,23 @@ use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use crate::{
     params::WatermarkParams,
     process::{cal_canvas_size, cal_image_coordinates},
 };
+
+/// 进程级单例：保证 libvips 在整个进程生命周期内保持初始化。
+///
+/// `VipsApp` 的 Drop 会调用 `vips_shutdown`，它会释放掉所有仍存活的 `VipsImage`
+/// （包括 `generate_watermark` 返回的那张）。因此不能每次调用都 init/shutdown，
+/// 否则返回的图片和后续的 `save_image` 都会变成 use-after-free。
+fn vips() -> &'static VipsApp {
+    static VIPS: OnceLock<VipsApp> = OnceLock::new();
+    VIPS.get_or_init(|| VipsApp::default("lumen-frame").expect("failed to init libvips"))
+}
 
 #[derive(Debug, Clone)]
 pub struct Photo {
@@ -30,7 +41,7 @@ impl Photo {
     }
 
     pub fn generate_watermark(&self, params: &WatermarkParams) -> Result<VipsImage> {
-        let _app = VipsApp::default("luman-frame").context("failed to init libvips")?;
+        vips();
 
         // 摆正原图
         let img = ops::jpegload_with_opts(
@@ -84,6 +95,8 @@ impl Photo {
     }
 
     pub fn save_image(&self, params: &WatermarkParams, watermark: &VipsImage) -> Result<()> {
+        vips();
+
         let stem = self
             .path
             .file_stem()
@@ -95,12 +108,24 @@ impl Photo {
             if !output_folder.exists() {
                 std::fs::create_dir_all(output_folder)?
             }
-            let output_path = output_folder.join(format!("{stem}.{extension}"));
+            let output_path = output_folder.join(format!("{stem}_watermark.{extension}"));
+
+            // 合成结果带 alpha（4 band），写出 JPEG 前先压平为 3 band RGB。
+            let [r, g, b] = params.background;
+            let flattened = ops::flatten_with_opts(
+                watermark,
+                &ops::FlattenOptions {
+                    background: vec![r as f64, g as f64, b as f64],
+                    ..Default::default()
+                },
+            )
+            .context("flatten image failed")?;
+
             ops::jpegsave_with_opts(
-                &watermark,
+                &flattened,
                 &output_path.to_string_lossy(),
                 &ops::JpegsaveOptions {
-                    q: 95,
+                    q: params.quality,
                     ..Default::default()
                 },
             )

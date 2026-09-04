@@ -164,7 +164,7 @@ pub fn add_shadow(
                     height="{h}"
                     rx="{r}"
                     ry="{r}"
-                    fill="black"/>
+                    fill="white"/>
             </svg>
             "#,
             w = shadow_w,
@@ -176,7 +176,12 @@ pub fn add_shadow(
     } else {
         // 没有圆角时直接用矩形
         let shadow = ops::black(shadow_w, shadow_h)?;
-        ops::linear(&shadow, &mut [0.0], &mut [255.0])?
+        ops::linear_with_opts(
+            &shadow,
+            &mut [0.0],
+            &mut [255.0],
+            &ops::LinearOptions { uchar: true },
+        )?
     };
 
     // 确保 mask 为单通道
@@ -187,38 +192,27 @@ pub fn add_shadow(
     };
     // 对 mask 进行高斯模糊
     let shadow_mask = ops::gaussblur(&shadow_mask, shadow_sigma)?;
-    // 生成黑色 RGB
-    let shadow_black = ops::black(shadow_w, shadow_h)?;
-    // black() 本身就是单通道，因此直接复制成 3 个 band
-    let shadow_rgb =
-        ops::bandjoin(&mut [shadow_black.clone(), shadow_black.clone(), shadow_black])?;
-    // 根据 opacity 调整 Alpha
-    let shadow_alpha = ops::linear(&shadow_mask, &mut [params.shadow_opacity], &mut [0.0])?;
+    // 生成与 mask 同尺寸的黑色 RGB（3 band）。注意不能对 VipsImage 使用 `.clone()`
+    // 来复制 band：该 crate 的 Clone 是浅拷贝（不增加 GObject 引用计数），而 Drop
+    // 会 unref，多次 clone 会导致 double-free / use-after-free。
+    let shadow_rgb = VipsImage::new_from_image(&shadow_mask, &[0.0, 0.0, 0.0])?;
+    // 根据 opacity 调整 Alpha（保持 uchar，避免 linear 默认输出 float 导致 composite2 崩溃）
+    let shadow_alpha = ops::linear_with_opts(
+        &shadow_mask,
+        &mut [params.shadow_opacity],
+        &mut [0.0],
+        &ops::LinearOptions { uchar: true },
+    )?;
     // RGB + Alpha → RGBA
     let shadow = ops::bandjoin(&mut [shadow_rgb, shadow_alpha])?;
     let shadow_x = img_x - shadow_margin;
     let shadow_y = img_y - shadow_margin;
 
-    println!(
-        "canvas: {}x{}, {} bands, {:?}",
-        canvas.get_width(),
-        canvas.get_height(),
-        canvas.get_bands(),
-        canvas.get_format(),
-    );
-
-    println!(
-        "shadow: {}x{}, {} bands, {:?}",
-        shadow.get_width(),
-        shadow.get_height(),
-        shadow.get_bands(),
-        shadow.get_format(),
-    );
-
-    println!("shadow position: {}, {}", shadow_x, shadow_y);
+    // composite2 要求两侧 band 数与格式一致：给画布补一个不透明 alpha。
+    let canvas_rgba = ops::addalpha(&canvas)?;
 
     ops::composite2_with_opts(
-        &canvas,
+        &canvas_rgba,
         &shadow,
         ops::BlendMode::Over,
         &ops::Composite2Options {
