@@ -1,4 +1,7 @@
-use libvips::{Result, VipsImage, ops};
+use libvips::{
+    Result, VipsImage,
+    ops::{self, BlackOptions},
+};
 
 use crate::params::{Position, WatermarkParams};
 
@@ -56,11 +59,15 @@ pub fn new_canvas(
     params: &WatermarkParams,
 ) -> Result<VipsImage> {
     let (img_w, img_h) = (img.get_width(), img.get_height());
-    if params.solid_background {
+    let canvas = if params.solid_background {
         // 纯色背景
         let [r, g, b] = params.background;
-        let background = ops::black(canvas_w, canvas_h)?;
-        ops::linear(&background, &mut [1.0], &mut [r as f64, g as f64, b as f64])
+        let background = ops::black_with_opts(canvas_w, canvas_h, &BlackOptions { bands: 3 })?;
+        ops::linear(
+            &background,
+            &mut [1.0, 1.0, 1.0],
+            &mut [r as f64, g as f64, b as f64],
+        )
     } else {
         // 模糊背景
         // 1. 计算缩放比例，使原图完全覆盖画布 (Cover 模式)
@@ -77,7 +84,17 @@ pub fn new_canvas(
         let background_img = ops::extract_area(&scaled_img, crop_x, crop_y, canvas_w, canvas_h)?;
         // 4. 对裁剪后的背景图片应用高斯模糊
         ops::gaussblur(&background_img, params.blur_sigma)
-    }
+    }?;
+    let canvas = ops::addalpha(&canvas)?;
+    let canvas = ops::cast(&canvas, ops::BandFormat::Uchar)?;
+    let canvas = ops::copy_with_opts(
+        &canvas,
+        &ops::CopyOptions {
+            interpretation: ops::Interpretation::Srgb,
+            ..Default::default()
+        },
+    )?;
+    Ok(canvas)
 }
 
 /// 为图片添加圆角
@@ -142,46 +159,38 @@ pub fn add_shadow(
     let (img_w, img_h) = (img.get_width(), img.get_height());
     let shadow_size = (img_h as f64 * params.shadow_size).round() as i32;
     let shadow_sigma = shadow_size as f64 / 2.0;
-    // 阴影需要比照片稍微大一点，否则 blur 会被边界截掉。
-    let shadow_margin = (shadow_sigma * 2.0).ceil() as i32;
+    // Gaussian blur 需要足够的外围空间
+    let shadow_margin = (shadow_sigma * 3.0).ceil() as i32;
     let shadow_w = img_w + shadow_margin * 2;
     let shadow_h = img_h + shadow_margin * 2;
     // 创建阴影mask
-    let shadow_mask = if params.border_radius > 0.0 {
+    let shadow_mask = {
         let radius = (img_h as f64 * params.border_radius).round() as i32;
-        let shadow_radius = radius + shadow_margin;
-
         let svg = format!(
             r#"
             <svg xmlns="http://www.w3.org/2000/svg"
-                 width="{w}"
-                 height="{h}"
-                 viewBox="0 0 {w} {h}">
+                 width="{shadow_w}"
+                 height="{shadow_h}"
+                 viewBox="0 0 {shadow_w} {shadow_h}">
                 <rect
-                    x="0"
-                    y="0"
-                    width="{w}"
-                    height="{h}"
-                    rx="{r}"
-                    ry="{r}"
+                    x="{margin}"
+                    y="{margin}"
+                    width="{img_w}"
+                    height="{img_h}"
+                    rx="{radius}"
+                    ry="{radius}"
                     fill="white"/>
             </svg>
             "#,
-            w = shadow_w,
-            h = shadow_h,
-            r = shadow_radius,
+            shadow_w = shadow_w,
+            shadow_h = shadow_h,
+            margin = shadow_margin,
+            img_w = img_w,
+            img_h = img_h,
+            radius = radius,
         );
 
         ops::svgload_buffer(svg.as_bytes())?
-    } else {
-        // 没有圆角时直接用矩形
-        let shadow = ops::black(shadow_w, shadow_h)?;
-        ops::linear_with_opts(
-            &shadow,
-            &mut [0.0],
-            &mut [255.0],
-            &ops::LinearOptions { uchar: true },
-        )?
     };
 
     // 确保 mask 为单通道
@@ -199,7 +208,7 @@ pub fn add_shadow(
     // 根据 opacity 调整 Alpha（保持 uchar，避免 linear 默认输出 float 导致 composite2 崩溃）
     let shadow_alpha = ops::linear_with_opts(
         &shadow_mask,
-        &mut [params.shadow_opacity],
+        &mut [params.shadow_density],
         &mut [0.0],
         &ops::LinearOptions { uchar: true },
     )?;
@@ -208,11 +217,25 @@ pub fn add_shadow(
     let shadow_x = img_x - shadow_margin;
     let shadow_y = img_y - shadow_margin;
 
-    // composite2 要求两侧 band 数与格式一致：给画布补一个不透明 alpha。
-    let canvas_rgba = ops::addalpha(&canvas)?;
+    // println!(
+    //     "canvas: {}x{} bands={} format={:?} interpretation={:?}",
+    //     canvas.get_width(),
+    //     canvas.get_height(),
+    //     canvas.get_bands(),
+    //     canvas.get_format(),
+    //     canvas.get_interpretation(),
+    // );
+    // println!(
+    //     "shadow: {}x{} bands={} format={:?} interpretation={:?}",
+    //     shadow.get_width(),
+    //     shadow.get_height(),
+    //     shadow.get_bands(),
+    //     shadow.get_format(),
+    //     shadow.get_interpretation(),
+    // );
 
     ops::composite2_with_opts(
-        &canvas_rgba,
+        &canvas,
         &shadow,
         ops::BlendMode::Over,
         &ops::Composite2Options {

@@ -89,7 +89,8 @@ impl Photo {
                 y: img_y,
                 ..Default::default()
             },
-        )?;
+        )
+        .context("composite final image err")?;
 
         Ok(canvas)
     }
