@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     params::WatermarkParams,
-    process::{cal_canvas_size, cal_image_coordinates},
+    process::{canvas, image},
 };
 
 /// 进程级单例：保证 libvips 在整个进程生命周期内保持初始化。
@@ -55,25 +55,24 @@ impl Photo {
 
         // 计算水印照片的图片尺寸
         let (img_w, img_h) = (img.get_width(), img.get_height());
-        let (canvas_w, canvas_h) = cal_canvas_size(img_w, img_h, params);
+        let (canvas_w, canvas_h) = canvas::cal_size(img_w, img_h, params);
         // 计算图片坐标
-        let (img_x, img_y) = cal_image_coordinates(canvas_w, canvas_h, img_w, img_h, params);
+        let (img_x, img_y) = image::cal_coordinates(canvas_w, canvas_h, img_w, img_h, params);
 
         // 生成画布
-        let canvas = crate::process::new_canvas(canvas_w, canvas_h, &img, params)
+        let canvas = canvas::new_canvas(canvas_w, canvas_h, &img, params)
             .context("failed to generate canvas")?;
 
         // 给图片添加圆角
         let img = if params.border_radius > 0.0 {
-            crate::process::add_round_corner(img, params.border_radius)
-                .context("add round corner failed")?
+            image::add_round_corner(img, params.border_radius).context("add round corner failed")?
         } else {
             img
         };
 
         // 为画布添加阴影
         let canvas = if params.shadow_size > 0.0 {
-            crate::process::add_shadow(canvas, &img, params, img_x, img_y)
+            canvas::add_shadow(canvas, &img, params, img_x, img_y)
                 .context("generate shadow failed")?
         } else {
             canvas
