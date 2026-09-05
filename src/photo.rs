@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use libvips::{VipsApp, VipsImage, ops};
 use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
+use num_integer::Integer;
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
@@ -139,7 +140,7 @@ impl Photo {
 /// 光圈，快门速度可能是小数或者分数
 #[derive(Debug, Clone)]
 pub enum Rational {
-    Fraction(u32, u32),
+    Fraction(i32, i32),
     Float(f64),
 }
 
@@ -153,14 +154,28 @@ impl Display for Rational {
         };
         match self {
             Rational::Fraction(n, d) => {
-                let v = *n as f64 / *d as f64;
-                if v >= 1.0 {
-                    write!(f, "{}", format_value(v))
+                let gcd = n.gcd(&d);
+                let n = n / gcd;
+                let d = d / gcd;
+                if d == 1 {
+                    write!(f, "{}", n)
                 } else {
-                    write!(f, "{}/{}", n, d)
+                    let v = n as f64 / d as f64;
+                    if v >= 1.0 {
+                        write!(f, "{}", format_value(v))
+                    } else {
+                        write!(f, "{}/{}", n, d)
+                    }
                 }
             }
-            Rational::Float(v) => write!(f, "{}", format_value(*v)),
+            Rational::Float(v) => {
+                if v < &1.0 {
+                    let d = (1.0 / v).round() as u32;
+                    write!(f, "1/{}", d)
+                } else {
+                    write!(f, "{}", format_value(*v))
+                }
+            }
         }
     }
 }
@@ -253,7 +268,7 @@ fn format_iso(value: &EntryValue) -> Option<u32> {
 }
 
 fn format_value(value: &EntryValue) -> Option<Rational> {
-    if let Some(r) = value.as_urational() {
+    if let Some(r) = value.as_irational() {
         let n = r.numerator();
         let d = r.denominator();
         if d == 0 {
@@ -262,17 +277,4 @@ fn format_value(value: &EntryValue) -> Option<Rational> {
         return Some(Rational::Fraction(n, d));
     }
     value.try_as_float().map(|s| Rational::Float(s))
-}
-
-#[cfg(test)]
-mod tests {
-
-    use crate::photo::Photo;
-
-    #[tokio::test]
-    async fn test_dump_exif() {
-        let path = "./test_images/DSC_4587.jpg";
-        let photo = Photo::new(&path).await.unwrap();
-        dbg!(photo.exif);
-    }
 }

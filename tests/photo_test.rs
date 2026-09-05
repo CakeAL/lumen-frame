@@ -1,6 +1,13 @@
 use lumen_frame::{params::WatermarkParams, photo::Photo};
 
 #[tokio::test]
+async fn test_dump_exif() {
+    let path = "./test_images/DSC_4587.jpg";
+    let photo = Photo::new(&path).await.unwrap();
+    dbg!(photo.exif);
+}
+
+#[tokio::test]
 async fn test_generate_watermark() {
     let photo_path = "./test_images/DSC_4587.jpg";
     let output_path = "./test_images/watermark";
