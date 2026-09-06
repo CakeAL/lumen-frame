@@ -7,7 +7,8 @@ use crate::{Position, photo::{ExifInfo, Rational}};
 #[derive(Debug, Clone, Default)]
 pub struct Text {
     // 每行文本模板
-
+    pub template: Vec<String>,
+    pub text_params: Vec<TextParams>,
 }
 
 #[derive(Debug, Clone, Default)]
