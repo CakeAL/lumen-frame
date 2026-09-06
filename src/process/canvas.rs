@@ -52,7 +52,7 @@ impl Margin {
 }
 
 // 计算画布大小
-pub fn cal_size(margin: &Margin, img_h: i32, img_w: i32, params: &WatermarkParams) -> (i32, i32) {
+pub fn cal_size(margin: &Margin, img_w: i32, img_h: i32, params: &WatermarkParams) -> (i32, i32) {
     let mut canvas_h = img_h + margin.top + margin.bottom;
     let mut canvas_w = img_w + margin.left + margin.right;
     if let Some(aspect_ratio) = params.aspect_ratio {

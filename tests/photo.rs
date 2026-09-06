@@ -37,7 +37,7 @@ async fn test_generate_watermark() {
         output_folder: Some(output_path.into()),
         aspect_ratio: Some((16.0, 9.0)),
         position: lumen_frame::Position::Left,
-        blur_sigma: 100.0,
+        blur_sigma: 15.0,
         background: [26, 188, 156],
         // solid_background: true,
         border_radius: 0.02,
