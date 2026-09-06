@@ -1,7 +1,63 @@
 use nom_exif::ExifDateTime;
 use regex::Regex;
 
-use crate::photo::{ExifInfo, Rational};
+use crate::{Position, photo::{ExifInfo, Rational}};
+
+// 需要渲染的多行文本
+#[derive(Debug, Clone, Default)]
+pub struct Text {
+    // 每行文本模板
+
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TextAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum TextDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextParams {
+    pub font: String,
+    /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
+    pub size: f64,
+    /// 行间距，默认为1.3
+    pub line_spacing: f64,
+    pub color: [u8; 3],
+    pub italic: bool,
+    pub bold: bool,
+    pub align: TextAlign,
+    /// 相对于图片的位置
+    pub position: Position,
+    /// 文字方向
+    pub direction: TextDirection,
+}
+
+impl Default for TextParams {
+    fn default() -> Self {
+        Self {
+            font: "Arial".to_string(),
+            size: 0.03,
+            line_spacing: 1.3,
+            color: [0, 0, 0],
+            italic: false,
+            bold: false,
+            align: TextAlign::default(),
+            position: Position::Bottom,
+            direction: TextDirection::default(),
+        }
+    }
+}
+
 
 /// 根据给定的模板生成文字
 pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) -> String {
@@ -57,32 +113,5 @@ fn format_fnumber(value: &Rational) -> String {
             let v = *n as f64 / *d as f64;
             format_value(v)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::Local;
-    use nom_exif::ExifDateTime;
-
-    use crate::{
-        photo::{ExifInfo, Rational},
-        process::font::render_exif_template,
-    };
-
-    #[test]
-    fn test_render_exif_template() {
-        let template = "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO} {曝光补偿}EV";
-        let exif_info = ExifInfo {
-            created_time: Some(ExifDateTime::Aware(Local::now().into())),
-            focal_length_in35mm_film: Some(50),
-            exposure_time: Some(Rational::Fraction(1, 250)),
-            f_number: Some(Rational::Fraction(18, 10)),
-            exposure_bias_value: Some(Rational::Fraction(-1, 3)),
-            focal_length: Some(Rational::Fraction(500, 10)),
-            ..Default::default()
-        };
-        let text = render_exif_template(template, &exif_info, "%Y/%m/%d %H:%M:%S");
-        dbg!(text);
     }
 }

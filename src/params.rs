@@ -1,13 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
-pub enum Position {
-    Center,
-    Up,
-    Right,
-    Bottom,
-    Left,
-}
+use crate::Position;
 
 /// 水印生成参数。
 #[derive(Debug, Clone)]
@@ -34,8 +27,6 @@ pub struct WatermarkParams {
     pub solid_background: bool,
     /// 背景模糊程度, min: 0, max: 1000, default: 15.0
     pub blur_sigma: f64,
-    /// 字体参数
-    pub text_params: TextParams,
     /// 输出 JPEG 质量 1-100，默认 95。
     pub quality: i32,
 }
@@ -49,7 +40,6 @@ impl Default for WatermarkParams {
             border_equal: false,
             aspect_ratio: None,
             background: [255, 255, 255],
-            text_params: TextParams::default(),
             quality: 95,
             border_radius: 0.02,
             shadow_size: 0.06,
@@ -57,54 +47,6 @@ impl Default for WatermarkParams {
             blur_sigma: 15.0,
             solid_background: false,
             position: Position::Center,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub enum TextAlign {
-    Left,
-    #[default]
-    Center,
-    Right,
-}
-
-#[derive(Debug, Clone, Default)]
-pub enum TextDirection {
-    #[default]
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Debug, Clone)]
-pub struct TextParams {
-    pub font: String,
-    /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
-    pub size: f64,
-    /// 行间距，默认为1.3
-    pub line_spacing: f64,
-    pub color: [u8; 3],
-    pub italic: bool,
-    pub bold: bool,
-    pub align: TextAlign,
-    /// 相对于图片的位置
-    pub position: Position,
-    /// 文字方向
-    pub direction: TextDirection,
-}
-
-impl Default for TextParams {
-    fn default() -> Self {
-        Self {
-            font: "Arial".to_string(),
-            size: 0.03,
-            line_spacing: 1.3,
-            color: [0, 0, 0],
-            italic: false,
-            bold: false,
-            align: TextAlign::default(),
-            position: Position::Bottom,
-            direction: TextDirection::default(),
         }
     }
 }

@@ -15,7 +15,7 @@ async fn test_generate_watermark() {
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
         aspect_ratio: Some((16.0, 9.0)),
-        position: lumen_frame::params::Position::Left,
+        position: lumen_frame::Position::Left,
         blur_sigma: 100.0,
         background: [26, 188, 156],
         // solid_background: true,

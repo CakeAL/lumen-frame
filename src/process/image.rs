@@ -1,6 +1,6 @@
 use libvips::{Result, VipsImage, ops};
 
-use crate::params::{Position, WatermarkParams};
+use crate::{params::{WatermarkParams}, Position};
 
 /// 计算图片放置位置
 pub fn cal_coordinates(
