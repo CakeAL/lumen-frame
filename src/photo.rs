@@ -10,7 +10,11 @@ use std::{
 
 use crate::{
     params::WatermarkParams,
-    process::{canvas, image, text::Text},
+    process::{
+        canvas::{self, Margin},
+        image,
+        text::Text,
+    },
 };
 
 /// 进程级单例：保证 libvips 在整个进程生命周期内保持初始化。
@@ -59,11 +63,13 @@ impl Photo {
 
         // 计算文字占用尺寸
         let (text_position, text_height) = text.cal_height(img_h);
+        // 计算画布边框尺寸
+        let margin = Margin::cal_margin(img_w, img_h, text_height, text_position, params);
         // 画布尺寸
-        let (canvas_w, canvas_h) =
-            canvas::cal_size(img_w, img_h, text_height, text_position, params);
+        let (canvas_w, canvas_h) = canvas::cal_size(&margin, img_w, img_h, params);
         // 计算图片坐标
-        let (img_x, img_y) = image::cal_coordinates(canvas_w, canvas_h, img_w, img_h, params);
+        let (img_x, img_y) =
+            image::cal_coordinates(&margin, canvas_w, canvas_h, img_w, img_h, params);
 
         // 生成画布
         let canvas = canvas::new_canvas(canvas_w, canvas_h, &img, params)

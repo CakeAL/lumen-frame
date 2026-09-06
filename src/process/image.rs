@@ -1,29 +1,28 @@
 use libvips::{Result, VipsImage, ops};
 
-use crate::{params::{WatermarkParams}, Position};
+use crate::{Position, params::WatermarkParams, process::canvas::Margin};
 
 /// 计算图片放置位置
 pub fn cal_coordinates(
+    margin: &Margin,
     canvas_w: i32,
     canvas_h: i32,
     img_w: i32,
     img_h: i32,
     params: &WatermarkParams,
 ) -> (i32, i32) {
-    let margin_y = (img_h as f64 * params.border_ratio.0 / 2.0).round() as i32;
-    let margin_x = if params.border_equal {
-        margin_y
-    } else {
-        (img_w as f64 * params.border_ratio.1 / 2.0).round() as i32
-    };
-    let center_x = (canvas_w - img_w) / 2;
-    let center_y = (canvas_h - img_h) / 2;
+    // 内框尺寸
+    let inner_w = canvas_w - margin.left - margin.right;
+    let inner_h = canvas_h - margin.top - margin.bottom;
+    // 图片在内框中居中时的坐标
+    let center_x = margin.left + (inner_w - img_w) / 2;
+    let center_y = margin.top + (inner_h - img_h) / 2;
     match params.position {
         Position::Center => (center_x, center_y),
-        Position::Up => (center_x, margin_y),
-        Position::Right => (canvas_w - img_w - margin_x, center_y),
-        Position::Bottom => (center_x, canvas_h - img_h - margin_y),
-        Position::Left => (margin_x, center_y),
+        Position::Up => (center_x, margin.top),
+        Position::Bottom => (center_x, canvas_h - margin.bottom - img_h),
+        Position::Left => (margin.left, center_y),
+        Position::Right => (canvas_w - margin.right - img_w, center_y),
     }
 }
 

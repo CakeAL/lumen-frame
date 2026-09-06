@@ -2,7 +2,7 @@ use crate::params::WatermarkParams;
 
 /// 自动判断背景色，适合使用true黑色字体还是false白色
 pub fn auto_color(watermark_params: &WatermarkParams) -> bool {
-    let [r,g,b] = watermark_params.background;
+    let [r, g, b] = watermark_params.background;
     watermark_params.solid_background && !is_dark_color(r, g, b)
 }
 

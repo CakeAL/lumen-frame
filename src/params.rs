@@ -7,8 +7,8 @@ use crate::Position;
 pub struct WatermarkParams {
     /// 输出文件夹
     pub output_folder: Option<PathBuf>,
-    /// 边框比例(上下，左右)。例如 `0.10` 表示输出尺寸 = 原尺寸 * `1.10`。
-    pub border_ratio: (f64, f64),
+    /// 边框比例(上，下，左，右)。例如 `0.05` 表示边框尺寸 = 原尺寸 * `0.05`。
+    pub border_ratio: (f64, f64, f64, f64),
     /// 左右边框是否应该和上下边框等宽
     pub border_equal: bool,
     /// 固定宽高比(长，高)
@@ -36,7 +36,7 @@ impl Default for WatermarkParams {
         let picture_folder = dirs::picture_dir().map(|p| p.join("watermark"));
         Self {
             output_folder: picture_folder,
-            border_ratio: (0.10, 0.10),
+            border_ratio: (0.05, 0.05, 0.05, 0.05),
             border_equal: false,
             aspect_ratio: None,
             background: [255, 255, 255],

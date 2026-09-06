@@ -5,23 +5,56 @@ use libvips::{
 
 use crate::{Position, params::WatermarkParams};
 
-// 计算画布大小
-pub fn cal_size(img_w: i32, img_h: i32, text_height: i32, text_position: Position , params: &WatermarkParams) -> (i32, i32) {
-    let mut canvas_h = (img_h as f64 * (1.0 + params.border_ratio.0)).round() as i32;
-    let mut canvas_w = if params.border_equal {
-        // 边框等宽
-        img_w + (canvas_h - img_h)
-    } else {
-        (img_w as f64 * (1.0 + params.border_ratio.1)).round() as i32
-    };
-    match text_position {
-        Position::Up | Position::Bottom => {
-            canvas_h += text_height;
-        } 
-        _ => {
-            canvas_w += text_height;
+/// 画布边框margin
+#[derive(Debug, Copy, Clone)]
+pub struct Margin {
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+    pub left: i32,
+}
+
+impl Margin {
+    pub fn cal_margin(
+        img_w: i32,
+        img_h: i32,
+        text_height: i32,
+        text_position: Position,
+        params: &WatermarkParams,
+    ) -> Self {
+        let (mut top, mut bottom, mut left, mut right) = if params.border_equal {
+            // 边框等宽，根据上边框的宽度确定所有边框宽度
+            let margin = (img_h as f64 * params.border_ratio.0).round() as i32;
+            (margin, margin, margin, margin)
+        } else {
+            (
+                (img_h as f64 * params.border_ratio.0).round() as i32,
+                (img_h as f64 * params.border_ratio.1).round() as i32,
+                (img_w as f64 * params.border_ratio.2).round() as i32,
+                (img_h as f64 * params.border_ratio.3).round() as i32,
+            )
+        };
+        // 根据文字的位置，边框添加文字宽度
+        match text_position {
+            Position::Up => top += text_height,
+            Position::Left => left += text_height,
+            Position::Bottom => bottom += text_height,
+            Position::Right => right += text_height,
+            _ => {}
+        };
+        Self {
+            top,
+            right,
+            bottom,
+            left,
         }
     }
+}
+
+// 计算画布大小
+pub fn cal_size(margin: &Margin, img_h: i32, img_w: i32, params: &WatermarkParams) -> (i32, i32) {
+    let mut canvas_h = img_h + margin.top + margin.bottom;
+    let mut canvas_w = img_w + margin.left + margin.right;
     if let Some(aspect_ratio) = params.aspect_ratio {
         let new_h = (canvas_w as f64 / aspect_ratio.0 * aspect_ratio.1).round() as i32;
         if new_h < canvas_w {
