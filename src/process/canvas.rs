@@ -3,10 +3,10 @@ use libvips::{
     ops::{self, BlackOptions},
 };
 
-use crate::params::WatermarkParams;
+use crate::{Position, params::WatermarkParams};
 
 // 计算画布大小
-pub fn cal_size(img_w: i32, img_h: i32, params: &WatermarkParams) -> (i32, i32) {
+pub fn cal_size(img_w: i32, img_h: i32, text_height: i32, text_position: Position , params: &WatermarkParams) -> (i32, i32) {
     let mut canvas_h = (img_h as f64 * (1.0 + params.border_ratio.0)).round() as i32;
     let mut canvas_w = if params.border_equal {
         // 边框等宽
@@ -14,6 +14,14 @@ pub fn cal_size(img_w: i32, img_h: i32, params: &WatermarkParams) -> (i32, i32) 
     } else {
         (img_w as f64 * (1.0 + params.border_ratio.1)).round() as i32
     };
+    match text_position {
+        Position::Up | Position::Bottom => {
+            canvas_h += text_height;
+        } 
+        _ => {
+            canvas_w += text_height;
+        }
+    }
     if let Some(aspect_ratio) = params.aspect_ratio {
         let new_h = (canvas_w as f64 / aspect_ratio.0 * aspect_ratio.1).round() as i32;
         if new_h < canvas_w {

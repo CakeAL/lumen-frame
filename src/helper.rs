@@ -1,17 +1,12 @@
-use libvips::{VipsImage, ops};
-
 use crate::params::WatermarkParams;
 
-pub fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
-    let make = make.replace("CORPORATION", "").trim().to_lowercase();
-    let [r, g, b] = watermark_params.background;
-    if watermark_params.solid_background && !is_dark_color(r, g, b) {
-        ops::svgload(&format!("./static/logo/{}-b.svg", make)).ok()
-    } else {
-        ops::svgload(&format!("./static/logo/{}-w.svg", make)).ok()
-    }
+/// 自动判断背景色，适合使用true黑色字体还是false白色
+pub fn auto_color(watermark_params: &WatermarkParams) -> bool {
+    let [r,g,b] = watermark_params.background;
+    watermark_params.solid_background && !is_dark_color(r, g, b)
 }
 
+// 判断是否是暗色
 fn is_dark_color(r: u8, g: u8, b: u8) -> bool {
     let r = r as f64 / 255.0;
     let g = g as f64 / 255.0;

@@ -1,14 +1,45 @@
+use libvips::{VipsImage, ops};
 use nom_exif::ExifDateTime;
 use regex::Regex;
 
-use crate::{Position, photo::{ExifInfo, Rational}};
+use crate::{helper::auto_color, params::WatermarkParams};
 
-// 需要渲染的多行文本
-#[derive(Debug, Clone, Default)]
+use crate::{
+    Position,
+    photo::{ExifInfo, Rational},
+};
+
+/// 需要渲染的多行文本
+#[derive(Debug, Clone)]
 pub struct Text {
-    // 每行文本模板
+    /// 每行文本模板
     pub template: Vec<String>,
+    /// 每行文本参数
     pub text_params: Vec<TextParams>,
+    /// 文本位置
+    pub position: Position,
+}
+
+impl Text {
+    /// 计算多行文本占用高度px，用于计算有字体一侧的margin宽度
+    /// 返回 (文本相对于图片的位置, 文本高度)
+    pub fn cal_height(&self, img_h: i32) -> (Position, i32) {
+        if self.text_params.is_empty() {
+            return (Position::Bottom, 0);
+        }
+        let img_h = img_h as f64;
+        let text_height: i32 = self
+            .text_params
+            .iter()
+            .map(|text_params| (text_params.size * img_h).round() as i32)
+            .sum();
+        let spacing: i32 = self
+            .text_params
+            .windows(2)
+            .map(|lines| (lines[0].size * img_h * lines[0].line_spacing).round() as i32)
+            .sum();
+        (self.position, text_height + spacing)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -31,14 +62,13 @@ pub struct TextParams {
     pub font: String,
     /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
     pub size: f64,
-    /// 行间距，默认为1.3
+    /// 行间距，默认为0.3
     pub line_spacing: f64,
-    pub color: [u8; 3],
+    /// None的时候即自动颜色
+    pub color: Option<[u8; 3]>,
     pub italic: bool,
     pub bold: bool,
     pub align: TextAlign,
-    /// 相对于图片的位置
-    pub position: Position,
     /// 文字方向
     pub direction: TextDirection,
 }
@@ -48,17 +78,15 @@ impl Default for TextParams {
         Self {
             font: "Arial".to_string(),
             size: 0.03,
-            line_spacing: 1.3,
-            color: [0, 0, 0],
+            line_spacing: 0.3,
+            color: None,
             italic: false,
             bold: false,
             align: TextAlign::default(),
-            position: Position::Bottom,
             direction: TextDirection::default(),
         }
     }
 }
-
 
 /// 根据给定的模板生成文字
 pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) -> String {
@@ -114,5 +142,14 @@ fn format_fnumber(value: &Rational) -> String {
             let v = *n as f64 / *d as f64;
             format_value(v)
         }
+    }
+}
+
+fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
+    let make = make.replace("CORPORATION", "").trim().to_lowercase();
+    if auto_color(watermark_params) {
+        ops::svgload(&format!("./static/logo/{}-b.svg", make)).ok()
+    } else {
+        ops::svgload(&format!("./static/logo/{}-w.svg", make)).ok()
     }
 }

@@ -1,8 +1,3 @@
-use anyhow::{Context, Result};
-use libvips::ops::{self, Interpretation};
-
-use crate::params::*;
-
 // /// 渲染底部水印文字为带 alpha 的 RGBA 图像。
 // ///
 // /// 注意：`libvips` crate 的 `text_with_opts` 会把只读的 `autofit-dpi` 输出属性
