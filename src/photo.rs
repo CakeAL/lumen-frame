@@ -114,7 +114,7 @@ impl Photo {
         } else {
             None
         };
-        let canvas = if let Some(text_layer) = text_layer {
+        let canvas = if let Some(mut text_layer) = text_layer {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
             let (text_x, text_y) = match text.position {
                 Position::Up => (img_x + img_w / 2 - text_w / 2, (margin.top - text_h) / 2),
@@ -122,6 +122,22 @@ impl Photo {
                     img_x + img_w / 2 - text_w / 2,
                     canvas_h - (text_h + margin.bottom) / 2,
                 ),
+                Position::Left => {
+                    text_layer = ops::rot(&text_layer, libvips::ops::Angle::D90)?;
+                    let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
+                    (
+                        (margin.left - text_w) / 2,
+                        margin.top + img_h / 2 - text_h / 2,
+                    )
+                }
+                Position::Right => {
+                    text_layer = ops::rot(&text_layer, libvips::ops::Angle::D90)?;
+                    let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
+                    (
+                        canvas_w - (text_w + margin.right) / 2,
+                        img_y + img_h / 2 - text_h / 2,
+                    )
+                }
                 _ => (0, 0),
             };
             ops::composite2_with_opts(

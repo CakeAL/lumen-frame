@@ -102,13 +102,7 @@ pub fn new_canvas(
     }?;
     let canvas = ops::addalpha(&canvas)?;
     let canvas = ops::cast(&canvas, ops::BandFormat::Uchar)?;
-    let canvas = ops::copy_with_opts(
-        &canvas,
-        &ops::CopyOptions {
-            interpretation: ops::Interpretation::Srgb,
-            ..Default::default()
-        },
-    )?;
+    let canvas = ops::colourspace(&canvas, ops::Interpretation::Srgb)?;
     Ok(canvas)
 }
 
