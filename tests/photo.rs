@@ -17,7 +17,7 @@ async fn test_generate_watermark() {
     let output_path = "./test_images/watermark";
     let photo = Photo::new(photo_path).await.unwrap();
     let text = Text {
-        position: lumen_frame::Position::Left,
+        position: lumen_frame::Position::Bottom,
         template: vec![
             "{Logo} {型号} {镜头型号}".to_owned(),
             "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
@@ -39,13 +39,15 @@ async fn test_generate_watermark() {
     };
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
-        aspect_ratio: Some((16.0, 9.0)),
-        position: lumen_frame::Position::Left,
+        // aspect_ratio: Some((16.0, 9.0)),
+        position: lumen_frame::Position::Center,
         blur_sigma: 15.0,
-        background: [26, 188, 156],
-        // solid_background: true,
-        border_radius: 0.02,
-        border_equal: true,
+        background: [255, 255, 255],
+        solid_background: true,
+        border_radius: 0.00,
+        shadow_size: 0.00,
+        // border_equal: true,
+        border_ratio: (0.0, 0.02, 0.05, 0.05),
         ..Default::default()
     };
     let watermark = photo.generate_watermark(&params, &text).unwrap();

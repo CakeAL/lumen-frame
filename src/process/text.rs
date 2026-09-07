@@ -288,37 +288,44 @@ fn prepare_line(
         match segment {
             Segment::Text(text) => layout_text.push_str(text),
             Segment::Logo => {
+                let make = exif.make.as_deref().unwrap_or_default();
                 let index = layout_text.len();
-                // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
-                layout_text.push('\u{200b}');
+                if let Some(logo) = find_make_logo(make, watermark_params) {
+                    // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
+                    layout_text.push('\u{200b}');
 
-                if let Some(make) = exif.make.as_deref() {
-                    if let Some(logo) = find_make_logo(make, watermark_params) {
-                        let (logo_w, logo_img_h) = (logo.get_width(), logo.get_height());
-                        if logo_w <= 0 || logo_img_h <= 0 {
-                            continue;
-                        }
-                        let aspect = logo_w as f64 / logo_img_h as f64;
-                        // logo 高度与该行文字实际高度（cap height）一致
-                        let box_h = target_h;
-                        let box_w = ((box_h as f64 * aspect).round() as f32).max(1.0);
-                        let logo = scale_logo(logo, box_w.round() as i32, box_h.round() as i32)?;
+                    let (logo_w, logo_img_h) = (logo.get_width(), logo.get_height());
+                    if logo_w <= 0 || logo_img_h <= 0 {
+                        continue;
+                    }
+                    let aspect = logo_w as f64 / logo_img_h as f64;
+                    // logo 高度与该行文字实际高度（cap height）一致
+                    let box_h = target_h;
+                    let box_w = ((box_h as f64 * aspect).round() as f32).max(1.0);
+                    let logo = scale_logo(logo, box_w.round() as i32, box_h.round() as i32)?;
 
-                        let id = next_id;
-                        next_id += 1;
-                        boxes.push(InlineBox {
-                            id,
-                            kind: InlineBoxKind::InFlow,
-                            index,
-                            width: box_w,
-                            height: box_h,
-                        });
-                        slots.push(LogoSlot { image: logo });
+                    let id = next_id;
+                    next_id += 1;
+                    boxes.push(InlineBox {
+                        id,
+                        kind: InlineBoxKind::InFlow,
+                        index,
+                        width: box_w,
+                        height: box_h,
+                    });
+                    slots.push(LogoSlot { image: logo });
+                } else {
+                    // 没有对应的 Logo 时，直接用品牌名（Make）兜底显示
+                    let brand = clean_make_display(make);
+                    if !brand.is_empty() {
+                        layout_text.push_str(&brand);
                     }
                 }
             }
         }
     }
+    // 去掉整行开头多余的空白
+    let layout_text = layout_text.trim_start().to_string();
 
     let layout = build_parley_layout(
         &layout_text,
@@ -666,16 +673,31 @@ fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage>
     Ok(img)
 }
 
-/// 根据给定的模板生成文字
+/// 根据给定的模板生成文字。
+///
+/// 缺失的字段不会被保留成 `{xxx}` 字面量，而是直接丢弃，
 pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) -> String {
     let re = Regex::new(r"\{([^{}]+)\}").unwrap();
+    let mut out = String::new();
+    let mut last = 0usize;
 
-    re.replace_all(template, |caps: &regex::Captures| {
+    for caps in re.captures_iter(template) {
+        let whole = caps.get(0).unwrap();
+        if whole.start() > last {
+            out.push_str(&template[last..whole.start()]);
+        }
         let key = &caps[1];
-
-        resolve_exif_key_name(key, exif, time_format).unwrap_or_else(|| caps[0].to_string())
-    })
-    .into_owned()
+        if let Some(value) = resolve_exif_key_name(key, exif, time_format) {
+            if !value.is_empty() {
+                out.push_str(&value);
+            }
+        }
+        last = whole.end();
+    }
+    if last < template.len() {
+        out.push_str(&template[last..]);
+    }
+    out
 }
 
 fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Option<String> {
@@ -684,11 +706,11 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
             .created_time
             .as_ref()
             .map(|time| format_created_time(time, time_format)),
-        "品牌" => exif.make.clone(),
-        "型号" => exif
-            .model
-            .as_ref()
-            .map(|m| format_model(m, &exif.make.clone().unwrap_or_default())),
+        "品牌" => exif.make.as_deref().map(clean_make_display),
+        "型号" => exif.model.as_ref().map(|m| {
+            let make = exif.make.as_deref().unwrap_or_default();
+            dedupe_model_brand(&format_model(m, make), make)
+        }),
         "快门" => exif.exposure_time.as_ref().map(ToString::to_string),
         "光圈" => exif.f_number.as_ref().map(format_fnumber),
         "ISO" => exif.isospeed_ratings.map(|v| v.to_string()),
@@ -736,6 +758,29 @@ fn format_model(model: &str, make: &str) -> String {
     } else {
         model.to_owned()
     }
+}
+
+/// 用于展示的品牌名（去掉 “CORPORATION” 这类后缀）。
+fn clean_make_display(make: &str) -> String {
+    make.replace("CORPORATION", "").trim().to_string()
+}
+
+/// 如果型号以品牌名开头（例如 “Xiaomi 15” 以 “Xiaomi” 开头），
+/// 就把品牌前缀去掉，避免和品牌/Logo 重复显示。
+fn dedupe_model_brand(model: &str, make: &str) -> String {
+    let make = clean_make_display(make);
+    if make.is_empty() {
+        return model.trim().to_string();
+    }
+    let model = model.trim();
+    let make_lower = make.to_lowercase();
+    if model.len() >= make_lower.len() && model[..make_lower.len()].to_lowercase() == make_lower {
+        let rest = &model[make_lower.len()..];
+        return rest
+            .trim_start_matches(|c: char| c.is_whitespace() || c == '-' || c == '_')
+            .to_string();
+    }
+    model.to_string()
 }
 
 fn format_fnumber(value: &Rational) -> String {

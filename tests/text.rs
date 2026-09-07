@@ -28,6 +28,22 @@ fn test_render_exif_template() {
     dbg!(text);
 }
 
+#[test]
+fn test_render_exif_template_missing_and_dedupe() {
+    // 没有镜头型号、型号含有品牌前缀时：
+    // 品牌 + 型号一起去重，缺失的 {镜头型号} 连同 “ - ” 一起被去掉。
+    let exif_info = ExifInfo {
+        make: Some("Xiaomi".to_owned()),
+        model: Some("Xiaomi 15".to_owned()),
+        lens_model: None,
+        ..Default::default()
+    };
+    let t1 = render_exif_template("{品牌} {型号} - {镜头型号}", &exif_info, "%Y/%m/%d");
+    assert_eq!(t1, "Xiaomi 15");
+    let t2 = render_exif_template("{型号} - {镜头型号}", &exif_info, "%Y/%m/%d");
+    assert_eq!(t2, "15");
+}
+
 #[tokio::test]
 async fn test_render_text_with_logo_mixed() {
     let photo_path = "./test_images/DSC_4587.jpg";

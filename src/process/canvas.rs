@@ -102,7 +102,16 @@ pub fn new_canvas(
     }?;
     let canvas = ops::addalpha(&canvas)?;
     let canvas = ops::cast(&canvas, ops::BandFormat::Uchar)?;
-    let canvas = ops::colourspace(&canvas, ops::Interpretation::Srgb)?;
+    let canvas = ops::copy_with_opts(
+        &canvas,
+        &ops::CopyOptions {
+            width: canvas_w,
+            height: canvas_h,
+            bands: 4,
+            interpretation: ops::Interpretation::Srgb,
+            ..Default::default()
+        },
+    )?;
     Ok(canvas)
 }
 
@@ -172,25 +181,20 @@ pub fn add_shadow(
     )?;
     // RGB + Alpha → RGBA
     let shadow = ops::bandjoin(&mut [shadow_rgb, shadow_alpha])?;
+    // 确保 shadow 与 canvas 一样是 uchar/SRGB，避免 band 格式不一致导致 composite2 崩溃。
+    let shadow = ops::cast(&shadow, ops::BandFormat::Uchar)?;
+    let shadow = ops::copy_with_opts(
+        &shadow,
+        &ops::CopyOptions {
+            width: shadow_w,
+            height: shadow_h,
+            bands: 4,
+            interpretation: ops::Interpretation::Srgb,
+            ..Default::default()
+        },
+    )?;
     let shadow_x = img_x - shadow_margin;
     let shadow_y = img_y - shadow_margin;
-
-    // println!(
-    //     "canvas: {}x{} bands={} format={:?} interpretation={:?}",
-    //     canvas.get_width(),
-    //     canvas.get_height(),
-    //     canvas.get_bands(),
-    //     canvas.get_format(),
-    //     canvas.get_interpretation(),
-    // );
-    // println!(
-    //     "shadow: {}x{} bands={} format={:?} interpretation={:?}",
-    //     shadow.get_width(),
-    //     shadow.get_height(),
-    //     shadow.get_bands(),
-    //     shadow.get_format(),
-    //     shadow.get_interpretation(),
-    // );
 
     ops::composite2_with_opts(
         &canvas,
