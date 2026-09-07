@@ -8,7 +8,12 @@ tokio = { version = "1", features = ["full"] }
 nom-exif = { version = "3", features = ["tokio-fs"] }
 anyhow = "1"
 libvips = "2.3.0"
-dirs = "6"
+dirs = "7"
 regex = "1"
 num-integer = "0.1"
 chrono = "0.4"
+
+# 文字排版渲染
+parley = "0.11"
+swash = "0.2"
+peniko = "0.6"

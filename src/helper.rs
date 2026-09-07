@@ -51,12 +51,3 @@ pub fn to_roman(mut num: i32) -> String {
     }
     result
 }
-
-// svg 替换xml符号
-pub fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}

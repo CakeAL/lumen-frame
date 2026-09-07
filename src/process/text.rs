@@ -1,14 +1,23 @@
+use std::borrow::Cow;
+
+use libvips::error::Error as VipsError;
 use libvips::{Result, VipsImage, ops};
 use nom_exif::ExifDateTime;
-use regex::Regex;
-
-use crate::{
-    helper::{auto_color, escape_xml},
-    params::WatermarkParams,
+use parley::style::{FontFamily, FontStyle, FontWeight, LineHeight, StyleProperty};
+use parley::{
+    Alignment, AlignmentOptions, FontContext, InlineBox, InlineBoxKind, Layout, LayoutContext,
+    PositionedLayoutItem,
 };
+use regex::Regex;
+use swash::FontRef;
+use swash::scale::image::{Content, Image};
+use swash::scale::{Render, ScaleContext, Source};
+use swash::zeno::Format;
 
 use crate::{
     Position,
+    helper::auto_color,
+    params::WatermarkParams,
     photo::{ExifInfo, Rational},
 };
 
@@ -54,101 +63,101 @@ impl Text {
         img_h: i32,
         canvas_w: i32,
         watermark_params: &WatermarkParams,
-    ) -> Result<Option<SvgString>> {
+    ) -> Result<Option<VipsImage>> {
+        let _ = canvas_w; // 导出宽度由内容决定（最长行），不再使用画布宽度。
+
         // 行数
         let line_count = self.template.len().min(self.text_params.len());
         if line_count == 0 {
             return Ok(None);
         }
 
-        // 根据模板生成文字
-        let texts: Vec<String> = self
+        // 解析每一行：把 `{Logo}` 拆出来，其余部分用 EXIF 模板渲染
+        let segment_lines: Vec<Vec<Segment>> = self
             .template
             .iter()
-            .map(|t| render_exif_template(t, exif, &self.time_format))
+            .take(line_count)
+            .map(|t| parse_template(t, exif, &self.time_format))
             .collect();
 
         // 计算每一行的字号
         let font_sizes: Vec<f32> = self
             .text_params
             .iter()
+            .take(line_count)
             .map(|params| (params.size * img_h as f64) as f32)
             .collect();
 
-        // 计算svg高度和宽度
-        let svg_height: f32 = self
-            .text_params
-            .iter()
-            .take(line_count)
-            .zip(font_sizes.iter())
-            .map(|(params, font_sizes)| font_sizes * params.line_spacing as f32)
-            .sum();
-        let svg_width = canvas_w as f32;
+        let mut font_ctx = FontContext::new();
+        let mut layout_ctx = LayoutContext::<peniko::Brush>::new();
 
-        let mut svg = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg"
-            width="{svg_width}"
-            height="{svg_height}"
-            viewBox="0 0 {svg_width} {svg_height}">"#
-        );
-        let mut y = 0.0;
+        let mut prepared = Vec::with_capacity(line_count);
+        let mut total_h = 0usize;
 
-        for ((text, params), font_size) in texts
-            .iter()
-            .zip(self.text_params.iter().take(line_count))
-            .zip(font_sizes.iter())
-        {
-            // SVG text 的 y 是 baseline
-            let baseline = y + *font_size;
-
-            let color = if let Some(rgb) = params.color {
-                format!("rgb({},{},{})", rgb[0], rgb[1], rgb[2])
-            } else {
-                if auto_color(watermark_params) {
-                    "black".into()
-                } else {
-                    "white".into()
-                }
-            };
-            let font_style = if params.italic { "italic" } else { "normal" };
-
-            let font_weight = if params.bold { "bold" } else { "normal" };
-
-            let text_anchor = match params.align {
-                TextAlign::Left => "start",
-                TextAlign::Center => "middle",
-                TextAlign::Right => "end",
-            };
-
-            let x = match params.align {
-                TextAlign::Left => 0.0,
-                TextAlign::Center => svg_width / 2.0,
-                TextAlign::Right => svg_width,
-            };
-            svg.push_str(&format!(
-                r#"<text
-                    x="{x}"
-                    y="{baseline}"
-                    font-family="{font_family}"
-                    font-size="{font_size}px"
-                    font-style="{font_style}"
-                    font-weight="{font_weight}"
-                    text-anchor="{text_anchor}"
-                    fill="{color}">
-                    {text}
-                </text>"#,
-                font_family = params.font,
-                text = escape_xml(text),
-            ));
-            y += font_size * params.line_spacing as f32;
+        for i in 0..line_count {
+            let line = prepare_line(
+                &segment_lines[i],
+                &self.text_params[i],
+                font_sizes[i],
+                exif,
+                watermark_params,
+                &mut font_ctx,
+                &mut layout_ctx,
+            )?;
+            total_h += line.height;
+            prepared.push(line);
         }
-        svg.push_str("</svg>");
 
-        Ok(Some(svg))
+        // 导出图片宽度取所有行中最长一行的内容宽度，左右不留空白。
+        let width = prepared
+            .iter()
+            .map(|line| line.layout.width().ceil() as i32)
+            .max()
+            .unwrap_or(0);
+        if width <= 0 {
+            return Ok(None);
+        }
+
+        // 用最长行宽度作为排版宽度重新换行并执行对齐：
+        // 左对齐时所有行都贴左，图片宽度 = 最长行；居中/右对齐也都在该宽度内。
+        for (i, line) in prepared.iter_mut().enumerate() {
+            line.layout.break_all_lines(Some(width as f32));
+            line.layout.align(
+                alignment_for(self.text_params[i].align),
+                AlignmentOptions::default(),
+            );
+        }
+
+        let mut canvas = vec![0u8; width as usize * total_h * 4];
+
+        let mut y_off = 0i32;
+        for line in &prepared {
+            render_line_into(&mut canvas, width, total_h as i32, y_off, line)?;
+            y_off += line.height as i32;
+        }
+
+        let img = VipsImage::new_from_memory_copy(
+            &canvas,
+            width,
+            total_h as i32,
+            4,
+            ops::BandFormat::Uchar,
+        )?;
+        let img = ops::copy_with_opts(
+            &img,
+            &ops::CopyOptions {
+                width,
+                height: total_h as i32,
+                bands: 4,
+                interpretation: ops::Interpretation::Srgb,
+                ..Default::default()
+            },
+        )?;
+        Ok(Some(img))
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum TextAlign {
     Left,
     #[default]
@@ -156,7 +165,7 @@ pub enum TextAlign {
     Right,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum TextDirection {
     #[default]
     Horizontal,
@@ -194,6 +203,472 @@ impl Default for TextParams {
     }
 }
 
+/// 一行模板中被拆分出的片段。
+#[derive(Debug, Clone)]
+enum Segment {
+    /// 需要插入相机 logo
+    Logo,
+    /// 已经用 EXIF 渲染好的普通文本
+    Text(String),
+}
+
+/// 把模板中的 `{Logo}` 识别出来，其余文本用 EXIF 模板渲染。
+fn parse_template(template: &str, exif: &ExifInfo, time_format: &str) -> Vec<Segment> {
+    let re = Regex::new(r"\{Logo\}").unwrap();
+    let mut segments = Vec::new();
+    let mut last = 0;
+
+    for m in re.find_iter(template) {
+        if m.start() > last {
+            let text = render_exif_template(&template[last..m.start()], exif, time_format);
+            if !text.is_empty() {
+                segments.push(Segment::Text(text));
+            }
+        }
+        segments.push(Segment::Logo);
+        last = m.end();
+    }
+
+    if last < template.len() {
+        let text = render_exif_template(&template[last..], exif, time_format);
+        if !text.is_empty() {
+            segments.push(Segment::Text(text));
+        }
+    }
+    segments
+}
+
+/// 一个已加载的相机 logo（已经缩放到目标尺寸、RGBA/uchar）。
+struct LogoSlot {
+    image: VipsImage,
+}
+
+/// 一行渲染所需的全部中间结果。
+struct PreparedLine {
+    layout: Layout<peniko::Brush>,
+    slots: Vec<LogoSlot>,
+    height: usize,
+}
+
+fn prepare_line(
+    segments: &[Segment],
+    params: &TextParams,
+    font_size: f32,
+    exif: &ExifInfo,
+    watermark_params: &WatermarkParams,
+    font_ctx: &mut FontContext,
+    layout_ctx: &mut LayoutContext<peniko::Brush>,
+) -> Result<PreparedLine> {
+    // 先用占位字符构建一次纯文本布局，量出该行文字的实际字形高度（cap height），
+    // 让 Logo 高度与文字高度相等，而不是用整个 em 高度（那样会显得比字高）。
+    let mut probe_text = String::new();
+    for segment in segments {
+        match segment {
+            Segment::Text(text) => probe_text.push_str(text),
+            Segment::Logo => probe_text.push('\u{200b}'),
+        }
+    }
+    let probe_layout = build_parley_layout(
+        &probe_text,
+        params,
+        font_size,
+        None,
+        &[],
+        watermark_params,
+        font_ctx,
+        layout_ctx,
+    );
+    let target_h = measure_cap_height(&probe_layout)
+        .unwrap_or(font_size * 0.7)
+        .max(1.0);
+
+    let mut layout_text = String::new();
+    let mut boxes: Vec<InlineBox> = Vec::new();
+    let mut slots: Vec<LogoSlot> = Vec::new();
+    let mut next_id = 0u64;
+
+    for segment in segments {
+        match segment {
+            Segment::Text(text) => layout_text.push_str(text),
+            Segment::Logo => {
+                let index = layout_text.len();
+                // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
+                layout_text.push('\u{200b}');
+
+                if let Some(make) = exif.make.as_deref() {
+                    if let Some(logo) = find_make_logo(make, watermark_params) {
+                        let (logo_w, logo_img_h) = (logo.get_width(), logo.get_height());
+                        if logo_w <= 0 || logo_img_h <= 0 {
+                            continue;
+                        }
+                        let aspect = logo_w as f64 / logo_img_h as f64;
+                        // logo 高度与该行文字实际高度（cap height）一致
+                        let box_h = target_h;
+                        let box_w = ((box_h as f64 * aspect).round() as f32).max(1.0);
+                        let logo = scale_logo(logo, box_w.round() as i32, box_h.round() as i32)?;
+
+                        let id = next_id;
+                        next_id += 1;
+                        boxes.push(InlineBox {
+                            id,
+                            kind: InlineBoxKind::InFlow,
+                            index,
+                            width: box_w,
+                            height: box_h,
+                        });
+                        slots.push(LogoSlot { image: logo });
+                    }
+                }
+            }
+        }
+    }
+
+    let layout = build_parley_layout(
+        &layout_text,
+        params,
+        font_size,
+        None,
+        &boxes,
+        watermark_params,
+        font_ctx,
+        layout_ctx,
+    );
+
+    let height = (font_size * params.line_spacing as f32)
+        .max(layout.height())
+        .ceil()
+        .max(1.0) as usize;
+
+    Ok(PreparedLine {
+        layout,
+        slots,
+        height,
+    })
+}
+
+fn build_parley_layout(
+    text: &str,
+    params: &TextParams,
+    font_size: f32,
+    max_advance: Option<f32>,
+    boxes: &[InlineBox],
+    watermark_params: &WatermarkParams,
+    font_ctx: &mut FontContext,
+    layout_ctx: &mut LayoutContext<peniko::Brush>,
+) -> Layout<peniko::Brush> {
+    let mut builder = layout_ctx.ranged_builder(font_ctx, text, 1.0, true);
+    // 追加一些包含 ℤ (U+2124) 的**无衬线** fallback 字体，
+    // 否则 parley 对缺失字形只输出 gid=0 (.notdef)，导致“ℤ”渲染成空白；
+    // 同时避免 fallback 到衬线字体，保证 ℤ 跟整体文字一样是“黑体”风格。
+    let family = format!(
+        "{}, Geneva, Menlo, Arial Unicode MS, Fira Code, sans-serif",
+        params.font
+    );
+    builder.push_default(StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(
+        family,
+    ))));
+    builder.push_default(StyleProperty::FontSize(font_size));
+    builder.push_default(StyleProperty::FontStyle(if params.italic {
+        FontStyle::Italic
+    } else {
+        FontStyle::Normal
+    }));
+    builder.push_default(StyleProperty::FontWeight(if params.bold {
+        FontWeight::BOLD
+    } else {
+        FontWeight::NORMAL
+    }));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
+        params.line_spacing as f32,
+    )));
+    builder.push_default(StyleProperty::Brush(text_brush(params, watermark_params)));
+    for ibox in boxes {
+        builder.push_inline_box(ibox.clone());
+    }
+
+    let mut layout = builder.build(text);
+    layout.break_all_lines(max_advance);
+    layout.align(alignment_for(params.align), AlignmentOptions::default());
+    layout
+}
+
+fn measure_cap_height(layout: &Layout<peniko::Brush>) -> Option<f32> {
+    for line in layout.lines() {
+        for item in line.items() {
+            if let PositionedLayoutItem::GlyphRun(gr) = item {
+                if let Some(cap) = gr.run().metrics().cap_height {
+                    return Some(cap);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn alignment_for(align: TextAlign) -> Alignment {
+    match align {
+        TextAlign::Left => Alignment::Left,
+        TextAlign::Center => Alignment::Center,
+        TextAlign::Right => Alignment::Right,
+    }
+}
+
+fn text_brush(params: &TextParams, watermark_params: &WatermarkParams) -> peniko::Brush {
+    let c = text_color(params, watermark_params);
+    let color: peniko::Color = peniko::color::Rgba8::from_u8_array(c).into();
+    color.into()
+}
+
+fn text_color(params: &TextParams, watermark_params: &WatermarkParams) -> [u8; 4] {
+    if let Some(rgb) = params.color {
+        [rgb[0], rgb[1], rgb[2], 255]
+    } else if auto_color(watermark_params) {
+        [0, 0, 0, 255]
+    } else {
+        [255, 255, 255, 255]
+    }
+}
+
+fn brush_to_rgba(brush: peniko::Brush) -> [u8; 4] {
+    match brush {
+        peniko::Brush::Solid(c) => c.to_rgba8().to_u8_array(),
+        _ => [255, 255, 255, 255],
+    }
+}
+
+fn render_line_into(
+    canvas: &mut [u8],
+    canvas_w: i32,
+    canvas_h: i32,
+    y_off: i32,
+    line: &PreparedLine,
+) -> Result<()> {
+    let mut scale_ctx = ScaleContext::new();
+
+    for layout_line in line.layout.lines() {
+        for item in layout_line.items() {
+            match item {
+                PositionedLayoutItem::GlyphRun(glyph_run) => {
+                    let run = glyph_run.run();
+                    let font = run.font();
+                    let Some(font_ref) = FontRef::from_index(font.data.data(), font.index as usize)
+                    else {
+                        continue;
+                    };
+                    let mut scaler = scale_ctx
+                        .builder(font_ref)
+                        .size(run.font_size())
+                        .hint(true)
+                        .build();
+                    let color = brush_to_rgba(glyph_run.style().brush.clone());
+
+                    for glyph in glyph_run.positioned_glyphs() {
+                        let mut render = Render::new(&[Source::Outline]);
+                        render.format(Format::Alpha);
+                        if let Some(image) = render.render(&mut scaler, glyph.id as u16) {
+                            draw_glyph_mask(
+                                canvas, canvas_w, canvas_h, y_off, &image, glyph.x, glyph.y, color,
+                            );
+                        }
+                    }
+                }
+                PositionedLayoutItem::InlineBox(inline_box) => {
+                    if inline_box.kind == InlineBoxKind::InFlow {
+                        if let Some(slot) = line.slots.get(inline_box.id as usize) {
+                            draw_logo(
+                                canvas,
+                                canvas_w,
+                                canvas_h,
+                                y_off,
+                                inline_box.x as i32,
+                                inline_box.y as i32,
+                                &slot.image,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn draw_glyph_mask(
+    canvas: &mut [u8],
+    canvas_w: i32,
+    canvas_h: i32,
+    y_off: i32,
+    image: &Image,
+    gx: f32,
+    gy: f32,
+    color: [u8; 4],
+) {
+    if image.content != Content::Mask {
+        return;
+    }
+    let pw = image.placement.width as i32;
+    let ph = image.placement.height as i32;
+    let px = gx as i32 + image.placement.left;
+    let py = gy as i32 - image.placement.top + y_off;
+
+    for row in 0..ph {
+        let dy = py + row;
+        if dy < 0 || dy >= canvas_h {
+            continue;
+        }
+        for col in 0..pw {
+            let dx = px + col;
+            if dx < 0 || dx >= canvas_w {
+                continue;
+            }
+            let coverage = image.data[(row * pw + col) as usize];
+            if coverage == 0 {
+                continue;
+            }
+            blend_pixel(
+                canvas, canvas_w, dx, dy, color[0], color[1], color[2], coverage,
+            );
+        }
+    }
+}
+
+fn draw_logo(
+    canvas: &mut [u8],
+    canvas_w: i32,
+    canvas_h: i32,
+    y_off: i32,
+    x: i32,
+    y: i32,
+    logo: &VipsImage,
+) -> Result<()> {
+    let (logo_w, logo_h) = (logo.get_width(), logo.get_height());
+    let bands = logo.get_bands();
+    if bands != 4 {
+        return Err(VipsError::OperationError("logo image must be RGBA"));
+    }
+    let data = logo.image_write_to_memory();
+    let dx0 = x;
+    let dy0 = y + y_off;
+
+    for sy in 0..logo_h {
+        let dy = dy0 + sy;
+        if dy < 0 || dy >= canvas_h {
+            continue;
+        }
+        for sx in 0..logo_w {
+            let dx = dx0 + sx;
+            if dx < 0 || dx >= canvas_w {
+                continue;
+            }
+            let si = ((sy as usize * logo_w as usize) + sx as usize) * 4;
+            let sa = data[si + 3] as f32 / 255.0;
+            if sa <= 0.0 {
+                continue;
+            }
+            let idx = ((dy as usize * canvas_w as usize) + dx as usize) * 4;
+            let da = canvas[idx + 3] as f32 / 255.0;
+            let out_a = sa + da * (1.0 - sa);
+            if out_a <= 0.0 {
+                continue;
+            }
+            for c in 0..3 {
+                canvas[idx + c] =
+                    ((data[si + c] as f32 * sa + canvas[idx + c] as f32 * da * (1.0 - sa)) / out_a)
+                        .round() as u8;
+            }
+            canvas[idx + 3] = (out_a * 255.0).round() as u8;
+        }
+    }
+    Ok(())
+}
+
+fn blend_pixel(
+    canvas: &mut [u8],
+    canvas_w: i32,
+    x: i32,
+    y: i32,
+    r: u8,
+    g: u8,
+    b: u8,
+    coverage: u8,
+) {
+    let idx = ((y as usize * canvas_w as usize) + x as usize) * 4;
+    let sa = coverage as f32 / 255.0;
+    let da = canvas[idx + 3] as f32 / 255.0;
+    let out_a = sa + da * (1.0 - sa);
+    if out_a <= 0.0 {
+        return;
+    }
+    canvas[idx] = ((r as f32 * sa + canvas[idx] as f32 * da * (1.0 - sa)) / out_a).round() as u8;
+    canvas[idx + 1] =
+        ((g as f32 * sa + canvas[idx + 1] as f32 * da * (1.0 - sa)) / out_a).round() as u8;
+    canvas[idx + 2] =
+        ((b as f32 * sa + canvas[idx + 2] as f32 * da * (1.0 - sa)) / out_a).round() as u8;
+    canvas[idx + 3] = (out_a * 255.0).round() as u8;
+}
+
+/// 把 libvips 图片统一转成 RGBA / uchar，用于手工合成像素。
+fn to_rgba(img: VipsImage) -> Result<VipsImage> {
+    let img = ops::cast(&img, ops::BandFormat::Uchar)?;
+    let bands = img.get_bands();
+    let rgba = match bands {
+        4 => img,
+        3 => ops::addalpha(&img)?,
+        2 => {
+            let grey = ops::extract_band(&img, 0)?;
+            let alpha = ops::extract_band(&img, 1)?;
+            let g2 = ops::copy(&grey)?;
+            let g3 = ops::copy(&grey)?;
+            let rgb = ops::bandjoin(&mut [grey, g2, g3])?;
+            ops::bandjoin(&mut [rgb, alpha])?
+        }
+        1 => {
+            let g1 = img;
+            let g2 = ops::copy(&g1)?;
+            let g3 = ops::copy(&g1)?;
+            let rgb = ops::bandjoin(&mut [g1, g2, g3])?;
+            let alpha = VipsImage::new_from_image(&rgb, &[255.0])?;
+            ops::bandjoin(&mut [rgb, alpha])?
+        }
+        _ => {
+            return Err(VipsError::OperationError(
+                "unsupported logo bands, expected 1..=4",
+            ));
+        }
+    };
+
+    let w = rgba.get_width();
+    let h = rgba.get_height();
+    ops::copy_with_opts(
+        &rgba,
+        &ops::CopyOptions {
+            width: w,
+            height: h,
+            bands: 4,
+            interpretation: ops::Interpretation::Srgb,
+            ..Default::default()
+        },
+    )
+}
+
+fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage> {
+    let img = to_rgba(img)?;
+    let (w, h) = (img.get_width(), img.get_height());
+    if (w, h) != (target_w, target_h) {
+        let scale_x = target_w as f64 / w as f64;
+        let scale_y = target_h as f64 / h as f64;
+        return ops::resize_with_opts(
+            &img,
+            scale_x,
+            &ops::ResizeOptions {
+                vscale: scale_y,
+                ..Default::default()
+            },
+        );
+    }
+    Ok(img)
+}
+
 /// 根据给定的模板生成文字
 pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) -> String {
     let re = Regex::new(r"\{([^{}]+)\}").unwrap();
@@ -212,7 +687,7 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
             .created_time
             .as_ref()
             .map(|time| format_created_time(time, time_format)),
-        "Logo" => exif.make.clone(),
+        "品牌" => exif.make.clone(),
         "型号" => exif
             .model
             .as_ref()
@@ -226,6 +701,8 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
         "等效焦距" => exif.focal_length_in35mm_film.map(|v| v.to_string()),
         "镜头生产商" => exif.lens_make.clone(),
         "镜头型号" => exif.lens_model.clone(),
+        // Logo 由 render_text 的 InlineBox 处理，这里不替换成文本
+        "Logo" => None,
         _ => None,
     }
 }
@@ -282,9 +759,12 @@ fn format_fnumber(value: &Rational) -> String {
 
 fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
     let make = make.replace("CORPORATION", "").trim().to_lowercase();
-    if auto_color(watermark_params) {
-        ops::svgload(&format!("./static/logo/{}-b.svg", make)).ok()
+    let suffix = if auto_color(watermark_params) {
+        "b"
     } else {
-        ops::svgload(&format!("./static/logo/{}-w.svg", make)).ok()
-    }
+        "w"
+    };
+    let path = format!("./static/logo/{}-{}.svg", make, suffix);
+    let svg = std::fs::read_to_string(path).ok()?;
+    ops::svgload_buffer(svg.as_bytes()).ok()
 }

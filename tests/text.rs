@@ -7,7 +7,7 @@ use lumen_frame::{
     photo::{ExifInfo, Photo, Rational},
     process::{
         canvas::{self, Margin},
-        text::{Text, TextParams, render_exif_template},
+        text::{Text, TextAlign, TextParams, render_exif_template},
     },
 };
 
@@ -29,7 +29,7 @@ fn test_render_exif_template() {
 }
 
 #[tokio::test]
-async fn test_render_text() {
+async fn test_render_text_with_logo_mixed() {
     let photo_path = "./test_images/DSC_4587.jpg";
     let output_path = "./test_images/watermark";
     let photo = Photo::new(photo_path).await.unwrap();
@@ -43,10 +43,13 @@ async fn test_render_text() {
             TextParams {
                 size: 0.03,
                 italic: true,
+                align: TextAlign::Center,
+                bold: true,
                 ..Default::default()
             },
             TextParams {
                 size: 0.022,
+                align: TextAlign::Center,
                 ..Default::default()
             },
         ],
@@ -58,8 +61,8 @@ async fn test_render_text() {
         position: lumen_frame::Position::Left,
         blur_sigma: 15.0,
         background: [26, 188, 156],
-        // solid_background: true,
         border_radius: 0.02,
+        solid_background: true,
         ..Default::default()
     };
     let img = ops::jpegload_with_opts(
@@ -74,9 +77,47 @@ async fn test_render_text() {
     let (text_position, text_height) = text.cal_height(img_h);
     let margin = Margin::cal_margin(img_w, img_h, text_height, text_position, &params);
     let (canvas_w, _canvas_h) = canvas::cal_size(&margin, img_w, img_h, &params);
-    let text_svg = text
-        .render_text(&photo.exif.unwrap(), img_h, canvas_w, &params)
+
+    let text_img = text
+        .render_text(&photo.exif.as_ref().unwrap(), img_h, canvas_w, &params)
         .unwrap()
-        .unwrap();
-    std::fs::write(&format!("{}/text.svg", output_path), &text_svg).expect("failed to save svg");
+        .expect("render_text should produce an image");
+
+    let (w, h) = (text_img.get_width(), text_img.get_height());
+    assert!(w > 0, "text image width must be positive");
+    assert!(h > 0, "text image height must be positive");
+    // 已去掉左右空白：图片宽度 = 最长一行，而不是整个画布宽度
+    assert!(
+        w < canvas_w,
+        "text image should be trimmed to the longest line width (w={w}, canvas_w={canvas_w})"
+    );
+
+    // 确保确实有可见像素（文字或 logo）
+    let pixels = text_img.image_write_to_memory();
+    let has_visible = pixels.chunks_exact(4).any(|p| p[3] > 0);
+    assert!(
+        has_visible,
+        "rendered text image should not be fully transparent"
+    );
+
+    std::fs::create_dir_all(output_path).unwrap();
+    ops::pngsave(&text_img, &format!("{output_path}/text.png")).unwrap();
+
+    // 一个没有 EXIF 相机品牌（无 logo）的模板也能正常渲染出图片
+    let text = Text {
+        position: lumen_frame::Position::Bottom,
+        template: vec!["{拍摄日期} {光圈}".to_owned()],
+        text_params: vec![TextParams {
+            size: 0.03,
+            ..Default::default()
+        }],
+        time_format: "%Y/%m/%d".to_owned(),
+    };
+    let params = WatermarkParams::default();
+    let fallback_img = text
+        .render_text(&photo.exif.as_ref().unwrap(), img_h, 1200, &params)
+        .unwrap()
+        .expect("render_text should produce an image");
+    assert!(fallback_img.get_width() > 0);
+    assert!(fallback_img.get_height() > 0);
 }

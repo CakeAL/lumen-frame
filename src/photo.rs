@@ -223,7 +223,6 @@ impl ExifInfo {
         let exif = read_exif_async(path)
             .await
             .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
-        dbg!(&exif);
         let get = |tag| find_value(&exif, tag);
         let to_string = |v: &EntryValue| v.as_str().map(|s| s.to_string());
         Ok(Self {
