@@ -13,7 +13,8 @@ async fn test_dump_exif() {
 
 #[tokio::test]
 async fn test_generate_watermark() {
-    let photo_path = "./test_images/DSC_4587.jpg";
+    // let photo_path = "./test_images/DSC_4587.jpg";
+    let photo_path = "./test_images/ultra_hdr.jpg";
     let output_path = "./test_images/watermark";
     let photo = Photo::new(photo_path).await.unwrap();
     let text = Text {
@@ -39,15 +40,15 @@ async fn test_generate_watermark() {
     };
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
-        // aspect_ratio: Some((16.0, 9.0)),
+        aspect_ratio: Some((16.0, 9.0)),
         position: lumen_frame::Position::Center,
         blur_sigma: 15.0,
         background: [255, 255, 255],
         solid_background: true,
-        border_radius: 0.00,
-        shadow_size: 0.00,
+        border_radius: 0.1,
+        shadow_size: 0.06,
         // border_equal: true,
-        border_ratio: (0.0, 0.02, 0.05, 0.05),
+        // border_ratio: (0.0, 0.02, 0.05, 0.05),
         ..Default::default()
     };
     let watermark = photo.generate_watermark(&params, &text).unwrap();

@@ -8,15 +8,7 @@ use std::{
     sync::OnceLock,
 };
 
-use crate::{
-    Position,
-    params::WatermarkParams,
-    process::{
-        canvas::{self, Margin},
-        image,
-        text::Text,
-    },
-};
+use crate::{Position, params::WatermarkParams, process::*};
 
 /// 进程级单例：保证 libvips 在整个进程生命周期内保持初始化。
 ///
@@ -46,18 +38,29 @@ impl Photo {
         })
     }
 
-    pub fn generate_watermark(&self, params: &WatermarkParams, text: &Text) -> Result<VipsImage> {
+    pub fn generate_watermark(
+        &self,
+        params: &WatermarkParams,
+        text: &text::Text,
+    ) -> Result<VipsImage> {
         vips();
 
-        // 摆正原图
-        let img = ops::jpegload_with_opts(
-            &self.path.to_string_lossy(),
-            &ops::JpegloadOptions {
-                autorotate: true,
-                ..Default::default()
-            },
-        )
-        .context("failed to load image")?;
+        // 用自动检测加载器读取原图：这样 Ultra HDR (ISO 21496-1) 的 gain map
+        // 会被保留在 VipsImage 上，后续处理（缩放、合成等）会带着它一起走。
+        let img = VipsImage::new_from_file(&self.path.to_string_lossy())
+            .context("failed to load image")?;
+        // 根据 EXIF orientation 摆正原图
+        let img = ops::autorot(&img).context("failed to autorotate image")?;
+
+        // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）
+        let original_gainmap = gain_map::get_gainmap(&img);
+        // gain map 的分辨率比例（1 表示与 base 同尺寸，2 表示一半尺寸……）
+        let gainmap_scale = original_gainmap.as_ref().map(|_| {
+            img.get_as_string("gainmap-scale-factor")
+                .ok()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .unwrap_or(2.0)
+        });
 
         // 计算水印照片的图片尺寸
         let (img_w, img_h) = (img.get_width(), img.get_height());
@@ -69,7 +72,7 @@ impl Photo {
             (Position::Bottom, 0)
         };
         // 计算画布边框尺寸
-        let margin = Margin::cal_margin(img_w, img_h, text_height, text_position, params);
+        let margin = canvas::Margin::cal_margin(img_w, img_h, text_height, text_position, params);
         // 画布尺寸
         let (canvas_w, canvas_h) = canvas::cal_size(&margin, img_w, img_h, params);
         // 计算图片坐标
@@ -114,7 +117,7 @@ impl Photo {
         } else {
             None
         };
-        let canvas = if let Some(mut text_layer) = text_layer {
+        let mut canvas = if let Some(mut text_layer) = text_layer {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
             let (text_x, text_y) = match text.position {
                 Position::Up => (img_x + img_w / 2 - text_w / 2, (margin.top - text_h) / 2),
@@ -154,6 +157,25 @@ impl Photo {
         } else {
             canvas
         };
+
+        // 原图带 Ultra HDR gain map 时，重写一个只覆盖中间照片区域、四周为
+        // boost=1（0）的新 gain map，避免水印边框/背景被额外提亮。
+        if let Some(original_gainmap) = original_gainmap.as_ref() {
+            // 按原图的 gainmap-scale-factor 生成，不提前放大/缩小 gain map。
+            let new_gainmap = gain_map::make_watermark_gainmap(
+                original_gainmap,
+                canvas_w,
+                canvas_h,
+                img_x,
+                img_y,
+                img_w,
+                img_h,
+                gainmap_scale.unwrap_or(2.0),
+                params.border_radius,
+            )?;
+            gain_map::set_gainmap(&mut canvas, &new_gainmap);
+        }
+
         Ok(canvas)
     }
 
@@ -184,11 +206,22 @@ impl Photo {
             )
             .context("flatten image failed")?;
 
+            // libuhdr 上限 8192x8192。若水印超限，直接整图等比例缩到 8192，
+            // gain map 会跟随一起缩放，之后仍以 Ultra HDR 保存，不缩放其它内容。
+            let max_dim = flattened.get_width().max(flattened.get_height());
+            let flattened = if max_dim > 8192 {
+                let scale = 8192.0 / max_dim as f64;
+                ops::resize(&flattened, scale).context("resize for UHDR limit failed")?
+            } else {
+                flattened
+            };
             ops::jpegsave_with_opts(
                 &flattened,
                 &output_path.to_string_lossy(),
                 &ops::JpegsaveOptions {
                     q: params.quality,
+                    // 保留 Ultra HDR gain map 等元数据
+                    keep: ops::ForeignKeep::All,
                     ..Default::default()
                 },
             )

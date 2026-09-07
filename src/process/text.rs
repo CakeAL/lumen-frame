@@ -697,7 +697,30 @@ pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) 
     if last < template.len() {
         out.push_str(&template[last..]);
     }
-    out
+    cleanup_template(&out)
+}
+
+/// 清理模板渲染结果：折叠连续空白，去掉末尾的连接分隔符（如 ` - `、` / `）。
+fn cleanup_template(s: &str) -> String {
+    let re = Regex::new(r"[ \t\r\n]+").unwrap();
+    let mut s = re.replace_all(s, " ").to_string();
+    loop {
+        let trimmed = s.trim_end_matches(' ');
+        let stripped = trimmed
+            .strip_suffix(" -")
+            .or_else(|| trimmed.strip_suffix(" /"))
+            .or_else(|| trimmed.strip_suffix(" ·"))
+            .or_else(|| trimmed.strip_suffix(" |"))
+            .or_else(|| trimmed.strip_suffix(","))
+            .or_else(|| trimmed.strip_suffix("、"))
+            .unwrap_or(trimmed);
+        if stripped.len() == trimmed.len() {
+            s = trimmed.to_string();
+            break;
+        }
+        s = stripped.to_string();
+    }
+    s
 }
 
 fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Option<String> {
