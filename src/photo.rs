@@ -211,7 +211,7 @@ pub struct ExifInfo {
     // 白平衡模式
     pub white_balance_mode: Option<u16>,
     // 等效35mm焦距
-    pub focal_length_in35mm_film: Option<u32>,
+    pub focal_length_in35mm_film: Option<u16>,
     // 镜头生产商
     pub lens_make: Option<String>,
     // 镜头型号
@@ -223,6 +223,7 @@ impl ExifInfo {
         let exif = read_exif_async(path)
             .await
             .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+        dbg!(&exif);
         let get = |tag| find_value(&exif, tag);
         let to_string = |v: &EntryValue| v.as_str().map(|s| s.to_string());
         Ok(Self {
@@ -235,7 +236,7 @@ impl ExifInfo {
             exposure_bias_value: get(ExifTag::ExposureBiasValue).and_then(format_value),
             focal_length: get(ExifTag::FocalLength).and_then(format_value),
             white_balance_mode: get(ExifTag::WhiteBalanceMode).and_then(|v| v.as_u16()),
-            focal_length_in35mm_film: get(ExifTag::FocalLengthIn35mmFilm).and_then(|v| v.as_u32()),
+            focal_length_in35mm_film: get(ExifTag::FocalLengthIn35mmFilm).and_then(|v| v.as_u16()),
             lens_make: get(ExifTag::LensMake).and_then(to_string),
             lens_model: get(ExifTag::LensModel).and_then(to_string),
         })

@@ -32,6 +32,7 @@ async fn test_generate_watermark() {
                 ..Default::default()
             },
         ],
+        time_format: "%Y/%m/%d".to_owned(),
     };
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),

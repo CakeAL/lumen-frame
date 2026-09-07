@@ -1,4 +1,3 @@
-pub mod generate;
 pub mod helper;
 pub mod params;
 pub mod photo;

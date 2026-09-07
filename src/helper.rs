@@ -34,3 +34,29 @@ fn is_dark_color(r: u8, g: u8, b: u8) -> bool {
 
     luminance < 0.5
 }
+
+/// 罗马数字转换
+pub fn to_roman(mut num: i32) -> String {
+    let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+    let symbols = [
+        "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
+    ];
+    let mut result = String::new();
+
+    for (i, &value) in values.iter().enumerate() {
+        while num >= value {
+            result.push_str(symbols[i]);
+            num -= value;
+        }
+    }
+    result
+}
+
+// svg 替换xml符号
+pub fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
