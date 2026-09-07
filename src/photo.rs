@@ -9,6 +9,7 @@ use std::{
 };
 
 use crate::{
+    Position,
     params::WatermarkParams,
     process::{
         canvas::{self, Margin},
@@ -62,7 +63,11 @@ impl Photo {
         let (img_w, img_h) = (img.get_width(), img.get_height());
 
         // 计算文字占用尺寸
-        let (text_position, text_height) = text.cal_height(img_h);
+        let (text_position, text_height) = if self.exif.is_some() {
+            text.cal_height(img_h)
+        } else {
+            (Position::Bottom, 0)
+        };
         // 计算画布边框尺寸
         let margin = Margin::cal_margin(img_w, img_h, text_height, text_position, params);
         // 画布尺寸
@@ -101,8 +106,38 @@ impl Photo {
                 ..Default::default()
             },
         )
-        .context("composite final image err")?;
+        .context("composite image err")?;
 
+        // 渲染字体图片
+        let text_layer = if let Some(exif) = &self.exif {
+            text.render_text(exif, img_h, params)?
+        } else {
+            None
+        };
+        let canvas = if let Some(text_layer) = text_layer {
+            let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
+            let (text_x, text_y) = match text.position {
+                Position::Up => (img_x + img_w / 2 - text_w / 2, (margin.top - text_h) / 2),
+                Position::Bottom => (
+                    img_x + img_w / 2 - text_w / 2,
+                    canvas_h - (text_h + margin.bottom) / 2,
+                ),
+                _ => (0, 0),
+            };
+            ops::composite2_with_opts(
+                &canvas,
+                &text_layer,
+                ops::BlendMode::Over,
+                &ops::Composite2Options {
+                    x: text_x,
+                    y: text_y,
+                    ..Default::default()
+                },
+            )
+            .context("composite text layer err")?
+        } else {
+            canvas
+        };
         Ok(canvas)
     }
 
@@ -239,26 +274,6 @@ impl ExifInfo {
             lens_make: get(ExifTag::LensMake).and_then(to_string),
             lens_model: get(ExifTag::LensModel).and_then(to_string),
         })
-    }
-
-    /// 渲染为底部水印文字，缺失的项自动跳过；全部缺失时返回 `None`。
-    pub fn to_caption(&self) -> Option<String> {
-        // [TODO] 临时
-        let parts: Vec<String> = [
-            self.isospeed_ratings.map(|v| v.to_string()),
-            self.exposure_time.as_ref().map(|v| v.to_string()),
-            self.f_number.as_ref().map(|v| v.to_string()),
-            self.focal_length_in35mm_film.map(|v| v.to_string()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("  "))
-        }
     }
 }
 

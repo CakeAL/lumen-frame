@@ -25,10 +25,13 @@ async fn test_generate_watermark() {
         text_params: vec![
             TextParams {
                 size: 0.03,
+                bold: true,
+                font: "Maple Mono NF CN".into(),
                 ..Default::default()
             },
             TextParams {
                 size: 0.022,
+                font: "Maple Mono NF CN".into(),
                 ..Default::default()
             },
         ],
@@ -37,11 +40,12 @@ async fn test_generate_watermark() {
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
         aspect_ratio: Some((16.0, 9.0)),
-        position: lumen_frame::Position::Left,
+        position: lumen_frame::Position::Center,
         blur_sigma: 15.0,
         background: [26, 188, 156],
         // solid_background: true,
         border_radius: 0.02,
+        border_equal: true,
         ..Default::default()
     };
     let watermark = photo.generate_watermark(&params, &text).unwrap();

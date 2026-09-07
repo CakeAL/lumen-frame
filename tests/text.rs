@@ -36,20 +36,22 @@ async fn test_render_text_with_logo_mixed() {
     let text = Text {
         position: lumen_frame::Position::Bottom,
         template: vec![
-            "{Logo} {型号} - {镜头型号}".to_owned(),
-            "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
+            "{Logo} {型号} - {镜头型号} {品牌}".to_owned(),
+            "{拍摄日期} {等效焦距}mm {实际焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
         ],
         text_params: vec![
             TextParams {
                 size: 0.03,
                 italic: true,
-                align: TextAlign::Center,
+                align: TextAlign::Left,
                 bold: true,
+                font: "Maple Mono NF CN".into(),
                 ..Default::default()
             },
             TextParams {
                 size: 0.022,
-                align: TextAlign::Center,
+                align: TextAlign::Left,
+                font: "Maple Mono NF CN".into(),
                 ..Default::default()
             },
         ],
@@ -79,7 +81,7 @@ async fn test_render_text_with_logo_mixed() {
     let (canvas_w, _canvas_h) = canvas::cal_size(&margin, img_w, img_h, &params);
 
     let text_img = text
-        .render_text(&photo.exif.as_ref().unwrap(), img_h, canvas_w, &params)
+        .render_text(&photo.exif.as_ref().unwrap(), img_h, &params)
         .unwrap()
         .expect("render_text should produce an image");
 
@@ -115,7 +117,7 @@ async fn test_render_text_with_logo_mixed() {
     };
     let params = WatermarkParams::default();
     let fallback_img = text
-        .render_text(&photo.exif.as_ref().unwrap(), img_h, 1200, &params)
+        .render_text(&photo.exif.as_ref().unwrap(), img_h, &params)
         .unwrap()
         .expect("render_text should produce an image");
     assert!(fallback_img.get_width() > 0);

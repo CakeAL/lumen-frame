@@ -31,7 +31,7 @@ impl Margin {
                 (img_h as f64 * params.border_ratio.0).round() as i32,
                 (img_h as f64 * params.border_ratio.1).round() as i32,
                 (img_w as f64 * params.border_ratio.2).round() as i32,
-                (img_h as f64 * params.border_ratio.3).round() as i32,
+                (img_w as f64 * params.border_ratio.3).round() as i32,
             )
         };
         // 根据文字的位置，边框添加文字宽度

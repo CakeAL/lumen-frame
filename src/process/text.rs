@@ -61,11 +61,8 @@ impl Text {
         &self,
         exif: &ExifInfo,
         img_h: i32,
-        canvas_w: i32,
         watermark_params: &WatermarkParams,
     ) -> Result<Option<VipsImage>> {
-        let _ = canvas_w; // 导出宽度由内容决定（最长行），不再使用画布宽度。
-
         // 行数
         let line_count = self.template.len().min(self.text_params.len());
         if line_count == 0 {
@@ -361,7 +358,7 @@ fn build_parley_layout(
     // 否则 parley 对缺失字形只输出 gid=0 (.notdef)，导致“ℤ”渲染成空白；
     // 同时避免 fallback 到衬线字体，保证 ℤ 跟整体文字一样是“黑体”风格。
     let family = format!(
-        "{}, Geneva, Menlo, Arial Unicode MS, Fira Code, sans-serif",
+        "{}, Menlo, Geneva, Arial Unicode MS, Fira Code, sans-serif",
         params.font
     );
     builder.push_default(StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(
