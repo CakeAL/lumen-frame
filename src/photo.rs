@@ -197,7 +197,7 @@ impl Photo {
 
             // 合成结果带 alpha（4 band），写出 JPEG 前先压平为 3 band RGB。
             let [r, g, b] = params.background;
-            let flattened = ops::flatten_with_opts(
+            let mut flattened = ops::flatten_with_opts(
                 watermark,
                 &ops::FlattenOptions {
                     background: vec![r as f64, g as f64, b as f64],
@@ -209,12 +209,14 @@ impl Photo {
             // libuhdr 上限 8192x8192。若水印超限，直接整图等比例缩到 8192，
             // gain map 会跟随一起缩放，之后仍以 Ultra HDR 保存，不缩放其它内容。
             let max_dim = flattened.get_width().max(flattened.get_height());
-            let flattened = if max_dim > 8192 {
+            if max_dim > 8192 {
                 let scale = 8192.0 / max_dim as f64;
-                ops::resize(&flattened, scale).context("resize for UHDR limit failed")?
-            } else {
-                flattened
-            };
+                flattened =
+                    ops::resize(&flattened, scale).context("resize for UHDR limit failed")?;
+            }
+
+            // 保留源图的 ICC（如 Display P3），让照片保持原色域。
+            // profile: None 表示不要用 libvips 默认的 sRGB profile 覆盖它。
             ops::jpegsave_with_opts(
                 &flattened,
                 &output_path.to_string_lossy(),
@@ -222,6 +224,7 @@ impl Photo {
                     q: params.quality,
                     // 保留 Ultra HDR gain map 等元数据
                     keep: ops::ForeignKeep::All,
+                    profile: None,
                     ..Default::default()
                 },
             )
@@ -249,7 +252,7 @@ impl Display for Rational {
         };
         match self {
             Rational::Fraction(n, d) => {
-                let gcd = n.gcd(&d);
+                let gcd = n.gcd(d);
                 let n = n / gcd;
                 let d = d / gcd;
                 if d == 1 {
@@ -327,7 +330,7 @@ impl ExifInfo {
 }
 
 /// 在所有 IFD 中查找指定 tag 的首个条目（拍摄参数通常位于 Exif 子 IFD 中）。
-fn find_value<'a>(exif: &'a Exif, tag: ExifTag) -> Option<&'a EntryValue> {
+fn find_value(exif: &Exif, tag: ExifTag) -> Option<&EntryValue> {
     exif.iter()
         .find(|e| e.tag.tag() == Some(tag))
         .map(|e| e.value)
@@ -351,5 +354,5 @@ fn format_value(value: &EntryValue) -> Option<Rational> {
         }
         return Some(Rational::Fraction(n, d));
     }
-    value.try_as_float().map(|s| Rational::Float(s))
+    value.try_as_float().map(Rational::Float)
 }

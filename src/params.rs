@@ -21,7 +21,7 @@ pub struct WatermarkParams {
     pub border_radius: f64,
     /// 阴影大小，相对于图片高度的比例，默认为0.06，即如果图片高度1000px，那么阴影宽度为60px
     pub shadow_size: f64,
-    /// 阴影浓度，默认为1.5
+    /// 阴影浓度，默认为1.2
     pub shadow_density: f64,
     /// 是否纯色背景
     pub solid_background: bool,
@@ -43,7 +43,7 @@ impl Default for WatermarkParams {
             quality: 95,
             border_radius: 0.02,
             shadow_size: 0.06,
-            shadow_density: 1.5,
+            shadow_density: 1.2,
             blur_sigma: 15.0,
             solid_background: false,
             position: Position::Center,

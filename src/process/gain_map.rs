@@ -49,6 +49,7 @@ pub fn set_scale_factor(img: &mut VipsImage, scale: f64) {
 /// 构造一个覆盖整个水印画布、但只在中间照片区域保留原始 gain map 的新 gain map。
 ///
 /// 四周填 0（对应 boost=1，即不提升亮度），避免水印边框/背景被 Ultra HDR 提亮。
+#[allow(clippy::too_many_arguments)]
 pub fn make_watermark_gainmap(
     original_gainmap: &VipsImage,
     canvas_w: i32,
@@ -67,9 +68,17 @@ pub fn make_watermark_gainmap(
     let gw = ((canvas_w as f64) / scale_factor).ceil() as i32;
     let gh = ((canvas_h as f64) / scale_factor).ceil() as i32;
 
-    // 四周 neutral = 0（boost = 1），不增加亮度。
     // 背景的 band 数跟随 gain map（可能是 1 通道，也可能是 DSC 这种 3 通道 YUV）。
+    // 单通道的 neutral 是 0（boost = 1）；
+    // 多通道（YUV 4:4:4）的 neutral 用 128，避免色度通道为 0 导致在 macOS 上出现偏绿。
+    let neutral = if gm_bands > 1 { 128.0 } else { 0.0 };
     let mut background = ops::black_with_opts(gw, gh, &ops::BlackOptions { bands: gm_bands })?;
+    background = ops::linear_with_opts(
+        &background,
+        &mut vec![1.0; gm_bands as usize],
+        &mut vec![neutral; gm_bands as usize],
+        &ops::LinearOptions { uchar: true },
+    )?;
 
     if gm_w > 0 && gm_h > 0 {
         let target_w = ((img_w as f64) / scale_factor).round() as i32;
@@ -87,11 +96,19 @@ pub fn make_watermark_gainmap(
             ops::copy(original_gainmap)?
         };
         // 如果照片有圆角，gain map 也要做同样的圆角，否则圆角处会被提亮。
+        // 圆角外的 else 分支也要用 neutral 值（多通道为 0.5/128），而不是 0，
+        // 否则色度通道归零会在 macOS 上把圆角处染成绿/青色。
         let scaled = if border_radius > 0.0 {
             let radius = ((img_h as f64 * border_radius) / scale_factor).round() as i32;
             let mask = rounded_rect_mask(target_w, target_h, radius)?;
-            let zero =
+            let mut zero =
                 ops::black_with_opts(target_w, target_h, &ops::BlackOptions { bands: gm_bands })?;
+            zero = ops::linear_with_opts(
+                &zero,
+                &mut vec![1.0; gm_bands as usize],
+                &mut vec![neutral; gm_bands as usize],
+                &ops::LinearOptions { uchar: true },
+            )?;
             ops::ifthenelse(&mask, &scaled, &zero)?
         } else {
             scaled
@@ -105,7 +122,7 @@ pub fn make_watermark_gainmap(
         .get_interpretation()
         .unwrap_or(ops::Interpretation::BW);
     let background = ops::cast(&background, ops::BandFormat::Uchar)?;
-    Ok(ops::copy_with_opts(
+    ops::copy_with_opts(
         &background,
         &ops::CopyOptions {
             width: gw,
@@ -114,7 +131,7 @@ pub fn make_watermark_gainmap(
             interpretation: interp,
             ..Default::default()
         },
-    )?)
+    )
 }
 
 /// 生成一张白色圆角矩形 mask（1 通道 uchar），用于给 gain map 打圆角。

@@ -350,6 +350,7 @@ fn prepare_line(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_parley_layout(
     text: &str,
     params: &TextParams,
@@ -399,11 +400,11 @@ fn build_parley_layout(
 fn measure_cap_height(layout: &Layout<peniko::Brush>) -> Option<f32> {
     for line in layout.lines() {
         for item in line.items() {
-            if let PositionedLayoutItem::GlyphRun(gr) = item {
-                if let Some(cap) = gr.run().metrics().cap_height {
+            if let PositionedLayoutItem::GlyphRun(gr) = item 
+                && let Some(cap) = gr.run().metrics().cap_height {
                     return Some(cap);
                 }
-            }
+            
         }
     }
     None
@@ -477,8 +478,8 @@ fn render_line_into(
                     }
                 }
                 PositionedLayoutItem::InlineBox(inline_box) => {
-                    if inline_box.kind == InlineBoxKind::InFlow {
-                        if let Some(slot) = line.slots.get(inline_box.id as usize) {
+                    if inline_box.kind == InlineBoxKind::InFlow 
+                        && let Some(slot) = line.slots.get(inline_box.id as usize) {
                             draw_logo(
                                 canvas,
                                 canvas_w,
@@ -488,7 +489,7 @@ fn render_line_into(
                                 inline_box.y as i32,
                                 &slot.image,
                             )?;
-                        }
+                        
                     }
                 }
             }
@@ -497,6 +498,7 @@ fn render_line_into(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_glyph_mask(
     canvas: &mut [u8],
     canvas_w: i32,
@@ -586,6 +588,7 @@ fn draw_logo(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn blend_pixel(
     canvas: &mut [u8],
     canvas_w: i32,
@@ -687,10 +690,10 @@ pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) 
             out.push_str(&template[last..whole.start()]);
         }
         let key = &caps[1];
-        if let Some(value) = resolve_exif_key_name(key, exif, time_format) {
-            if !value.is_empty() {
+        if let Some(value) = resolve_exif_key_name(key, exif, time_format) 
+            && !value.is_empty() {
                 out.push_str(&value);
-            }
+            
         }
         last = whole.end();
     }
@@ -765,8 +768,7 @@ fn format_model(model: &str, make: &str) -> String {
         model
             .replace(&make.to_uppercase(), "")
             .trim()
-            .replace('Z', "ℤ")
-            .replace('z', "ℤ")
+            .replace(['Z', 'z'], "ℤ")
             .split('_')
             .collect::<Vec<_>>()
             .split_last()

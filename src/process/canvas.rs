@@ -91,7 +91,7 @@ pub fn new_canvas(
             canvas_h as f64 / img_h as f64,
         );
         // 2. 等比缩放原图
-        let scaled_img = ops::resize(&img, scale)?;
+        let scaled_img = ops::resize(img, scale)?;
         // 3. 从缩放后的图片中心裁剪出画布大小（居中裁剪）
         let (scaled_w, scaled_h) = (scaled_img.get_width(), scaled_img.get_height());
         let crop_x = (scaled_w - canvas_w) / 2;
@@ -125,7 +125,7 @@ pub fn add_shadow(
 ) -> Result<VipsImage> {
     let (img_w, img_h) = (img.get_width(), img.get_height());
     let shadow_size = (img_h as f64 * params.shadow_size).round() as i32;
-    let shadow_sigma = shadow_size as f64 / 2.0;
+    let shadow_sigma = shadow_size as f64 / 3.0;
     // Gaussian blur 需要足够的外围空间
     let shadow_margin = (shadow_sigma * 3.0).ceil() as i32;
     let shadow_w = img_w + shadow_margin * 2;

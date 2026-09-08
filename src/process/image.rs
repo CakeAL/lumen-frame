@@ -67,7 +67,6 @@ pub fn add_round_corner(img: VipsImage, border_radius: f64) -> Result<VipsImage>
             0,
             &ops::ExtractBandOptions {
                 n: 3,
-                ..Default::default()
             },
         )?;
         ops::bandjoin(&mut [img_rgb, mask])?
