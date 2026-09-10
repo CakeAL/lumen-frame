@@ -1,0 +1,573 @@
+//! 照片水印工作台的界面层。
+//!
+//! 界面分成三块稳定区域：左侧导航、中间工作区（上：预览，下：照片队列）、右侧参数面板。
+//! 设置是独立页面，切换时整体替换中间工作区。
+//!
+//! 状态归属：
+//!
+//! - [`AppView`] 拥有工程状态——照片队列、选中项、水印参数、文字水印行；
+//! - 各种控件实体只保存控件自身的状态（滑块位置、下拉框开合），不另存一份参数值；
+//! - [`WatermarkPreview`] 拥有预览节奏与结果，是唯一会启动后台渲染的地方。
+
+mod inspector;
+mod preview;
+mod preview_image;
+mod queue;
+mod settings;
+mod sidebar;
+#[cfg(test)]
+mod tests;
+mod text_section;
+
+/// 预览位图的生成入口。
+///
+/// 单独公开这一层，是因为它是水印管线与 GPUI 渲染之间的接缝：它有明确的行为契约
+/// （给定参数就得到确定的位图），可以脱离窗口独立测试。
+pub use preview_image::{PreviewJob, render_preview, render_thumbnail};
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use gpui_kit::component::{ActiveTheme as _, Root, h_flex, v_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{
+    App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, Subscription, Window,
+};
+
+use crate::Position;
+use crate::params::WatermarkParams;
+use crate::photo::{ExifInfo, Photo};
+use crate::process::text::{Text, TextParams};
+
+use inspector::{ParameterControls, hsla_to_rgb, slider_value};
+use preview::WatermarkPreview;
+use queue::is_supported_image;
+use text_section::TextLine;
+
+/// 队列中一张照片的稳定身份。
+///
+/// 用 id 而不是下标标记选中项：移除或重排照片时，下标会让选中状态漂移到隔壁那张。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct PhotoId(u64);
+
+/// 队列卡片的缩略图状态。
+///
+/// 缩略图失败只影响卡片外观，所以不携带错误详情；真正的原因由选中后的预览面板说明。
+pub enum Thumbnail {
+    Pending,
+    Ready(Arc<RenderImage>),
+    Failed,
+}
+
+pub struct QueuedPhoto {
+    pub id: PhotoId,
+    pub path: PathBuf,
+    pub exif: Option<ExifInfo>,
+    pub thumbnail: Thumbnail,
+}
+
+/// 页面。设置整体替换中间工作区，而不是叠一层浮层。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AppPage {
+    Watermark,
+    Settings,
+}
+
+/// 导出进度。导出是这一页唯一的提交动作，所以它的状态直接反映在面板底部。
+pub enum ExportState {
+    Idle,
+    Running { completed: usize, total: usize },
+    Finished { succeeded: usize, failed: usize },
+}
+
+pub struct AppView {
+    page: AppPage,
+    photos: Vec<QueuedPhoto>,
+    selected: Option<PhotoId>,
+    next_photo_id: u64,
+    /// 预览与导出共用的唯一一份参数。
+    params: WatermarkParams,
+    /// 文字水印的整体设置；每行自己的参数在 `text_lines` 里。
+    text_position: Position,
+    time_format: String,
+    text_lines: Vec<TextLine>,
+    next_text_line_id: u64,
+    controls: ParameterControls,
+    preview: Entity<WatermarkPreview>,
+    export: ExportState,
+    subscriptions: Vec<Subscription>,
+}
+
+impl AppView {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let params = WatermarkParams::default();
+        let text = Text::default();
+
+        let preview = cx.new(|_| WatermarkPreview::new());
+        let (controls, mut subscriptions) = ParameterControls::new(&params, &text, window, cx);
+
+        let mut text_lines = Vec::new();
+        let mut next_text_line_id = 0;
+        for (template, line_params) in text.template.iter().zip(text.text_params.iter()) {
+            let (line, line_subscriptions) =
+                TextLine::new(next_text_line_id, template, line_params, window, cx);
+            text_lines.push(line);
+            subscriptions.extend(line_subscriptions);
+            next_text_line_id += 1;
+        }
+
+        Self {
+            page: AppPage::Watermark,
+            photos: Vec::new(),
+            selected: None,
+            next_photo_id: 0,
+            params,
+            text_position: text.position,
+            time_format: text.time_format.clone(),
+            text_lines,
+            next_text_line_id,
+            controls,
+            preview,
+            export: ExportState::Idle,
+            subscriptions,
+        }
+    }
+
+    // MARK: 读取
+
+    /// 队列里的照片数量。
+    pub fn photo_count(&self) -> usize {
+        self.photos.len()
+    }
+
+    /// 当前选中的照片路径。
+    pub fn selected_path(&self) -> Option<&std::path::Path> {
+        self.selected_photo().map(|photo| photo.path.as_path())
+    }
+
+    /// 当前用于显示的预览位图；还没算出来时是 `None`。
+    pub fn preview_image(&self, cx: &App) -> Option<Arc<RenderImage>> {
+        self.preview.read(cx).state().image().cloned()
+    }
+
+    pub(super) fn selected_photo(&self) -> Option<&QueuedPhoto> {
+        let id = self.selected?;
+        self.photos.iter().find(|photo| photo.id == id)
+    }
+
+    fn photo_mut(&mut self, id: PhotoId) -> Option<&mut QueuedPhoto> {
+        self.photos.iter_mut().find(|photo| photo.id == id)
+    }
+
+    /// 由控件状态拼出渲染用的 [`Text`]。
+    ///
+    /// 控件实体是文字水印的真值来源，[`Text`] 只是它们在渲染管线里的投影，因此不需要
+    /// 在每次回调里手工同步两份数据。
+    fn build_text(&self, cx: &App) -> Text {
+        Text {
+            template: self
+                .text_lines
+                .iter()
+                .map(|line| line.template.read(cx).value().to_string())
+                .collect(),
+            text_params: self
+                .text_lines
+                .iter()
+                .map(|line| TextParams {
+                    font: line.font.to_string(),
+                    size: f64::from(slider_value(&line.size, cx)),
+                    line_spacing: f64::from(slider_value(&line.line_spacing, cx)),
+                    color: if line.auto_color {
+                        None
+                    } else {
+                        line.color.read(cx).value().map(hsla_to_rgb)
+                    },
+                    italic: line.italic,
+                    bold: line.bold,
+                    align: line
+                        .align
+                        .read(cx)
+                        .selected_value()
+                        .copied()
+                        .unwrap_or_default(),
+                    ..TextParams::default()
+                })
+                .collect(),
+            position: self.text_position,
+            time_format: self.time_format.clone(),
+        }
+    }
+
+    // MARK: 预览
+
+    /// 参数、选中项或文字水印变化后调用：把当前状态打包成一份预览请求。
+    ///
+    /// 请求本身只是「登记最新意图」，真正算不算、什么时候算由 [`WatermarkPreview`]
+    /// 决定，所以拖动滑块时可以放心地每帧调用。
+    pub(super) fn refresh_preview(&self, cx: &mut Context<Self>) {
+        let job = match self.selected_photo() {
+            Some(photo) => PreviewJob {
+                path: photo.path.clone(),
+                exif: photo.exif.clone(),
+                params: self.params.clone(),
+                text: self.build_text(cx),
+            },
+            None => {
+                self.preview.update(cx, |preview, cx| preview.clear(cx));
+                return;
+            }
+        };
+        self.preview
+            .update(cx, |preview, cx| preview.request(job, cx));
+    }
+
+    // MARK: 页面与照片
+
+    pub(super) fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
+        if self.page != page {
+            self.page = page;
+            cx.notify();
+        }
+    }
+
+    /// 用系统文件选择器挑照片。
+    pub(super) fn pick_photos(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("选择照片".into()),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            this.update(cx, |this, cx| this.add_photos(paths, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// 把外部路径加入队列。
+    ///
+    /// 非图片文件和不认识的扩展名会被安静跳过：队列只放能处理的对象，否则用户要等到
+    /// 预览报错才知道选错了文件。
+    pub(super) fn add_photos(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let mut added = Vec::new();
+        for path in paths {
+            if !is_supported_image(&path) {
+                continue;
+            }
+            if self.photos.iter().any(|photo| photo.path == path) {
+                continue;
+            }
+            let id = PhotoId(self.next_photo_id);
+            self.next_photo_id += 1;
+            self.photos.push(QueuedPhoto {
+                id,
+                path: path.clone(),
+                exif: None,
+                thumbnail: Thumbnail::Pending,
+            });
+            added.push((id, path));
+        }
+
+        if added.is_empty() {
+            return;
+        }
+
+        let first = added[0].0;
+        for (id, path) in added {
+            self.load_thumbnail(id, path.clone(), cx);
+            self.load_exif(id, path, cx);
+        }
+
+        if self.selected.is_none() {
+            self.selected = Some(first);
+            self.refresh_preview(cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn select_photo(&mut self, id: PhotoId, cx: &mut Context<Self>) {
+        if self.selected == Some(id) {
+            return;
+        }
+        self.selected = Some(id);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    /// 按队列顺序选中第 `index` 张照片。
+    ///
+    /// 选中项本身由领域 id 标识；这里是按位置操作队列的一条受控通道。
+    pub fn select_photo_at(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(id) = self.photos.get(index).map(|photo| photo.id) else {
+            return;
+        };
+        self.select_photo(id, cx);
+    }
+
+    pub(super) fn remove_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected else {
+            return;
+        };
+        let Some(ix) = self.photos.iter().position(|photo| photo.id == id) else {
+            return;
+        };
+        self.photos.remove(ix);
+        // 选中项落到原位置的下一张，没有就退回上一张：删掉一张后视线不必重新找位置。
+        self.selected = self
+            .photos
+            .get(ix)
+            .or_else(|| self.photos.last())
+            .map(|photo| photo.id);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    pub(super) fn clear_photos(&mut self, cx: &mut Context<Self>) {
+        if self.photos.is_empty() {
+            return;
+        }
+        self.photos.clear();
+        self.selected = None;
+        self.export = ExportState::Idle;
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    /// 缩略图单独一条后台任务：它只影响卡片外观，不该拖慢加入队列的响应。
+    fn load_thumbnail(&self, id: PhotoId, path: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let rendered = cx
+                .background_spawn(async move { render_thumbnail(&path) })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(photo) = this.photo_mut(id) else {
+                    return;
+                };
+                photo.thumbnail = match rendered {
+                    Ok(image) => Thumbnail::Ready(image),
+                    Err(_) => Thumbnail::Failed,
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// EXIF 决定文字水印的排版高度，所以它到位之后预览必须重算一次。
+    fn load_exif(&self, id: PhotoId, path: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let exif = cx
+                .background_spawn(async move { ExifInfo::read(&path).ok() })
+                .await;
+
+            this.update(cx, |this, cx| {
+                let is_selected = this.selected == Some(id);
+                if let Some(photo) = this.photo_mut(id) {
+                    photo.exif = exif;
+                }
+                if is_selected {
+                    this.refresh_preview(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    // MARK: 文字水印行
+
+    pub(super) fn add_text_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.next_text_line_id;
+        self.next_text_line_id += 1;
+
+        // 新行沿用上一行的样式：连续添加几行时不用逐行重设字号和对齐。
+        let inherited = self
+            .text_lines
+            .last()
+            .map(|last| TextParams {
+                font: last.font.to_string(),
+                size: f64::from(slider_value(&last.size, cx)),
+                line_spacing: f64::from(slider_value(&last.line_spacing, cx)),
+                color: if last.auto_color {
+                    None
+                } else {
+                    last.color.read(cx).value().map(hsla_to_rgb)
+                },
+                italic: last.italic,
+                bold: last.bold,
+                align: last
+                    .align
+                    .read(cx)
+                    .selected_value()
+                    .copied()
+                    .unwrap_or_default(),
+                ..TextParams::default()
+            })
+            .unwrap_or_default();
+
+        let (line, subscriptions) = TextLine::new(id, "", &inherited, window, cx);
+        self.text_lines.push(line);
+        self.subscriptions.extend(subscriptions);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    pub(super) fn remove_text_line(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(ix) = self.text_lines.iter().position(|line| line.id == id) else {
+            return;
+        };
+        self.text_lines.remove(ix);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    pub(super) fn set_text_line_auto_color(
+        &mut self,
+        id: u64,
+        auto_color: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(line) = self.text_lines.iter_mut().find(|line| line.id == id) {
+            line.auto_color = auto_color;
+        }
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    pub(super) fn set_text_line_style(
+        &mut self,
+        id: u64,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(line) = self.text_lines.iter_mut().find(|line| line.id == id) {
+            if let Some(bold) = bold {
+                line.bold = bold;
+            }
+            if let Some(italic) = italic {
+                line.italic = italic;
+            }
+        }
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    // MARK: 导出
+
+    /// 按当前参数把队列里的照片全部导出。
+    ///
+    /// 逐张串行处理而不是并发：libvips 自己就吃满多核，再叠并发只会让每张都变慢，还会
+    /// 让进度读数失去意义。
+    pub(super) fn export_all(&mut self, cx: &mut Context<Self>) {
+        if self.photos.is_empty() || matches!(self.export, ExportState::Running { .. }) {
+            return;
+        }
+        if self.params.output_folder.is_none() {
+            return;
+        }
+
+        let params = self.params.clone();
+        let text = self.build_text(cx);
+        let paths: Vec<PathBuf> = self.photos.iter().map(|photo| photo.path.clone()).collect();
+        let total = paths.len();
+
+        self.export = ExportState::Running {
+            completed: 0,
+            total,
+        };
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let mut succeeded = 0usize;
+            for (ix, path) in paths.into_iter().enumerate() {
+                let params = params.clone();
+                let text = text.clone();
+                let result = cx
+                    .background_spawn(async move {
+                        let photo = Photo::open_blocking(&path)?;
+                        let watermark = photo.generate_watermark(&params, &text)?;
+                        photo.save_image(&params, &watermark)
+                    })
+                    .await;
+
+                if result.is_ok() {
+                    succeeded += 1;
+                }
+
+                let completed = ix + 1;
+                let alive = this
+                    .update(cx, |this, cx| {
+                        this.export = ExportState::Running { completed, total };
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    return;
+                }
+            }
+
+            this.update(cx, |this, cx| {
+                this.export = ExportState::Finished {
+                    succeeded,
+                    failed: total - succeeded,
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl Render for AppView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (center, inspector) = match self.page {
+            AppPage::Watermark => (
+                self.render_watermark_page(cx).into_any_element(),
+                Some(self.render_inspector(cx).into_any_element()),
+            ),
+            AppPage::Settings => (self.render_settings_page(cx).into_any_element(), None),
+        };
+
+        h_flex()
+            .items_stretch()
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .child(self.render_sidebar(window, cx))
+            .child(center)
+            .children(inspector)
+            // 叠加层必须由应用的第一个视图渲染一次，`Root` 只负责协调它们。
+            .children(Root::render_dialog_layer(window, cx))
+            .children(Root::render_sheet_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
+    }
+}
+
+impl AppView {
+    /// 水印工作区：上方预览、下方队列。
+    fn render_watermark_page(&self, cx: &Context<Self>) -> impl IntoElement {
+        // 拖放挂在整块工作区上：拖到预览上也算数，不必瞄准下面那条队列。
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.render_preview_pane(cx))
+                    .child(self.render_queue_pane(cx)),
+            )
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                this.add_photos(paths.paths().to_vec(), cx)
+            }))
+    }
+}

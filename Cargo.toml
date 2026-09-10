@@ -12,8 +12,26 @@ dirs = "7"
 regex = "1"
 num-integer = "0.1"
 chrono = "0.4"
-
+# 预览位图：水印合成结果需要转成 GPUI 可渲染的 BGRA 缓冲区，版本必须与 gpui-pre 一致
+image = "0.25"
 # 文字排版渲染
 parley = "0.11"
 swash = "0.2"
 peniko = "0.6"
+# ui
+gpui-kit = "0.6"
+
+[dev-dependencies]
+# GPUI 的测试上下文（TestAppContext / VisualTestContext）由这个 feature 提供。
+gpui-kit = { version = "0.6", features = ["test-support"] }
+
+[profile.dev.package]
+gpui-pre = { opt-level = 3 }
+gpui-component = { opt-level = 3 }
+gpui-kit = { opt-level = 3 }
+gpui-kit-assets = { opt-level = 3 }
+gpui-pre-macros = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }

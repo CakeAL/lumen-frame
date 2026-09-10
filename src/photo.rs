@@ -38,19 +38,53 @@ impl Photo {
         })
     }
 
+    /// 同步打开一张照片。
+    ///
+    /// GUI 的后台线程没有 tokio 运行时，[`Photo::new`] 依赖的 `tokio::fs` 在那儿会
+    /// panic，所以界面走这条路径。EXIF 读不出来不算致命：照片照常处理，只是不渲染
+    /// 文字水印。
+    pub fn open_blocking(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        Ok(Self {
+            path: path.to_path_buf(),
+            is_motion_photo: false,
+            is_ultra_hdr_photo: false,
+            exif: ExifInfo::read(path).ok(),
+        })
+    }
+
+    /// 加载原图并按 EXIF orientation 摆正。
+    ///
+    /// 用自动检测加载器读取，这样 Ultra HDR (ISO 21496-1) 的 gain map 会被保留在
+    /// `VipsImage` 上，后续处理（缩放、合成等）会带着它一起走。
+    pub fn load_base_image(path: &Path) -> Result<VipsImage> {
+        vips();
+
+        let img =
+            VipsImage::new_from_file(&path.to_string_lossy()).context("failed to load image")?;
+        ops::autorot(&img).context("failed to autorotate image")
+    }
+
     pub fn generate_watermark(
         &self,
         params: &WatermarkParams,
         text: &text::Text,
     ) -> Result<VipsImage> {
-        vips();
+        let img = Self::load_base_image(&self.path)?;
+        Self::compose_watermark(img, self.exif.as_ref(), params, text)
+    }
 
-        // 用自动检测加载器读取原图：这样 Ultra HDR (ISO 21496-1) 的 gain map
-        // 会被保留在 VipsImage 上，后续处理（缩放、合成等）会带着它一起走。
-        let img = VipsImage::new_from_file(&self.path.to_string_lossy())
-            .context("failed to load image")?;
-        // 根据 EXIF orientation 摆正原图
-        let img = ops::autorot(&img).context("failed to autorotate image")?;
+    /// 在给定的底图上合成水印。
+    ///
+    /// 与 [`Self::generate_watermark`] 的区别只有底图来源：导出时是原图，实时预览时
+    /// 是缩略后的底图。把这条管线抽出来，预览才能复用导出完全相同的合成逻辑。
+    pub fn compose_watermark(
+        img: VipsImage,
+        exif: Option<&ExifInfo>,
+        params: &WatermarkParams,
+        text: &text::Text,
+    ) -> Result<VipsImage> {
+        vips();
 
         // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）
         let original_gainmap = gain_map::get_gainmap(&img);
@@ -66,7 +100,7 @@ impl Photo {
         let (img_w, img_h) = (img.get_width(), img.get_height());
 
         // 计算文字占用尺寸
-        let (text_position, text_height) = if self.exif.is_some() {
+        let (text_position, text_height) = if exif.is_some() {
             text.cal_height(img_h)
         } else {
             (Position::Bottom, 0)
@@ -112,7 +146,7 @@ impl Photo {
         .context("composite image err")?;
 
         // 渲染字体图片
-        let text_layer = if let Some(exif) = &self.exif {
+        let text_layer = if let Some(exif) = exif {
             text.render_text(exif, img_h, params)?
         } else {
             None
@@ -310,9 +344,20 @@ impl ExifInfo {
         let exif = read_exif_async(path)
             .await
             .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
-        let get = |tag| find_value(&exif, tag);
+        Ok(Self::from_exif(&exif))
+    }
+
+    /// 阻塞读取 EXIF。供没有 tokio 运行时的后台线程使用。
+    pub fn read(path: &Path) -> Result<Self> {
+        let exif = nom_exif::read_exif(path)
+            .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+        Ok(Self::from_exif(&exif))
+    }
+
+    fn from_exif(exif: &Exif) -> Self {
+        let get = |tag| find_value(exif, tag);
         let to_string = |v: &EntryValue| v.as_str().map(|s| s.to_string());
-        Ok(Self {
+        Self {
             created_time: get(ExifTag::CreateDate).and_then(|v| v.as_datetime()),
             make: get(ExifTag::Make).and_then(to_string),
             model: get(ExifTag::Model).and_then(to_string),
@@ -325,7 +370,7 @@ impl ExifInfo {
             focal_length_in35mm_film: get(ExifTag::FocalLengthIn35mmFilm).and_then(|v| v.as_u16()),
             lens_make: get(ExifTag::LensMake).and_then(to_string),
             lens_model: get(ExifTag::LensModel).and_then(to_string),
-        })
+        }
     }
 }
 

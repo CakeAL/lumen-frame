@@ -154,7 +154,7 @@ impl Text {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TextAlign {
     Left,
     #[default]
@@ -162,7 +162,7 @@ pub enum TextAlign {
     Right,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TextDirection {
     #[default]
     Horizontal,
@@ -196,6 +196,33 @@ impl Default for TextParams {
             bold: false,
             align: TextAlign::default(),
             direction: TextDirection::default(),
+        }
+    }
+}
+
+impl Default for Text {
+    /// 新工程默认的两行水印：第一行是品牌标志与机型，第二行是拍摄参数。
+    ///
+    /// 有默认值而不是空模板，是因为「什么都不显示」既看不出排版效果，也看不出字段写法。
+    fn default() -> Self {
+        Self {
+            template: vec![
+                "{Logo} {型号}".to_owned(),
+                "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
+            ],
+            text_params: vec![
+                TextParams {
+                    size: 0.03,
+                    bold: true,
+                    ..Default::default()
+                },
+                TextParams {
+                    size: 0.022,
+                    ..Default::default()
+                },
+            ],
+            position: Position::Bottom,
+            time_format: "%Y/%m/%d".to_owned(),
         }
     }
 }
@@ -400,11 +427,11 @@ fn build_parley_layout(
 fn measure_cap_height(layout: &Layout<peniko::Brush>) -> Option<f32> {
     for line in layout.lines() {
         for item in line.items() {
-            if let PositionedLayoutItem::GlyphRun(gr) = item 
-                && let Some(cap) = gr.run().metrics().cap_height {
-                    return Some(cap);
-                }
-            
+            if let PositionedLayoutItem::GlyphRun(gr) = item
+                && let Some(cap) = gr.run().metrics().cap_height
+            {
+                return Some(cap);
+            }
         }
     }
     None
@@ -478,18 +505,18 @@ fn render_line_into(
                     }
                 }
                 PositionedLayoutItem::InlineBox(inline_box) => {
-                    if inline_box.kind == InlineBoxKind::InFlow 
-                        && let Some(slot) = line.slots.get(inline_box.id as usize) {
-                            draw_logo(
-                                canvas,
-                                canvas_w,
-                                canvas_h,
-                                y_off,
-                                inline_box.x as i32,
-                                inline_box.y as i32,
-                                &slot.image,
-                            )?;
-                        
+                    if inline_box.kind == InlineBoxKind::InFlow
+                        && let Some(slot) = line.slots.get(inline_box.id as usize)
+                    {
+                        draw_logo(
+                            canvas,
+                            canvas_w,
+                            canvas_h,
+                            y_off,
+                            inline_box.x as i32,
+                            inline_box.y as i32,
+                            &slot.image,
+                        )?;
                     }
                 }
             }
@@ -690,10 +717,10 @@ pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) 
             out.push_str(&template[last..whole.start()]);
         }
         let key = &caps[1];
-        if let Some(value) = resolve_exif_key_name(key, exif, time_format) 
-            && !value.is_empty() {
-                out.push_str(&value);
-            
+        if let Some(value) = resolve_exif_key_name(key, exif, time_format)
+            && !value.is_empty()
+        {
+            out.push_str(&value);
         }
         last = whole.end();
     }
