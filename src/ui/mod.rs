@@ -27,15 +27,17 @@ pub use preview_image::{PreviewJob, render_preview, render_thumbnail};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Root, Theme, ThemeMode, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, SharedString,
-    Subscription, Window,
+    Subscription, Window, WindowAppearance,
 };
 
 use crate::Position;
-use crate::config::{self, WatermarkPreset};
+use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::{ExifInfo, Photo};
 use crate::process::text::{Text, TextParams};
@@ -111,6 +113,11 @@ pub struct AppView {
     preset_feedback: Option<SharedString>,
     preset_feedback_is_error: bool,
 
+    /// 界面明暗的选择。真正的主题落在 GPUI 的全局 `Theme` 上，这里记住的是「用户选的是
+    /// 跟随系统还是指定明暗」，以及用来在设置页上显示当前选项。
+    appearance: AppearanceMode,
+    settings_feedback: Option<SharedString>,
+
     /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
     _subscriptions: Vec<Subscription>,
     /// 文字行的订阅单独放：载入预设会整批换掉这些行，旧订阅必须跟着一起走。
@@ -149,7 +156,18 @@ impl AppView {
             .map(SharedString::from)
             .collect();
 
-        Self {
+        let settings = config::load_settings();
+
+        // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
+        let mut subscriptions = subscriptions;
+        subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
+            if this.appearance == AppearanceMode::System {
+                Theme::sync_system_appearance(Some(window), cx);
+                cx.notify();
+            }
+        }));
+
+        let view = Self {
             page: AppPage::Watermark,
             photos: Vec::new(),
             selected: None,
@@ -169,9 +187,63 @@ impl AppView {
             preset_names,
             preset_feedback: None,
             preset_feedback_is_error: false,
+            appearance: settings.appearance,
+            settings_feedback: None,
             _subscriptions: subscriptions,
             text_line_subscriptions,
+        };
+        // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
+        view.apply_appearance(window, cx);
+        view
+    }
+
+    // MARK: 明暗外观
+
+    /// 把当前的明暗选择落到主题和窗口外观上。
+    ///
+    /// 窗口外观要单独设：GPUI 的原生窗口边框和标题栏由 `NSApplication.appearance` 决定，
+    /// 它不会跟着 GPUI 的主题走，所以「应用是深色而系统是浅色」时窗口边缘会不匹配。
+    fn apply_appearance(&self, window: &mut Window, cx: &mut App) {
+        match self.appearance {
+            AppearanceMode::System => {
+                // 先清掉可能存在的强制外观，否则窗口会一直停在上一次的选择上。
+                cx.set_window_appearance(None);
+                Theme::sync_system_appearance(Some(window), cx);
+            }
+            AppearanceMode::Light => {
+                cx.set_window_appearance(Some(WindowAppearance::Light));
+                Theme::change(ThemeMode::Light, Some(window), cx);
+            }
+            AppearanceMode::Dark => {
+                cx.set_window_appearance(Some(WindowAppearance::Dark));
+                Theme::change(ThemeMode::Dark, Some(window), cx);
+            }
         }
+    }
+
+    /// 当前的明暗选择。
+    pub fn appearance(&self) -> AppearanceMode {
+        self.appearance
+    }
+
+    pub(super) fn set_appearance_mode(
+        &mut self,
+        mode: AppearanceMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.appearance == mode {
+            return;
+        }
+        self.appearance = mode;
+        self.apply_appearance(window, cx);
+
+        // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
+        self.settings_feedback = config::save_settings(&config::AppSettings { appearance: mode })
+            .err()
+            .map(|error| format!("偏好没能保存：{error:#}").into());
+
+        cx.notify();
     }
 
     // MARK: 读取

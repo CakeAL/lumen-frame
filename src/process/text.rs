@@ -884,15 +884,45 @@ fn format_fnumber(value: &Rational) -> String {
     }
 }
 
+/// 取出某个品牌的标志 SVG。
+///
+/// 标志在编译期就嵌进二进制，而不是运行期按相对路径读 `static/`：打包成 `.app` 之后
+/// 进程的工作目录不再是项目根目录，相对路径会静默失效，表现就是导出时 `{Logo}` 凭空
+/// 消失 —— 而且只在别人的机器上出现。
 fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
     let make = make.replace("CORPORATION", "").trim().to_lowercase();
-    let suffix = if auto_color(watermark_params) {
-        "b"
-    } else {
-        "w"
+    let suffix = if auto_color(watermark_params) { 'b' } else { 'w' };
+
+    // 亮色背景配黑色标志，深色背景配白色标志。
+    let svg = match (make.as_str(), suffix) {
+        ("canon", 'b') => include_str!("../../static/logo/canon-b.svg"),
+        ("canon", 'w') => include_str!("../../static/logo/canon-w.svg"),
+        ("dji", 'b') => include_str!("../../static/logo/dji-b.svg"),
+        ("dji", 'w') => include_str!("../../static/logo/dji-w.svg"),
+        ("fujifilm", 'b') => include_str!("../../static/logo/fujifilm-b.svg"),
+        ("fujifilm", 'w') => include_str!("../../static/logo/fujifilm-w.svg"),
+        ("hasselblad", 'b') => include_str!("../../static/logo/hasselblad-b.svg"),
+        ("hasselblad", 'w') => include_str!("../../static/logo/hasselblad-w.svg"),
+        ("leica", 'b') => include_str!("../../static/logo/leica-b.svg"),
+        ("leica", 'w') => include_str!("../../static/logo/leica-w.svg"),
+        ("nikon", 'b') => include_str!("../../static/logo/nikon-b.svg"),
+        ("nikon", 'w') => include_str!("../../static/logo/nikon-w.svg"),
+        ("olympus", 'b') => include_str!("../../static/logo/olympus-b.svg"),
+        ("olympus", 'w') => include_str!("../../static/logo/olympus-w.svg"),
+        ("panasonic", 'b') => include_str!("../../static/logo/panasonic-b.svg"),
+        ("panasonic", 'w') => include_str!("../../static/logo/panasonic-w.svg"),
+        ("pentax", 'b') => include_str!("../../static/logo/pentax-b.svg"),
+        ("pentax", 'w') => include_str!("../../static/logo/pentax-w.svg"),
+        ("ricoh", 'b') => include_str!("../../static/logo/ricoh-b.svg"),
+        ("ricoh", 'w') => include_str!("../../static/logo/ricoh-w.svg"),
+        ("sigma", 'b') => include_str!("../../static/logo/sigma-b.svg"),
+        ("sigma", 'w') => include_str!("../../static/logo/sigma-w.svg"),
+        ("songdian", 'b') => include_str!("../../static/logo/songdian-b.svg"),
+        ("songdian", 'w') => include_str!("../../static/logo/songdian-w.svg"),
+        ("sony", 'b') => include_str!("../../static/logo/sony-b.svg"),
+        ("sony", 'w') => include_str!("../../static/logo/sony-w.svg"),
+        _ => return None,
     };
-    let path = format!("./static/logo/{}-{}.svg", make, suffix);
-    let svg = std::fs::read_to_string(path).ok()?;
     ops::svgload_buffer(svg.as_bytes()).ok()
 }
 

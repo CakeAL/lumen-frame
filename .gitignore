@@ -1,3 +1,5 @@
 /target
 .DS_Store
 /test_images/watermark
+# 打包产物（自带 libvips 的 .app）
+/dist

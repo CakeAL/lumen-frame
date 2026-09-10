@@ -40,6 +40,61 @@ pub fn preset_dir() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("lumen-frame").join("presets"))
 }
 
+/// 应用级偏好。
+///
+/// 和预设分开放：预设是「一份画面效果」，可以有很多个、可以给别人；这里是「这台机器上
+/// 这个应用怎么显示」，只有一个。
+pub fn settings_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("lumen-frame").join("settings.toml"))
+}
+
+/// 界面明暗的三种选择。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AppearanceMode {
+    /// 跟随系统外观，并在系统切换时跟着变。
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// 应用级偏好的内容。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppSettings {
+    pub appearance: AppearanceMode,
+}
+
+/// 读取应用偏好。文件不存在或读坏了都退回默认值 —— 一个偏好文件不该拦住启动。
+pub fn load_settings() -> AppSettings {
+    settings_path()
+        .map(|path| load_settings_at(&path))
+        .unwrap_or_default()
+}
+
+pub fn load_settings_at(path: &Path) -> AppSettings {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|document| toml::from_str(&document).ok())
+        .unwrap_or_default()
+}
+
+/// 保存应用偏好。
+pub fn save_settings(settings: &AppSettings) -> Result<PathBuf> {
+    let path = settings_path().context("找不到系统的配置目录")?;
+    save_settings_at(&path, settings)?;
+    Ok(path)
+}
+
+pub fn save_settings_at(path: &Path, settings: &AppSettings) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("创建配置目录失败：{}", parent.display()))?;
+    }
+    let document = toml::to_string_pretty(settings).context("序列化应用偏好失败")?;
+    std::fs::write(path, document).with_context(|| format!("写入偏好失败：{}", path.display()))
+}
+
 /// 列出已保存的预设名，按名字排序。
 pub fn list_presets() -> Result<Vec<String>> {
     match preset_dir() {

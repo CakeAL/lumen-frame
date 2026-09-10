@@ -28,6 +28,11 @@ gpui-kit = "0.6.1"
 # GPUI 的测试上下文（TestAppContext / VisualTestContext）由这个 feature 提供。
 gpui-kit = { version = "0.6", features = ["test-support"] }
 
+[profile.release]
+# 主程序 29MB → 23MB。GPUI 本身占大头，符号表对最终用户没用。
+# 代价：release 构建的崩溃栈不再能符号化，要查线上崩溃请保留一份带符号的构建。
+strip = true
+
 [profile.dev.package]
 gpui-pre = { opt-level = 3 }
 gpui-component = { opt-level = 3 }

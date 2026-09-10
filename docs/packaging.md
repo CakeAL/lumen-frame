@@ -1,0 +1,169 @@
+# 打包与分发
+
+应用依赖 libvips，而 libvips 不是系统库。所以「能编译」和「能在别人机器上跑」是两件事：
+后者必须把整条依赖闭包一起发出去。
+
+两个平台的做法差别很大，原因在各自的动态加载器：
+
+| | macOS | Windows |
+| --- | --- | --- |
+| 依赖怎么记 | 可执行文件里写死**绝对路径**（`/opt/homebrew/opt/vips/lib/libvips.42.dylib`） | 只记**文件名**（`libvips-42.dll`） |
+| 加载器去哪找 | 按记录的那个绝对路径；找不到就报 dyld 错误 | 先搜 **exe 所在目录**，再搜 PATH |
+| 所以需要做什么 | 拷库 + 改写 install name 为 `@rpath` + 重新签名 | **把 DLL 拷到 exe 旁边就行** |
+
+---
+
+## macOS
+
+```bash
+script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
+```
+
+脚本做六件事：
+
+1. `cargo build --release`
+2. 建 `.app` 骨架 + `Info.plist`
+3. 从主程序和 vips 模块出发递归收集依赖闭包，按 `realpath` 去重（Homebrew 的 `opt/` 是
+   `Cellar/` 的软链，同一份库会出现两次），拷进 `Contents/Frameworks/`
+4. 改写引用：依赖 → `@rpath/<名>`；每个库加 `@loader_path` rpath，主程序加
+   `@executable_path/../Frameworks`，vips 模块加 `@loader_path/../../Frameworks`；
+   **并删掉所有绝对路径的 LC_RPATH**
+5. 重新签名（`codesign --force -s -`）。`install_name_tool` 会让原签名失效，
+   Apple Silicon 上不重签根本加载不了
+6. 校验：任何漏网的绝对路径依赖、绝对 rpath、或解析不到的 `@rpath` 都**报错退出**
+
+### vips 的格式模块
+
+libvips 把 HEIC/AVIF 这类可选格式做成了运行期 `g_module_open` 的模块，查找路径来自
+**编译期写死的 libdir**。Homebrew 的 bottle 里那个路径是构建机的：
+
+```
+VIPS-INFO: libdir = /Users/runner/work/sharp-libvips/sharp-libvips/target/lib
+```
+
+在谁的机器上都不存在。所以打包时模块放在 `Contents/lib/vips-modules-8.18/`，
+`src/main.rs` 的 `point_vips_at_bundled_modules()` 在 `vips_init` 之前把 `VIPS_LIBDIR`
+指到 `Contents/lib`。未打包时该目录不存在，函数不做任何事。
+
+### 体积
+
+打包后约 **71 MB**：
+
+| 部分 | 体积 | 说明 |
+| --- | --- | --- |
+| 主程序 | 22.7 MB | GPUI 本身占大头；`Cargo.toml` 里 `strip = true` 已经压过 |
+| Frameworks | 约 47 MB | 70 个库 |
+| vips 模块 | 168 KB | `vips-heif` |
+
+Frameworks 里各块的归属：
+
+| 功能 | 体积 | 要不要 |
+| --- | --- | --- |
+| SVG（librsvg + cairo/pango/harfbuzz/freetype/fontconfig…，31 个库） | 17.9 MB | **必需**：`{Logo}` 和圆角/阴影遮罩都走 `svgload_buffer` |
+| HEIC/AVIF（libheif + libx265 + libaom） | 14.7 MB | 看需求；libx265 是**编码器**，我们只读不写 |
+| MATLAB（matio） | 4.5 MB | 用不到 |
+| HDF5 | 4.1 MB | 用不到 |
+| EXR（openexr + Imath + Iex + IlmThread） | 2.7 MB | 用不到 |
+| 相机 RAW（libraw） | 2.5 MB | 支持 cr2/cr3/nef/arw/dng 需要 |
+| FITS（cfitsio） | 1.2 MB | 用不到 |
+
+**注意：这些（除了已去掉的 JXL）是 libvips 的硬依赖（`LC_LOAD_DYLIB`），
+删文件会让 dyld 拒绝加载 libvips。** 要减只能换一个 feature 更少的 libvips 构建。
+
+已经拿到的两处（零代码改动，81 → 71 MB）：
+
+- `strip = true`：主程序 29.2 → 22.7 MB
+- 不打包 `vips-jxl`：libvips 自己并不链 libjxl，去掉模块后那 7 个库（3.3 MB）整棵子树都不进包
+
+### 还想更小的话
+
+1. **去掉 SVG 依赖（省约 18 MB，收益最大）**
+   把 26 个品牌标志在构建期预渲染成 PNG（`include_bytes!` 嵌入），圆角/阴影遮罩改成
+   「预生成一张小尺寸圆角 PNG，运行时 resize」。之后 `svgload_buffer` 不再被调用，
+   就可以用不带 librsvg 的 libvips 构建。代价是改代码 + 遮罩质量需要比对。
+2. **换成 feature 更少的 libvips 构建（省约 12 MB）**
+   自己用 meson 构建，关掉用不到的格式：
+   ```
+   meson setup build -Dmatio=disabled -Dhdf5=disabled -Dopenexr=disabled \
+                     -Dcfitsio=disabled -Dpoppler=disabled -Dmagick=disabled \
+                     -Dopenslide=disabled -Djxl=disabled -Dfftw=disabled
+   ```
+3. **去掉 HEIC/AVIF（省约 15 MB）**
+   关掉 `-Dheif=disabled`，同时把这两个扩展名从界面的支持列表和文件过滤里去掉。
+4. 正式分发还需要 **Developer ID 签名 + 公证**（notarization），否则别人第一次打开会被
+   Gatekeeper 拦下。现在的 ad-hoc 签名只适合自己人之间传。
+
+---
+
+## Windows
+
+> 这一节和 `script/bundle-windows.ps1` 是**按官方文档写的，但在 Windows 上实测过之前
+> 不能算数** —— 我手上没有 Windows 环境。
+
+### 准备 libvips
+
+从 [libvips releases](https://github.com/libvips/libvips/releases) 下载预编译包并解压：
+
+- `vips-dev-w64-web-x.y.z.zip` —— 体积小，格式少
+- `vips-dev-w64-all-x.y.z.zip` —— 体积大，格式全
+
+这是 [libvips 官方安装说明](https://www.libvips.org/install.html)推荐的 Windows 安装方式，
+由 [build-win64-mxe](https://github.com/libvips/build-win64-mxe) 用 MinGW-w64 容器化构建。
+
+**两个变体的格式支持差异直接影响功能**（依据 build-win64-mxe 的依赖表）：
+
+| | web | all |
+| --- | --- | --- |
+| JPEG / PNG / WebP / TIFF / GIF | ✅ | ✅ |
+| **SVG（librsvg）** | ✅ | ✅ |
+| EXIF / lcms | ✅ | ✅ |
+| **HEIC / AVIF** | ❌ | ✅ |
+| **相机 RAW（cr2/nef/arw/dng…）** | ❌ | ✅ |
+| MATLAB / HDF5 / FITS / EXR / PDF / WSI | ❌ | ✅ |
+
+`web` 没有 libheif 和 libraw。如果选 `web`，**要同时把对应扩展名从
+`src/ui/queue.rs` 的 `SUPPORTED_EXTENSIONS` 里去掉**，否则文件选择器会接受打不开的格式。
+
+### 构建
+
+```
+$env:RUSTFLAGS = "-L C:\vips\vips-dev-w64-web-8.18.6\lib"
+cargo build --release
+```
+
+### 打包
+
+```powershell
+.\script\bundle-windows.ps1 -VipsDir C:\vips\vips-dev-w64-web-8.18.6 -Variant web
+```
+
+产物是 `dist\lumen-frame\`，直接整个目录发出去即可 —— 里面的 exe 和 DLL 并排放着，
+Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重签名。
+
+脚本会校验 exe 的导入表（`dumpbin /dependents` 或 `objdump -p`），确认每个非系统 DLL
+都在输出目录里，缺一个就报错退出。
+
+### 还需要注意
+
+- **工具链要和 libvips 的构建方式匹配**。官方包是 MinGW-w64 构建的；用
+  `x86_64-pc-windows-gnu` 最省事，用 `x86_64-pc-windows-msvc` 则需要能用的 `.lib`
+  导入库（官方包里有）。两者都行但别混用。
+- **交叉编译不现实**。libvips 的 Windows 包和 Rust 的 Windows 链接器都得在 Windows 上，
+  建议用 Windows 机器或 CI 的 `windows-latest` runner 出包。
+- 配置和预设走 `dirs::config_dir()`，Windows 上是 `%APPDATA%\lumen-frame\presets`，
+  代码不需要改。
+- GPUI 支持 Windows（`gpui_windows::WindowsPlatform`），但**这个应用没在 Windows 上跑过**，
+  首次移植要留出验证时间。
+
+---
+
+## 检查清单
+
+发布前对产物做这几件事：
+
+- [ ] `deps_of` / `dumpbin` 校验通过（脚本已经做了）
+- [ ] 在一台**没装 Homebrew / vips** 的机器上启动一次
+- [ ] 拖入一张照片，确认预览出现（这一步才真正跑通 libvips 管线）
+- [ ] 导出一次，确认输出文件正常
+- [ ] 如果宣称支持 HEIC/AVIF 或 RAW，各拿一张真实样张试
+- [ ] 打开「设置」确认配置目录可写（预设保存）

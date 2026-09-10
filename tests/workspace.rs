@@ -14,7 +14,7 @@ use gpui_kit::{
     point, px,
 };
 
-use lumen_frame::ui::AppView;
+use lumen_frame::ui::{AppPage, AppView};
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
 const OTHER_PHOTO: &str = "./test_images/ultra_hdr.jpg";
@@ -178,4 +178,22 @@ fn dropping_files_on_the_workspace_enqueues_them(cx: &mut TestAppContext) {
         view.read_with(cx, |view, cx| view.preview_image(cx))
             .is_some()
     });
+}
+
+/// 设置页要能渲染，而且切过去再切回来不能出问题。
+///
+/// 明暗选择是三项单选，索引和 `AppearanceMode` 的对应关系错了会在渲染时暴露出来；
+/// 默认值本身由 `tests/settings.rs` 覆盖，这里不依赖开发机上的偏好文件。
+#[gpui_kit::test]
+fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+
+    view.update_in(cx, |view, _, cx| view.go_to(AppPage::Settings, cx));
+    cx.run_until_parked();
+
+    view.update_in(cx, |view, _, cx| view.go_to(AppPage::Watermark, cx));
+    cx.run_until_parked();
+
+    // 切回来之后主界面仍然可用。
+    assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
 }

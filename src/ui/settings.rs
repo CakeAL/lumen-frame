@@ -3,23 +3,34 @@
 //! 设置整体替换中间区域，而不是叠一层抽屉：这些选项都属于「换个环境再回来干活」，值得
 //! 占满工作区，也不需要再解释它们从哪儿冒出来的。
 //!
-//! 这里的两项设置都直接读写 GPUI Component 的全局主题，因此不存在第二份副本会与之
-//! 不同步。
+//! 界面缩放直接读写 GPUI Component 的全局主题，明暗选择则通过 [`AppView::apply_appearance`]
+//! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
 use gpui_kit::component::{
-    ActiveTheme as _, Theme, ThemeMode, group_box::GroupBox, h_flex, radio::RadioGroup, v_flex,
+    ActiveTheme as _, Theme, group_box::GroupBox, h_flex, radio::RadioGroup, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, div, px};
+
+use crate::config::AppearanceMode;
 
 use super::AppView;
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
 
+/// 明暗的三个选项，顺序即单选组的顺序。
+const APPEARANCES: &[(&str, AppearanceMode)] = &[
+    ("跟随系统", AppearanceMode::System),
+    ("浅色", AppearanceMode::Light),
+    ("深色", AppearanceMode::Dark),
+];
+
 impl AppView {
     pub(super) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
-        let is_dark = cx.theme().mode.is_dark();
+        let appearance_index = APPEARANCES
+            .iter()
+            .position(|(_, mode)| *mode == self.appearance);
         let font_size = cx.theme().font_size.as_f32();
         let scale_index = INTERFACE_SCALES
             .iter()
@@ -74,18 +85,44 @@ impl AppView {
                                             )
                                             .child(
                                                 RadioGroup::horizontal("settings-mode")
-                                                    .children(["浅色", "深色"])
-                                                    .selected_index(Some(usize::from(is_dark)))
+                                                    .children(
+                                                        APPEARANCES
+                                                            .iter()
+                                                            .map(|(label, _)| *label)
+                                                            .collect::<Vec<_>>(),
+                                                    )
+                                                    .selected_index(appearance_index)
                                                     .on_click(cx.listener(
-                                                        |_, index: &usize, window, cx| {
-                                                            let mode = if *index == 0 {
-                                                                ThemeMode::Light
-                                                            } else {
-                                                                ThemeMode::Dark
+                                                        |this, index: &usize, window, cx| {
+                                                            let Some((_, mode)) =
+                                                                APPEARANCES.get(*index)
+                                                            else {
+                                                                return;
                                                             };
-                                                            Theme::change(mode, Some(window), cx);
+                                                            this.set_appearance_mode(
+                                                                *mode, window, cx,
+                                                            );
                                                         },
                                                     )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "跟随系统时会随 macOS 的浅色/深色自动切换。",
+                                                    ),
+                                            )
+                                            .when_some(
+                                                self.settings_feedback.clone(),
+                                                |this, feedback| {
+                                                    this.child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().danger)
+                                                            .child(feedback),
+                                                    )
+                                                },
                                             ),
                                     )
                                     .child(
