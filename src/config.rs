@@ -63,6 +63,14 @@ pub enum AppearanceMode {
 #[serde(default)]
 pub struct AppSettings {
     pub appearance: AppearanceMode,
+    /// 浅色主题的名字。`None` 表示用默认的那套。
+    pub light_theme: Option<String>,
+    /// 深色主题的名字。`None` 表示用默认的那套。
+    ///
+    /// 分两个槽位是主题系统的原生模型：`Theme::apply_config` 按配色自己的 mode 写进
+    /// 对应槽位，明暗切换时在这个槽位里取。所以「跟随系统」才有意义 —— 系统切到深色就
+    /// 用深色槽里的那套。
+    pub dark_theme: Option<String>,
 }
 
 /// 读取应用偏好。文件不存在或读坏了都退回默认值 —— 一个偏好文件不该拦住启动。

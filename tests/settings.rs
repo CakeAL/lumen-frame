@@ -33,7 +33,14 @@ fn appearance_round_trips() {
         AppearanceMode::Light,
         AppearanceMode::System,
     ] {
-        save_settings_at(&path, &AppSettings { appearance: mode }).unwrap();
+        save_settings_at(
+            &path,
+            &AppSettings {
+                appearance: mode,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(
             load_settings_at(&path).appearance,
             mode,
@@ -44,6 +51,27 @@ fn appearance_round_trips() {
     // 存的是可读的 TOML，不是二进制。
     let document = std::fs::read_to_string(&path).unwrap();
     assert!(document.contains("appearance"), "{document}");
+
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn theme_slots_round_trip() {
+    let path = scratch_file("theme-slots");
+
+    let settings = AppSettings {
+        appearance: AppearanceMode::System,
+        light_theme: Some("Catppuccin Latte".to_string()),
+        dark_theme: Some("Catppuccin Mocha".to_string()),
+    };
+    save_settings_at(&path, &settings).unwrap();
+    assert_eq!(load_settings_at(&path), settings);
+
+    // 没选过主题时是 None，表示用默认的那套，而不是空字符串。
+    save_settings_at(&path, &AppSettings::default()).unwrap();
+    let loaded = load_settings_at(&path);
+    assert_eq!(loaded.light_theme, None);
+    assert_eq!(loaded.dark_theme, None);
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

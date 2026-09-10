@@ -891,7 +891,11 @@ fn format_fnumber(value: &Rational) -> String {
 /// 消失 —— 而且只在别人的机器上出现。
 fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
     let make = make.replace("CORPORATION", "").trim().to_lowercase();
-    let suffix = if auto_color(watermark_params) { 'b' } else { 'w' };
+    let suffix = if auto_color(watermark_params) {
+        'b'
+    } else {
+        'w'
+    };
 
     // 亮色背景配黑色标志，深色背景配白色标志。
     let svg = match (make.as_str(), suffix) {

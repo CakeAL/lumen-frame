@@ -29,7 +29,10 @@ fn point_vips_at_bundled_modules() {
     //   Windows —— lumen-frame.exe + vips-modules-8.18 与 DLL 并排
     let candidates = [
         exe_dir.join("lib"),
-        exe_dir.parent().map(|contents| contents.join("lib")).unwrap_or_default(),
+        exe_dir
+            .parent()
+            .map(|contents| contents.join("lib"))
+            .unwrap_or_default(),
         exe_dir.to_path_buf(),
     ];
 
@@ -46,7 +49,13 @@ fn point_vips_at_bundled_modules() {
 fn main() {
     point_vips_at_bundled_modules();
 
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        // GPUI 的默认退出策略是 `QuitMode::Default`，它的定义就是
+        // `cfg!(not(target_os = "macos"))` —— 也就是说 macOS 上关掉窗口后进程会留在
+        // Dock 里，这是框架刻意的平台默认值。一个单窗口的照片工具没有「关掉窗口还继续
+        // 待着」的理由，所以显式改成「最后一个窗口关掉就退出」。
+        .with_quit_mode(QuitMode::LastWindowClosed);
 
     app.run(move |cx| {
         gpui_kit::init(cx);

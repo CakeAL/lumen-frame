@@ -3,6 +3,7 @@ pub mod helper;
 pub mod params;
 pub mod photo;
 pub mod process;
+pub mod theme;
 pub mod ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -46,6 +46,7 @@ use field::index_of;
 use inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use preview::WatermarkPreview;
 use queue::is_supported_image;
+use settings::SettingsControls;
 use text_section::TextLine;
 
 /// 队列中一张照片的稳定身份。
@@ -116,6 +117,10 @@ pub struct AppView {
     /// 界面明暗的选择。真正的主题落在 GPUI 的全局 `Theme` 上，这里记住的是「用户选的是
     /// 跟随系统还是指定明暗」，以及用来在设置页上显示当前选项。
     appearance: AppearanceMode,
+    /// 浅色/深色两个槽位各自选了哪套配色。`None` 表示用默认。
+    light_theme: Option<SharedString>,
+    dark_theme: Option<SharedString>,
+    settings: SettingsControls,
     settings_feedback: Option<SharedString>,
 
     /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
@@ -156,10 +161,14 @@ impl AppView {
             .map(SharedString::from)
             .collect();
 
+        // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
+        crate::theme::install(cx);
         let settings = config::load_settings();
+        let (settings_controls, settings_subscriptions) = SettingsControls::new(window, cx);
 
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
+        subscriptions.extend(settings_subscriptions);
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
             if this.appearance == AppearanceMode::System {
                 Theme::sync_system_appearance(Some(window), cx);
@@ -188,13 +197,64 @@ impl AppView {
             preset_feedback: None,
             preset_feedback_is_error: false,
             appearance: settings.appearance,
+            light_theme: settings.light_theme.map(SharedString::from),
+            dark_theme: settings.dark_theme.map(SharedString::from),
+            settings: settings_controls,
             settings_feedback: None,
             _subscriptions: subscriptions,
             text_line_subscriptions,
         };
         // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
+        view.apply_theme_slots(cx);
         view.apply_appearance(window, cx);
         view
+    }
+
+    // MARK: 配色槽位
+
+    /// 把两个槽位里选中的配色装进主题。
+    ///
+    /// 必须在 [`Self::apply_appearance`] 之前调用：`Theme::change` 会去槽位里取当前明暗
+    /// 对应的一套配色，槽位没填好就会取到上一次的。
+    fn apply_theme_slots(&self, cx: &mut App) {
+        for name in [&self.light_theme, &self.dark_theme].into_iter().flatten() {
+            let Some(config) = crate::theme::find(name, cx) else {
+                continue;
+            };
+            Theme::global_mut(cx).apply_config(&config);
+        }
+    }
+
+    fn persist_settings(&mut self, cx: &App) {
+        let settings = config::AppSettings {
+            appearance: self.appearance,
+            light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
+            dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
+        };
+        // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
+        self.settings_feedback = config::save_settings(&settings)
+            .err()
+            .map(|error| format!("偏好没能保存：{error:#}").into());
+        let _ = cx;
+    }
+
+    /// 换掉某个槽位里的配色。
+    pub(super) fn set_theme_slot(
+        &mut self,
+        mode: ThemeMode,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match mode {
+            ThemeMode::Light => self.light_theme = Some(name),
+            ThemeMode::Dark => self.dark_theme = Some(name),
+        }
+        self.apply_theme_slots(cx);
+        // 槽位换了，当前生效的那一套要重新应用一次才会看到效果。
+        self.apply_appearance(window, cx);
+        self.persist_settings(cx);
+        cx.notify();
     }
 
     // MARK: 明暗外观
@@ -237,12 +297,7 @@ impl AppView {
         }
         self.appearance = mode;
         self.apply_appearance(window, cx);
-
-        // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
-        self.settings_feedback = config::save_settings(&config::AppSettings { appearance: mode })
-            .err()
-            .map(|error| format!("偏好没能保存：{error:#}").into());
-
+        self.persist_settings(cx);
         cx.notify();
     }
 

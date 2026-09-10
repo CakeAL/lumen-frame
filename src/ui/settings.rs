@@ -7,17 +7,89 @@
 //! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
 use gpui_kit::component::{
-    ActiveTheme as _, Theme, group_box::GroupBox, h_flex, radio::RadioGroup, v_flex,
+    ActiveTheme as _, IndexPath, Theme, ThemeMode,
+    group_box::GroupBox,
+    h_flex,
+    radio::RadioGroup,
+    select::{Select, SelectEvent, SelectState},
+    v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, FontWeight, div, px};
+use gpui_kit::{Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
 
 use crate::config::AppearanceMode;
 
 use super::AppView;
+use super::field::field;
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
+
+/// 配色下拉的选项类型。
+type ThemeSelect = SelectState<Vec<SharedString>>;
+
+/// 设置页上的控件状态。
+pub(super) struct SettingsControls {
+    pub light_theme: Entity<ThemeSelect>,
+    pub dark_theme: Entity<ThemeSelect>,
+}
+
+impl SettingsControls {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<AppView>) -> (Self, Vec<Subscription>) {
+        let light_theme = make_theme_select(ThemeMode::Light, window, cx);
+        let dark_theme = make_theme_select(ThemeMode::Dark, window, cx);
+
+        let mut subscriptions = Vec::new();
+        subscriptions.push(
+            cx.subscribe_in(&light_theme, window, |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(name)) = event else {
+                    return;
+                };
+                this.set_theme_slot(ThemeMode::Light, name.clone(), window, cx);
+            }),
+        );
+        subscriptions.push(
+            cx.subscribe_in(&dark_theme, window, |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(name)) = event else {
+                    return;
+                };
+                this.set_theme_slot(ThemeMode::Dark, name.clone(), window, cx);
+            }),
+        );
+
+        (
+            Self {
+                light_theme,
+                dark_theme,
+            },
+            subscriptions,
+        )
+    }
+}
+
+fn make_theme_select(
+    mode: ThemeMode,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> Entity<ThemeSelect> {
+    let names = crate::theme::themes_for(mode, cx);
+    let selected = default_theme_index(&names, mode);
+    cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
+}
+
+/// 默认选中哪一项：优先默认的那套配色，列表非空时退回第一项。
+fn default_theme_index(names: &[SharedString], mode: ThemeMode) -> Option<IndexPath> {
+    let fallback = if mode == ThemeMode::Dark {
+        "Default Dark"
+    } else {
+        "Default Light"
+    };
+    names
+        .iter()
+        .position(|name| name.as_ref() == fallback)
+        .or(if names.is_empty() { None } else { Some(0) })
+        .map(IndexPath::new)
+}
 
 /// 明暗的三个选项，顺序即单选组的顺序。
 const APPEARANCES: &[(&str, AppearanceMode)] = &[
@@ -27,6 +99,15 @@ const APPEARANCES: &[(&str, AppearanceMode)] = &[
 ];
 
 impl AppView {
+    /// 一个配色槽位的下拉。两个槽位长一样，只有标题和来源状态不同。
+    fn render_theme_slot(&self, mode: ThemeMode, cx: &Context<Self>) -> impl IntoElement {
+        let (label, state) = match mode {
+            ThemeMode::Light => ("浅色主题", &self.settings.light_theme),
+            ThemeMode::Dark => ("深色主题", &self.settings.dark_theme),
+        };
+        field(label, Select::new(state).w_full(), cx)
+    }
+
     pub(super) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
         let appearance_index = APPEARANCES
             .iter()
@@ -110,7 +191,17 @@ impl AppView {
                                                     .text_xs()
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(
-                                                        "跟随系统时会随 macOS 的浅色/深色自动切换。",
+                                                        "跟随系统时会随操作系统的浅色/深色自动切换。",
+                                                    ),
+                                            )
+                                            .child(self.render_theme_slot(ThemeMode::Light, cx))
+                                            .child(self.render_theme_slot(ThemeMode::Dark, cx))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "浅色与深色各选一套配色；切换明暗时用对应的那一套。",
                                                     ),
                                             )
                                             .when_some(
