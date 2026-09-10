@@ -8,6 +8,7 @@
 
 use gpui_kit::component::{
     ActiveTheme as _, IndexPath, Theme, ThemeMode,
+    button::{Button, ButtonVariants as _},
     group_box::GroupBox,
     h_flex,
     radio::RadioGroup,
@@ -15,7 +16,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
+use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
 
 use crate::config::AppearanceMode;
 
@@ -24,6 +25,18 @@ use super::field::field;
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
+
+/// 默认档位的字号。
+pub(super) const DEFAULT_INTERFACE_SCALE: f32 = 16.0;
+
+/// 把界面缩放落到全局主题上。
+///
+/// 基础字号是像素锚点，这一处 `px` 是刻意的例外：它定义其余相对刻度的基准。
+pub(super) fn apply_interface_scale(scale: f32, window: &mut Window, cx: &mut App) {
+    Theme::global_mut(cx).font_size = px(scale);
+    Theme::sync_base(cx);
+    window.refresh();
+}
 
 /// 配色下拉的选项类型。
 type ThemeSelect = SelectState<Vec<SharedString>>;
@@ -112,10 +125,9 @@ impl AppView {
         let appearance_index = APPEARANCES
             .iter()
             .position(|(_, mode)| *mode == self.appearance);
-        let font_size = cx.theme().font_size.as_f32();
         let scale_index = INTERFACE_SCALES
             .iter()
-            .position(|(_, size)| (size - font_size).abs() < 0.5);
+            .position(|(_, size)| (size - self.interface_scale).abs() < 0.5);
 
         v_flex()
             .size_full()
@@ -204,6 +216,33 @@ impl AppView {
                                                         "浅色与深色各选一套配色；切换明暗时用对应的那一套。",
                                                     ),
                                             )
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .pt_2()
+                                                    .child(
+                                                        Button::new("settings-reset")
+                                                            .label("恢复默认设置")
+                                                            .ghost()
+                                                            .w_full()
+                                                            .on_click(cx.listener(
+                                                                |this, _, window, cx| {
+                                                                    this.reset_appearance_defaults(
+                                                                        window, cx,
+                                                                    )
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div().text_xs().text_color(
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                        .child(
+                                                            "恢复为跟随系统、默认配色与标准缩放；不影响水印参数和预设。",
+                                                        ),
+                                                    ),
+                                            )
                                             .when_some(
                                                 self.settings_feedback.clone(),
                                                 |this, feedback| {
@@ -236,16 +275,12 @@ impl AppView {
                                                     )
                                                     .selected_index(scale_index)
                                                     .on_click(cx.listener(
-                                                        |_, index: &usize, window, cx| {
+                                                        |this, index: &usize, window, cx| {
                                                             let (_, size) =
                                                                 INTERFACE_SCALES[*index];
-                                                            // 基础字号是像素锚点，这一处
-                                                            // `px` 是刻意的例外：它定义
-                                                            // 其余相对刻度的基准。
-                                                            Theme::global_mut(cx).font_size =
-                                                                px(size);
-                                                            Theme::sync_base(cx);
-                                                            window.refresh();
+                                                            this.set_interface_scale(
+                                                                size, window, cx,
+                                                            );
                                                         },
                                                     )),
                                             )

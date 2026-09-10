@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Root, Theme, ThemeMode, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Root, Theme, ThemeMode, ThemeRegistry, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -120,6 +120,8 @@ pub struct AppView {
     /// 浅色/深色两个槽位各自选了哪套配色。`None` 表示用默认。
     light_theme: Option<SharedString>,
     dark_theme: Option<SharedString>,
+    /// 界面缩放的基础字号。
+    interface_scale: f32,
     settings: SettingsControls,
     settings_feedback: Option<SharedString>,
 
@@ -199,15 +201,42 @@ impl AppView {
             appearance: settings.appearance,
             light_theme: settings.light_theme.map(SharedString::from),
             dark_theme: settings.dark_theme.map(SharedString::from),
+            interface_scale: settings
+                .interface_scale
+                .unwrap_or(settings::DEFAULT_INTERFACE_SCALE),
             settings: settings_controls,
             settings_feedback: None,
             _subscriptions: subscriptions,
             text_line_subscriptions,
         };
         // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
+        settings::apply_interface_scale(view.interface_scale, window, cx);
         view.apply_theme_slots(cx);
         view.apply_appearance(window, cx);
         view
+    }
+
+    /// 当前的界面缩放。
+    pub fn interface_scale(&self) -> f32 {
+        self.interface_scale
+    }
+
+    /// 浅色槽位选中的配色名；`None` 表示用默认的那套。
+    pub fn light_theme_name(&self) -> Option<String> {
+        self.light_theme.as_ref().map(|name| name.to_string())
+    }
+
+    /// 深色槽位选中的配色名；`None` 表示用默认的那套。
+    pub fn dark_theme_name(&self) -> Option<String> {
+        self.dark_theme.as_ref().map(|name| name.to_string())
+    }
+
+    /// 记住界面缩放。
+    pub fn set_interface_scale(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
+        self.interface_scale = scale;
+        settings::apply_interface_scale(scale, window, cx);
+        self.persist_settings(cx);
+        cx.notify();
     }
 
     // MARK: 配色槽位
@@ -230,6 +259,7 @@ impl AppView {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
+            interface_scale: Some(self.interface_scale),
         };
         // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
         self.settings_feedback = config::save_settings(&settings)
@@ -238,8 +268,45 @@ impl AppView {
         let _ = cx;
     }
 
+    /// 把界面偏好恢复到默认：跟随系统、两套默认配色、标准缩放。
+    ///
+    /// 只影响界面偏好，不碰水印参数和文字水印 —— 那是两份不同作用域的设置，混在一个
+    /// 按钮里会让人不敢按。
+    pub fn reset_appearance_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.appearance = AppearanceMode::System;
+        self.light_theme = None;
+        self.dark_theme = None;
+        self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
+
+        // 两个槽位换回注册表里自带的那两套。
+        let (light, dark) = {
+            let registry = ThemeRegistry::global(cx);
+            (
+                registry.default_light_theme().clone(),
+                registry.default_dark_theme().clone(),
+            )
+        };
+        Theme::global_mut(cx).apply_config(&light);
+        Theme::global_mut(cx).apply_config(&dark);
+
+        // 下拉框显示的也得跟上，否则界面上还停在上一次的选择。
+        let (light_name, dark_name) = (light.name.clone(), dark.name.clone());
+        self.settings.light_theme.update(cx, |state, cx| {
+            state.set_selected_value(&light_name, window, cx)
+        });
+        self.settings.dark_theme.update(cx, |state, cx| {
+            state.set_selected_value(&dark_name, window, cx)
+        });
+
+        settings::apply_interface_scale(self.interface_scale, window, cx);
+        self.apply_appearance(window, cx);
+        self.persist_settings(cx);
+        self.settings_feedback = Some("已恢复默认外观。".into());
+        cx.notify();
+    }
+
     /// 换掉某个槽位里的配色。
-    pub(super) fn set_theme_slot(
+    pub fn set_theme_slot(
         &mut self,
         mode: ThemeMode,
         name: SharedString,
@@ -286,7 +353,7 @@ impl AppView {
         self.appearance
     }
 
-    pub(super) fn set_appearance_mode(
+    pub fn set_appearance_mode(
         &mut self,
         mode: AppearanceMode,
         window: &mut Window,
@@ -789,6 +856,40 @@ impl AppView {
         controls.aspect_height.update(cx, |state, cx| {
             state.set_value(format_ratio(height), window, cx)
         });
+    }
+
+    /// 弹确认框再把水印参数恢复默认。
+    ///
+    /// 和设置页的「恢复默认设置」是两件事：那边重置的是界面偏好，这边重置的是画面效果。
+    /// 这一下会丢掉手工调过的所有参数，所以先问一句。
+    pub(super) fn confirm_reset_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let view = view.clone();
+            alert
+                .title("恢复默认参数？")
+                .description("当前的水印参数与文字水印会被默认值替换。已保存的预设不受影响。")
+                .button_props(
+                    gpui_kit::component::dialog::DialogButtonProps::default()
+                        .ok_text("恢复默认")
+                        .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                        .on_ok(move |_, window, cx| {
+                            view.update(cx, |this, cx| this.reset_params(window, cx));
+                            true
+                        }),
+                )
+        });
+    }
+
+    /// 把水印参数与文字水印恢复成默认值。
+    ///
+    /// 直接复用预设那条路径：默认值本来就可以看成一个内置预设，这样控件同步、文字行重建、
+    /// 预览重算都不用再写一遍。
+    pub(super) fn reset_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // 输出文件夹是这台机器的设置，恢复画面效果不该把它一起清掉（`apply_preset` 会保留）。
+        let preset = preset_of(&WatermarkParams::default(), &Text::default());
+        self.apply_preset(preset, window, cx);
+        cx.notify();
     }
 
     /// 弹一个确认框再删预设：文件删掉就找不回来了。

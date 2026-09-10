@@ -505,7 +505,19 @@ impl AppView {
                                 .map(|(ix, name)| self.render_preset_row(ix, name.clone(), cx)),
                         ),
                     )
-                }),
+                })
+                .child(
+                    Button::new("preset-reset")
+                        .icon(IconName::Undo2)
+                        .label("恢复默认参数")
+                        .ghost()
+                        .w_full()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.confirm_reset_params(window, cx)
+                            }),
+                        ),
+                ),
         )
     }
 

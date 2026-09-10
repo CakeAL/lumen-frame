@@ -4,10 +4,12 @@
 //! 主题是编译期内嵌的，所以这条链路断了不会被编译器发现 —— 只会在运行时表现为「设置里
 //! 的下拉是空的」。
 
-use gpui_kit::TestAppContext;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
+use gpui_kit::{SharedString, TestAppContext};
 
+use lumen_frame::config::AppearanceMode;
 use lumen_frame::theme;
+use lumen_frame::ui::AppView;
 
 #[gpui_kit::test]
 fn bundled_themes_are_installed(cx: &mut TestAppContext) {
@@ -102,4 +104,61 @@ fn every_bundled_theme_parses(cx: &mut TestAppContext) {
             "列表里的 {name} 在注册表里查不到"
         );
     }
+}
+
+/// 「恢复默认设置」要真的把三项都还原：明暗、两套配色、界面缩放。
+///
+/// 用的是 `AppView` 的公开命令，和设置页那个按钮走的是同一条路径。
+#[gpui_kit::test]
+fn resetting_defaults_restores_appearance(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        gpui_kit::component::set_locale("zh-CN");
+    });
+    let (view, cx) = cx.add_window_view(AppView::new);
+
+    // 先走到一个和默认不同的状态：指定深色 + 换成另一套深色配色。
+    view.update_in(cx, |view, window, cx| {
+        view.set_appearance_mode(AppearanceMode::Dark, window, cx);
+        view.set_theme_slot(
+            ThemeMode::Dark,
+            SharedString::from("Catppuccin Mocha"),
+            window,
+            cx,
+        );
+        view.set_interface_scale(18.0, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        cx.update(|_, cx| cx.theme().theme_name().clone()).as_ref(),
+        "Catppuccin Mocha"
+    );
+    assert_eq!(view.read_with(cx, |view, _| view.interface_scale()), 18.0);
+
+    view.update_in(cx, |view, window, cx| {
+        view.reset_appearance_defaults(window, cx)
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        view.read_with(cx, |view, _| view.appearance()),
+        AppearanceMode::System,
+        "没恢复成跟随系统"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.interface_scale()),
+        16.0,
+        "界面缩放没回到标准档"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.light_theme_name()),
+        None,
+        "浅色槽位没被清空"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.dark_theme_name()),
+        None,
+        "深色槽位没被清空"
+    );
 }

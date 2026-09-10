@@ -63,6 +63,7 @@ fn theme_slots_round_trip() {
         appearance: AppearanceMode::System,
         light_theme: Some("Catppuccin Latte".to_string()),
         dark_theme: Some("Catppuccin Mocha".to_string()),
+        interface_scale: Some(18.0),
     };
     save_settings_at(&path, &settings).unwrap();
     assert_eq!(load_settings_at(&path), settings);
@@ -72,6 +73,10 @@ fn theme_slots_round_trip() {
     let loaded = load_settings_at(&path);
     assert_eq!(loaded.light_theme, None);
     assert_eq!(loaded.dark_theme, None);
+    assert_eq!(
+        loaded.interface_scale, None,
+        "没调过缩放时应为 None，而不是某个数值"
+    );
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
