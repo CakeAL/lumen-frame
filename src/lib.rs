@@ -1,10 +1,11 @@
+pub mod config;
 pub mod helper;
 pub mod params;
 pub mod photo;
 pub mod process;
 pub mod ui;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Position {
     Center,
     Up,

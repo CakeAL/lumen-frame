@@ -20,6 +20,18 @@ fn vips() -> &'static VipsApp {
     VIPS.get_or_init(|| VipsApp::default("lumen-frame").expect("failed to init libvips"))
 }
 
+/// 保证 libvips 已初始化，并返回进程级单例。
+///
+/// **任何 vips 调用之前都必须先走这里。** libvips 的操作类哈希是首次使用时惰性构建的
+/// （`vips_operation_new` → GLib 的 `g_once`）；如果两个线程同时第一次触碰 vips，或者在
+/// `vips_init` 之前就调用，就会崩在 `vips_class_map_all` 里 —— 这是真实发生过的段错误。
+///
+/// 队列缩略图、预览合成、导出各跑在后台线程池的不同线程上，所以这个入口不能只存在于
+/// 其中某一条路径里。
+pub fn ensure_vips() -> &'static VipsApp {
+    vips()
+}
+
 #[derive(Debug, Clone)]
 pub struct Photo {
     pub path: PathBuf,
@@ -175,7 +187,12 @@ impl Photo {
                         img_y + img_h / 2 - text_h / 2,
                     )
                 }
-                _ => (0, 0),
+                // 居中：压在照片正中。此时 `Margin::cal_margin` 不为文字留边距，
+                // 中心点就是照片中心。
+                Position::Center => (
+                    img_x + img_w / 2 - text_w / 2,
+                    img_y + img_h / 2 - text_h / 2,
+                ),
             };
             ops::composite2_with_opts(
                 &canvas,

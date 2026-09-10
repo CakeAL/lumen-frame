@@ -1,46 +1,63 @@
 //! 右侧参数面板。
 //!
 //! 面板里的控件实体只保存控件自身的状态（滑块位置、下拉框开合、取色器面板），参数值
-//! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样
-//! 预览、导出、界面读数永远来自同一份数据。
+//! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样预览、
+//! 导出、界面读数永远来自同一份数据。
 
 use std::path::PathBuf;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, IndexPath,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
+    accordion::Accordion,
     button::{Button, ButtonVariants as _},
-    color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    searchable_list::SearchableListItem,
-    select::{Select, SelectEvent, SelectState},
-    slider::{Slider, SliderEvent, SliderState},
+    select::SelectEvent,
+    select::{Select, SelectState},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    App, Context, Entity, FontWeight, Hsla, Rgba, SharedString, Subscription, Window, div,
-};
+use gpui_kit::{Context, Entity, FontWeight, IntoElement, SharedString, Subscription, Window, div};
 
 use crate::Position;
 use crate::params::WatermarkParams;
-use crate::process::text::{Text, TextAlign};
+use crate::process::text::Text;
 
-use super::AppView;
-use super::ExportState;
+use super::field::{
+    Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
+    warning,
+};
+use super::{AppView, ExportState};
 
-/// 宽高比预设。`None` 表示跟随原图尺寸。
-const ASPECT_RATIOS: &[(&str, Option<(f64, f64)>)] = &[
-    ("跟随原图", None),
-    ("1:1", Some((1.0, 1.0))),
-    ("4:5", Some((4.0, 5.0))),
-    ("5:4", Some((5.0, 4.0))),
-    ("3:2", Some((3.0, 2.0))),
-    ("2:3", Some((2.0, 3.0))),
-    ("16:9", Some((16.0, 9.0))),
-    ("9:16", Some((9.0, 16.0))),
+/// 模糊强度的上限。
+///
+/// 再往上 blur 的耗时涨得比效果快，实际也很难看出差别，所以界面上就收在 150。
+const BLUR_MAX: f64 = 150.0;
+
+/// 宽高比的选项：不限制、常用比例、自定义。
+///
+/// 「不动宽高比」和「指定一个比例」是两件事，所以不强制比例的选项叫「不限制」。
+#[derive(Clone, PartialEq)]
+pub(super) enum AspectRatioChoice {
+    /// 不限制：画布尺寸只跟照片和边框有关。
+    Free,
+    Preset(f64, f64),
+    /// 自定义比例，具体数值在旁边两个输入框里。
+    Custom,
+}
+
+pub(super) const ASPECT_RATIOS: &[(&str, AspectRatioChoice)] = &[
+    ("不限制", AspectRatioChoice::Free),
+    ("1:1", AspectRatioChoice::Preset(1.0, 1.0)),
+    ("4:5", AspectRatioChoice::Preset(4.0, 5.0)),
+    ("5:4", AspectRatioChoice::Preset(5.0, 4.0)),
+    ("3:2", AspectRatioChoice::Preset(3.0, 2.0)),
+    ("2:3", AspectRatioChoice::Preset(2.0, 3.0)),
+    ("16:9", AspectRatioChoice::Preset(16.0, 9.0)),
+    ("9:16", AspectRatioChoice::Preset(9.0, 16.0)),
+    ("自定义", AspectRatioChoice::Custom),
 ];
 
 /// 图片与文字水印可以贴的位置。
@@ -52,128 +69,250 @@ pub(super) const POSITIONS: &[(&str, Position)] = &[
     ("靠右", Position::Right),
 ];
 
-/// 文字对齐方式。
-pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
-    ("左对齐", TextAlign::Left),
-    ("居中", TextAlign::Center),
-    ("右对齐", TextAlign::Right),
-];
-
-/// 给下拉框用的「标签 + 领域值」选项。
-///
-/// 直接把选项做成字符串的话，选中结果还要再靠文本反解回领域值；这里让下拉框把领域值
-/// 本身带回来。
-#[derive(Clone)]
-pub(super) struct Choice<T: Clone + PartialEq + 'static> {
-    label: SharedString,
-    value: T,
-}
-
-impl<T: Clone + PartialEq + 'static> Choice<T> {
-    pub(super) fn new(label: impl Into<SharedString>, value: T) -> Self {
-        Self {
-            label: label.into(),
-            value,
-        }
-    }
-}
-
-impl<T: Clone + PartialEq + 'static> SearchableListItem for Choice<T> {
-    type Value = T;
-
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-
-    fn value(&self) -> &Self::Value {
-        &self.value
-    }
-}
-
-/// 把领域值转成下拉框选项。
-pub(super) fn choices<T: Clone + PartialEq + 'static>(entries: &[(&str, T)]) -> Vec<Choice<T>> {
-    entries
-        .iter()
-        .map(|(label, value)| Choice::new(*label, value.clone()))
-        .collect()
-}
-
-/// 宽高比下拉框的状态。抽成别名，免得这串泛型在签名里反复出现。
-type AspectRatioSelect = SelectState<Vec<Choice<Option<(f64, f64)>>>>;
+/// 下拉框状态的具体类型别名，免得这串泛型在签名里反复出现。
+pub(super) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
+pub(super) type PositionSelect = SelectState<Vec<Choice<Position>>>;
+pub(super) type TimeFormatSelect = SelectState<Vec<Choice<String>>>;
 
 /// 面板里所有需要跨帧保留的控件状态。
 pub(super) struct ParameterControls {
-    pub border_top: Entity<SliderState>,
-    pub border_bottom: Entity<SliderState>,
-    pub border_left: Entity<SliderState>,
-    pub border_right: Entity<SliderState>,
-    pub border_radius: Entity<SliderState>,
-    pub shadow_size: Entity<SliderState>,
-    pub shadow_density: Entity<SliderState>,
-    pub blur_sigma: Entity<SliderState>,
-    pub quality: Entity<SliderState>,
-    pub background_color: Entity<ColorPickerState>,
+    pub border_top: NumberField,
+    pub border_bottom: NumberField,
+    pub border_left: NumberField,
+    pub border_right: NumberField,
+    pub border_radius: NumberField,
+    pub shadow_size: NumberField,
+    pub shadow_density: NumberField,
+    pub blur_sigma: NumberField,
+    pub quality: NumberField,
+    pub background: ColorField,
+
     pub aspect_ratio: Entity<AspectRatioSelect>,
-    pub position: Entity<SelectState<Vec<Choice<Position>>>>,
-    pub text_position: Entity<SelectState<Vec<Choice<Position>>>>,
+    /// 自定义宽高比的两个输入框。
+    pub aspect_width: Entity<InputState>,
+    pub aspect_height: Entity<InputState>,
+    pub position: Entity<PositionSelect>,
+    pub text_position: Entity<PositionSelect>,
+
     pub time_format: Entity<InputState>,
+    /// 常用时间格式：选一个例子就把它填进时间格式输入框。
+    pub time_format_example: Entity<TimeFormatSelect>,
     pub output_folder: Entity<InputState>,
+    pub preset_name: Entity<InputState>,
 }
 
 impl ParameterControls {
     /// 创建全部控件，并把「控件变化 → 写回参数 → 请求预览」这条链路一次接好。
     pub(super) fn new(
         params: &WatermarkParams,
-        text: &Text,
+        time_format: &str,
+        text_position: crate::Position,
+        aspect_choice: &AspectRatioChoice,
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> (Self, Vec<Subscription>) {
-        let border_top = slider(params.border_ratio.0 as f32, 0.0, 0.4, 0.005, cx);
-        let border_bottom = slider(params.border_ratio.1 as f32, 0.0, 0.4, 0.005, cx);
-        let border_left = slider(params.border_ratio.2 as f32, 0.0, 0.4, 0.005, cx);
-        let border_right = slider(params.border_ratio.3 as f32, 0.0, 0.4, 0.005, cx);
-        let border_radius = slider(params.border_radius as f32, 0.0, 0.2, 0.002, cx);
-        let shadow_size = slider(params.shadow_size as f32, 0.0, 0.3, 0.005, cx);
-        let shadow_density = slider(params.shadow_density as f32, 0.0, 2.0, 0.05, cx);
-        let blur_sigma = slider(params.blur_sigma as f32, 0.0, 1000.0, 5.0, cx);
-        let quality = slider(params.quality as f32, 1.0, 100.0, 1.0, cx);
+        let mut subscriptions = Vec::new();
 
-        let background_color = cx.new(|cx| {
-            ColorPickerState::new(window, cx).default_value(rgb_to_hsla(params.background))
-        });
+        let border_top = NumberField::new(
+            params.border_ratio.0,
+            0.0,
+            40.0,
+            0.5,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let border_bottom = NumberField::new(
+            params.border_ratio.1,
+            0.0,
+            40.0,
+            0.5,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let border_left = NumberField::new(
+            params.border_ratio.2,
+            0.0,
+            40.0,
+            0.5,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let border_right = NumberField::new(
+            params.border_ratio.3,
+            0.0,
+            40.0,
+            0.5,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let border_radius = NumberField::new(
+            params.border_radius,
+            0.0,
+            20.0,
+            0.1,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let shadow_size = NumberField::new(
+            params.shadow_size,
+            0.0,
+            30.0,
+            0.5,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let shadow_density = NumberField::new(
+            params.shadow_density,
+            0.0,
+            2.0,
+            0.05,
+            2,
+            1.0,
+            "",
+            window,
+            cx,
+        );
+        let blur_sigma = NumberField::new(
+            params.blur_sigma,
+            0.0,
+            BLUR_MAX,
+            1.0,
+            0,
+            1.0,
+            "",
+            window,
+            cx,
+        );
+        let quality = NumberField::new(
+            f64::from(params.quality),
+            1.0,
+            100.0,
+            1.0,
+            0,
+            1.0,
+            "",
+            window,
+            cx,
+        );
+        let background = ColorField::new(params.background, window, cx);
 
-        let aspect_ratio = cx.new(|cx| {
-            let items = choices(ASPECT_RATIOS);
-            let selected = ASPECT_RATIOS
-                .iter()
-                .position(|(_, value)| *value == params.aspect_ratio)
-                .map(IndexPath::new);
-            SelectState::new(items, selected, window, cx)
-        });
+        subscriptions.extend(border_top.subscribe(window, cx, |this, value| {
+            this.params.border_ratio.0 = value;
+        }));
+        subscriptions.extend(border_bottom.subscribe(window, cx, |this, value| {
+            this.params.border_ratio.1 = value;
+        }));
+        subscriptions.extend(border_left.subscribe(window, cx, |this, value| {
+            this.params.border_ratio.2 = value;
+        }));
+        subscriptions.extend(border_right.subscribe(window, cx, |this, value| {
+            this.params.border_ratio.3 = value;
+        }));
+        subscriptions.extend(border_radius.subscribe(window, cx, |this, value| {
+            this.params.border_radius = value;
+        }));
+        subscriptions.extend(shadow_size.subscribe(window, cx, |this, value| {
+            this.params.shadow_size = value;
+        }));
+        subscriptions.extend(shadow_density.subscribe(window, cx, |this, value| {
+            this.params.shadow_density = value;
+        }));
+        subscriptions.extend(blur_sigma.subscribe(window, cx, |this, value| {
+            this.params.blur_sigma = value;
+        }));
+        subscriptions.extend(quality.subscribe(window, cx, |this, value| {
+            this.params.quality = value.round() as i32;
+        }));
+        subscriptions.extend(background.subscribe(window, cx, |this, rgb| {
+            this.params.background = rgb;
+        }));
 
-        let position = cx.new(|cx| {
-            let items = choices(POSITIONS);
-            let selected = POSITIONS
-                .iter()
-                .position(|(_, value)| *value == params.position)
-                .map(IndexPath::new);
-            SelectState::new(items, selected, window, cx)
+        let aspect_ratio = select_state(
+            choices(ASPECT_RATIOS),
+            index_of(ASPECT_RATIOS, aspect_choice),
+            window,
+            cx,
+        );
+        let (ratio_width, ratio_height) = initial_ratio(params.aspect_ratio);
+        let aspect_width = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(ratio_width)
+                .placeholder("宽")
         });
+        let aspect_height = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(ratio_height)
+                .placeholder("高")
+        });
+        let position = select_state(
+            choices(POSITIONS),
+            index_of(POSITIONS, &params.position),
+            window,
+            cx,
+        );
+        let text_position = select_state(
+            choices(POSITIONS),
+            index_of(POSITIONS, &text_position),
+            window,
+            cx,
+        );
 
-        let text_position = cx.new(|cx| {
-            let items = choices(POSITIONS);
-            let selected = POSITIONS
-                .iter()
-                .position(|(_, value)| *value == text.position)
-                .map(IndexPath::new);
-            SelectState::new(items, selected, window, cx)
-        });
+        subscriptions.push(on_select(&aspect_ratio, window, cx, |this, choice, cx| {
+            this.apply_aspect_choice(choice, cx);
+        }));
+        subscriptions.push(on_select(&position, window, cx, |this, position, _| {
+            this.params.position = position;
+        }));
+        subscriptions.push(on_select(
+            &text_position,
+            window,
+            cx,
+            |this, position, _| {
+                this.text_position = position;
+            },
+        ));
+
+        // 自定义比例：两个框任意一个变了，就拿两个框当前的值重算比例。
+        for input in [&aspect_width, &aspect_height] {
+            subscriptions.push(cx.subscribe_in(input, window, |this, _, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.apply_custom_aspect_ratio(cx);
+                }
+            }));
+        }
 
         let time_format = cx.new(|cx| {
             InputState::new(window, cx)
-                .default_value(text.time_format.clone())
-                .placeholder("例如 %Y/%m/%d")
+                .default_value(time_format.to_owned())
+                .placeholder("%Y/%m/%d")
         });
+        subscriptions.push(
+            cx.subscribe_in(&time_format, window, |this, state, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.time_format = state.read(cx).value().to_string();
+                    this.refresh_preview(cx);
+                    cx.notify();
+                }
+            }),
+        );
 
         let output_folder = cx.new(|cx| {
             InputState::new(window, cx)
@@ -186,77 +325,6 @@ impl ParameterControls {
                 )
                 .placeholder("导出到哪个文件夹")
         });
-
-        let mut subscriptions = Vec::new();
-
-        subscriptions.push(apply_slider(&border_top, cx, |params, value| {
-            params.border_ratio.0 = value as f64;
-        }));
-        subscriptions.push(apply_slider(&border_bottom, cx, |params, value| {
-            params.border_ratio.1 = value as f64;
-        }));
-        subscriptions.push(apply_slider(&border_left, cx, |params, value| {
-            params.border_ratio.2 = value as f64;
-        }));
-        subscriptions.push(apply_slider(&border_right, cx, |params, value| {
-            params.border_ratio.3 = value as f64;
-        }));
-        subscriptions.push(apply_slider(&border_radius, cx, |params, value| {
-            params.border_radius = value as f64;
-        }));
-        subscriptions.push(apply_slider(&shadow_size, cx, |params, value| {
-            params.shadow_size = value as f64;
-        }));
-        subscriptions.push(apply_slider(&shadow_density, cx, |params, value| {
-            params.shadow_density = value as f64;
-        }));
-        subscriptions.push(apply_slider(&blur_sigma, cx, |params, value| {
-            params.blur_sigma = value as f64;
-        }));
-        subscriptions.push(apply_slider(&quality, cx, |params, value| {
-            params.quality = value.round() as i32;
-        }));
-
-        subscriptions.push(cx.subscribe(&background_color, |this, _, event, cx| {
-            if let ColorPickerEvent::Change(Some(color)) = event {
-                this.params.background = hsla_to_rgb(*color);
-                this.refresh_preview(cx);
-                cx.notify();
-            }
-        }));
-
-        subscriptions.push(cx.subscribe(&aspect_ratio, |this, _, event, cx| {
-            let SelectEvent::Confirm(value) = event;
-            // 未选中和「跟随原图」都表示不给宽高比约束。
-            this.params.aspect_ratio = (*value).flatten();
-            this.refresh_preview(cx);
-            cx.notify();
-        }));
-
-        subscriptions.push(cx.subscribe(&position, |this, _, event, cx| {
-            let SelectEvent::Confirm(value) = event;
-            this.params.position = value.unwrap_or(Position::Center);
-            this.refresh_preview(cx);
-            cx.notify();
-        }));
-
-        subscriptions.push(cx.subscribe(&text_position, |this, _, event, cx| {
-            let SelectEvent::Confirm(value) = event;
-            this.text_position = value.unwrap_or(Position::Bottom);
-            this.refresh_preview(cx);
-            cx.notify();
-        }));
-
-        subscriptions.push(
-            cx.subscribe_in(&time_format, window, |this, state, event, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.time_format = state.read(cx).value().to_string();
-                    this.refresh_preview(cx);
-                    cx.notify();
-                }
-            }),
-        );
-
         subscriptions.push(
             cx.subscribe_in(&output_folder, window, |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -271,6 +339,26 @@ impl ParameterControls {
             }),
         );
 
+        let time_format_example =
+            select_state(super::text_section::time_format_choices(), None, window, cx);
+        subscriptions.push(cx.subscribe_in(&time_format_example, window, {
+            let input = time_format.clone();
+            move |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(template)) = event else {
+                    return;
+                };
+                this.time_format = template.clone();
+                input.update(cx, |state, cx| {
+                    state.set_value(template.clone(), window, cx)
+                });
+                this.refresh_preview(cx);
+                cx.notify();
+            }
+        }));
+
+        let preset_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder("给这套配置起个名字"));
+
         (
             Self {
                 border_top,
@@ -282,15 +370,41 @@ impl ParameterControls {
                 shadow_density,
                 blur_sigma,
                 quality,
-                background_color,
+                background,
                 aspect_ratio,
+                aspect_width,
+                aspect_height,
                 position,
                 text_position,
                 time_format,
+                time_format_example,
                 output_folder,
+                preset_name,
             },
             subscriptions,
         )
+    }
+}
+
+/// 没有指定比例时，自定义输入框里先放一个 1:1，省得用户面对两个空格。
+fn initial_ratio(aspect_ratio: Option<(f64, f64)>) -> (String, String) {
+    let (width, height) = aspect_ratio.unwrap_or((1.0, 1.0));
+    (format_number(width), format_number(height))
+}
+
+pub(super) fn format_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// 从当前配置生成一个预设。
+pub(super) fn preset_of(params: &WatermarkParams, text: &Text) -> crate::config::WatermarkPreset {
+    crate::config::WatermarkPreset {
+        params: params.clone(),
+        text: text.clone(),
     }
 }
 
@@ -328,6 +442,7 @@ impl AppView {
                     .gap_6()
                     .p_4()
                     .overflow_y_scroll()
+                    .child(self.render_preset_section(cx))
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))
@@ -336,9 +451,148 @@ impl AppView {
             )
     }
 
+    // MARK: 预设
+
+    fn render_preset_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        let name_ready = !self.controls.preset_name.read(cx).value().trim().is_empty();
+
+        GroupBox::new().id("preset-section").title("预设").child(
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&self.controls.preset_name)),
+                        )
+                        .child(
+                            Button::new("preset-save")
+                                .label("保存")
+                                .disabled(!name_ready)
+                                .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
+                        ),
+                )
+                .child(hint(
+                    "预设保存参数与文字水印；输出文件夹属于本机设置，不写进预设。",
+                    cx,
+                ))
+                .when_some(self.preset_feedback.clone(), |this, feedback| {
+                    this.child(if self.preset_feedback_is_error {
+                        warning(feedback, cx)
+                    } else {
+                        hint(feedback, cx)
+                    })
+                })
+                .when(self.preset_names.is_empty(), |this| {
+                    this.child(
+                        v_flex()
+                            .w_full()
+                            .gap_1()
+                            .child(hint("还没有保存过预设。", cx)),
+                    )
+                })
+                .when(!self.preset_names.is_empty(), |this| {
+                    this.child(
+                        v_flex().w_full().gap_2().children(
+                            self.preset_names
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, name)| self.render_preset_row(ix, name.clone(), cx)),
+                        ),
+                    )
+                }),
+        )
+    }
+
+    fn render_preset_row(
+        &self,
+        ix: usize,
+        name: SharedString,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let for_load = name.clone();
+        let for_delete = name.clone();
+
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(name),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .child(
+                        Button::new(("preset-load", ix))
+                            .label("载入")
+                            .small()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.load_preset(&for_load, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("preset-delete", ix))
+                            .icon(IconName::Delete)
+                            .ghost()
+                            .small()
+                            .tooltip("删除这个预设")
+                            .accessibility_label(format!("删除预设 {for_delete}"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.confirm_delete_preset(&for_delete, window, cx)
+                            })),
+                    ),
+            )
+    }
+
+    // MARK: 画布与边框
+
     fn render_canvas_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
         let equal = self.params.border_equal;
+
+        // 四个边框滑块收进一个可折叠区：不调边框的时候没必要占四行。
+        let border_items = Accordion::new("border-width")
+            .multiple(false)
+            .bordered(false)
+            // 组件默认铺满父级高度，在自动高度的分组里显式交回去。
+            .h_auto()
+            .item(|item| {
+                item.title(hint(
+                    format!(
+                        "上 {:.1}% · 下 {:.1}% · 左 {:.1}% · 右 {:.1}%",
+                        self.params.border_ratio.0 * 100.0,
+                        self.params.border_ratio.1 * 100.0,
+                        self.params.border_ratio.2 * 100.0,
+                        self.params.border_ratio.3 * 100.0,
+                    ),
+                    cx,
+                ))
+                .open(self.border_width_open)
+                .child(controls.border_top.render("上边框", false, cx))
+                .child(controls.border_bottom.render("下边框", equal, cx))
+                .child(controls.border_left.render("左边框", equal, cx))
+                .child(controls.border_right.render("右边框", equal, cx))
+            })
+            .on_toggle_click(cx.listener(|this, open: &[usize], _, cx| {
+                let is_open = !open.is_empty();
+                if this.border_width_open != is_open {
+                    this.border_width_open = is_open;
+                    cx.notify();
+                }
+            }));
 
         GroupBox::new()
             .id("canvas-section")
@@ -353,45 +607,60 @@ impl AppView {
                         cx.notify();
                     })),
             )
-            .child(slider_row(
-                "上边框",
-                percent(slider_value(&controls.border_top, cx)),
-                &controls.border_top,
-                false,
-                cx,
-            ))
-            .child(slider_row(
-                "下边框",
-                percent(slider_value(&controls.border_bottom, cx)),
-                &controls.border_bottom,
-                equal,
-                cx,
-            ))
-            .child(slider_row(
-                "左边框",
-                percent(slider_value(&controls.border_left, cx)),
-                &controls.border_left,
-                equal,
-                cx,
-            ))
-            .child(slider_row(
-                "右边框",
-                percent(slider_value(&controls.border_right, cx)),
-                &controls.border_right,
-                equal,
-                cx,
-            ))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().foreground)
+                            .child("边框宽度"),
+                    )
+                    .child(border_items),
+            )
             .child(field(
                 "宽高比",
                 Select::new(&controls.aspect_ratio).w_full(),
                 cx,
             ))
+            .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&controls.aspect_width)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(":"),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&controls.aspect_height)),
+                        ),
+                )
+            })
+            .when(self.aspect_choice == AspectRatioChoice::Free, |this| {
+                this.child(hint("不限制：画布尺寸只跟照片和边框有关。", cx))
+            })
             .child(field(
                 "图片位置",
                 Select::new(&controls.position).w_full(),
                 cx,
             ))
     }
+
+    // MARK: 背景
 
     fn render_background_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
@@ -410,31 +679,11 @@ impl AppView {
                         cx.notify();
                     })),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(if solid {
-                                cx.theme().foreground
-                            } else {
-                                cx.theme().muted_foreground
-                            })
-                            .child("背景颜色"),
-                    )
-                    .child(ColorPicker::new(&controls.background_color)),
-            )
-            .child(slider_row(
-                "模糊强度",
-                format!("{:.0}", slider_value(&controls.blur_sigma, cx)),
-                &controls.blur_sigma,
-                solid,
-                cx,
-            ))
+            .child(controls.background.render("背景颜色", !solid, cx))
+            .child(controls.blur_sigma.render("模糊强度", solid, cx))
     }
+
+    // MARK: 图片细节
 
     fn render_image_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
@@ -442,28 +691,12 @@ impl AppView {
         GroupBox::new()
             .id("image-section")
             .title("图片细节")
-            .child(slider_row(
-                "圆角",
-                percent(slider_value(&controls.border_radius, cx)),
-                &controls.border_radius,
-                false,
-                cx,
-            ))
-            .child(slider_row(
-                "阴影大小",
-                percent(slider_value(&controls.shadow_size, cx)),
-                &controls.shadow_size,
-                false,
-                cx,
-            ))
-            .child(slider_row(
-                "阴影浓度",
-                format!("{:.2}", slider_value(&controls.shadow_density, cx)),
-                &controls.shadow_density,
-                false,
-                cx,
-            ))
+            .child(controls.border_radius.render("圆角", false, cx))
+            .child(controls.shadow_size.render("阴影大小", false, cx))
+            .child(controls.shadow_density.render("阴影浓度", false, cx))
     }
+
+    // MARK: 输出
 
     fn render_output_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
@@ -472,13 +705,7 @@ impl AppView {
             .id("output-section")
             .title("输出")
             .child(field("输出文件夹", Input::new(&controls.output_folder), cx))
-            .child(slider_row(
-                "JPEG 质量",
-                format!("{:.0}", slider_value(&controls.quality, cx)),
-                &controls.quality,
-                false,
-                cx,
-            ))
+            .child(controls.quality.render("JPEG 质量", false, cx))
             .child(self.render_export_footer(cx))
     }
 
@@ -486,15 +713,11 @@ impl AppView {
     fn render_export_footer(&self, cx: &Context<Self>) -> impl IntoElement {
         let total = self.photos.len();
         let status = match &self.export {
-            ExportState::Running { completed, total } => {
-                format!("正在导出 {completed}/{total}")
-            }
+            ExportState::Running { completed, total } => format!("正在导出 {completed}/{total}"),
             ExportState::Finished {
                 succeeded,
                 failed: 0,
-            } => {
-                format!("已导出 {succeeded} 张")
-            }
+            } => format!("已导出 {succeeded} 张"),
             ExportState::Finished { succeeded, failed } => {
                 format!("已导出 {succeeded} 张，{failed} 张失败")
             }
@@ -513,14 +736,7 @@ impl AppView {
                     .disabled(total == 0 || matches!(self.export, ExportState::Running { .. }))
                     .on_click(cx.listener(|this, _, _, cx| this.export_all(cx))),
             )
-            .when(!status.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(status),
-                )
-            })
+            .when(!status.is_empty(), |this| this.child(hint(status, cx)))
             .child(hint(
                 match &self.params.output_folder {
                     Some(folder) => format!("导出到 {}", folder.display()),
@@ -529,122 +745,4 @@ impl AppView {
                 cx,
             ))
     }
-}
-
-/// 一行「标签 + 读数 + 滑块」。
-///
-/// 读数右对齐、滑块占满整行，多个这样的行叠起来会形成稳定的纵向对齐，扫一眼就能比较
-/// 各参数的相对大小。
-pub(super) fn slider_row(
-    label: impl Into<SharedString>,
-    reading: String,
-    slider: &Entity<SliderState>,
-    disabled: bool,
-    cx: &App,
-) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_1()
-        .child(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .gap_2()
-                .text_sm()
-                .child(
-                    div()
-                        .text_color(if disabled {
-                            cx.theme().muted_foreground
-                        } else {
-                            cx.theme().foreground
-                        })
-                        .child(label.into()),
-                )
-                .child(div().text_color(cx.theme().muted_foreground).child(reading)),
-        )
-        .child(Slider::new(slider).disabled(disabled).w_full())
-}
-
-/// 一行「标签在上、控件在下」的字段。
-pub(super) fn field(
-    label: impl Into<SharedString>,
-    control: impl IntoElement,
-    cx: &App,
-) -> impl IntoElement {
-    v_flex()
-        .w_full()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label.into()),
-        )
-        .child(control)
-}
-
-/// 一段说明性文字，用于解释当前参数组合下的后果。
-pub(super) fn hint(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
-    div()
-        .text_xs()
-        .text_color(cx.theme().muted_foreground)
-        .child(text.into())
-}
-
-pub(super) fn slider_value(slider: &Entity<SliderState>, cx: &App) -> f32 {
-    slider.read(cx).value().end()
-}
-
-pub(super) fn percent(value: f32) -> String {
-    format!("{:.1}%", value * 100.0)
-}
-
-/// 建一个滑块实体。控件自身持有位置，参数值仍在 [`AppView::params`] 里。
-fn slider(
-    initial: f32,
-    min: f32,
-    max: f32,
-    step: f32,
-    cx: &mut Context<AppView>,
-) -> Entity<SliderState> {
-    cx.new(|_| {
-        SliderState::new()
-            .min(min)
-            .max(max)
-            .step(step)
-            .default_value(initial)
-    })
-}
-
-/// 把滑块变化写回参数字段。
-fn apply_slider(
-    slider: &Entity<SliderState>,
-    cx: &mut Context<AppView>,
-    apply: impl Fn(&mut WatermarkParams, f32) + 'static,
-) -> Subscription {
-    cx.subscribe(slider, move |this, _, event, cx| {
-        if let SliderEvent::Change(value) = event {
-            apply(&mut this.params, value.end());
-            this.refresh_preview(cx);
-        }
-    })
-}
-
-pub(super) fn hsla_to_rgb(color: Hsla) -> [u8; 3] {
-    let rgba: Rgba = color.into();
-    [
-        (rgba.r.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (rgba.g.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (rgba.b.clamp(0.0, 1.0) * 255.0).round() as u8,
-    ]
-}
-
-pub(super) fn rgb_to_hsla(rgb: [u8; 3]) -> Hsla {
-    Rgba {
-        r: rgb[0] as f32 / 255.0,
-        g: rgb[1] as f32 / 255.0,
-        b: rgb[2] as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
 }

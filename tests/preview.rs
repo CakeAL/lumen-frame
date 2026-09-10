@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use lumen_frame::{
+    Position,
     params::WatermarkParams,
     photo::ExifInfo,
     process::text::Text,
@@ -113,4 +114,83 @@ fn thumbnail_stays_within_its_box() {
 
     assert!(size.width.0 <= 320 && size.height.0 <= 320);
     assert!(size.width.0 > 0 && size.height.0 > 0);
+}
+
+#[test]
+fn centred_text_lands_in_the_middle_of_the_canvas() {
+    // 「居中」曾经落到 `Position` 匹配的兜底分支上，也就是画布左上角 (0, 0)，
+    // 所以这里用「文字像素落在哪」来验证它真的居中。
+    let text = Text {
+        position: Position::Center,
+        ..Text::default()
+    };
+
+    let mut without_text = text.clone();
+    without_text.template.clear();
+    without_text.text_params.clear();
+
+    let with_text = render_preview(&job_with(WatermarkParams::default(), text)).unwrap();
+    let bare = render_preview(&job_with(WatermarkParams::default(), without_text)).unwrap();
+
+    let canvas = with_text.size(0);
+    let (left, top, right, bottom) =
+        diff_bounds(&with_text, &bare).expect("居中位置没有渲染出文字");
+
+    let centre_x = (left + right) as f32 / 2.0;
+    let centre_y = (top + bottom) as f32 / 2.0;
+    let width = canvas.width.0 as f32;
+    let height = canvas.height.0 as f32;
+
+    assert!(
+        (centre_x - width / 2.0).abs() < width * 0.1,
+        "文字水平方向没有居中：中心 {centre_x}，画布中心 {}",
+        width / 2.0
+    );
+    assert!(
+        (centre_y - height / 2.0).abs() < height * 0.1,
+        "文字垂直方向没有居中：中心 {centre_y}，画布中心 {}",
+        height / 2.0
+    );
+}
+
+fn job_with(params: WatermarkParams, text: Text) -> PreviewJob {
+    let path = PathBuf::from(PHOTO);
+    PreviewJob {
+        path: path.clone(),
+        exif: ExifInfo::read(Path::new(PHOTO)).ok(),
+        params,
+        text,
+    }
+}
+
+/// 两张同位图里所有不同像素的外接矩形 `(left, top, right, bottom)`。
+fn diff_bounds(
+    left: &gpui_kit::RenderImage,
+    right: &gpui_kit::RenderImage,
+) -> Option<(u32, u32, u32, u32)> {
+    let size = left.size(0);
+    assert_eq!(size, right.size(0), "两张图尺寸必须一致才能逐像素比较");
+    let (width, height) = (size.width.0 as u32, size.height.0 as u32);
+
+    let a = left.as_bytes(0).expect("缺少像素数据");
+    let b = right.as_bytes(0).expect("缺少像素数据");
+
+    let (mut min_x, mut min_y) = (u32::MAX, u32::MAX);
+    let (mut max_x, mut max_y) = (0u32, 0u32);
+    let mut found = false;
+
+    for y in 0..height {
+        for x in 0..width {
+            let offset = ((y * width + x) * 4) as usize;
+            if a[offset..offset + 4] != b[offset..offset + 4] {
+                found = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+
+    found.then_some((min_x, min_y, max_x, max_y))
 }

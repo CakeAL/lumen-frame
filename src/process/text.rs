@@ -24,7 +24,7 @@ use crate::{
 pub type SvgString = String;
 
 /// 需要渲染的多行文本
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Text {
     /// 每行文本模板
     pub template: Vec<String>,
@@ -154,7 +154,7 @@ impl Text {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TextAlign {
     Left,
     #[default]
@@ -162,14 +162,15 @@ pub enum TextAlign {
     Right,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TextDirection {
     #[default]
     Horizontal,
     Vertical,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct TextParams {
     pub font: String,
     /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
@@ -222,7 +223,7 @@ impl Default for Text {
                 },
             ],
             position: Position::Bottom,
-            time_format: "%Y/%m/%d".to_owned(),
+            time_format: DEFAULT_TIME_FORMAT.to_owned(),
         }
     }
 }
@@ -779,7 +780,39 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
     }
 }
 
+/// 时间格式的默认值。
+pub const DEFAULT_TIME_FORMAT: &str = "%Y/%m/%d";
+
+/// 界面上给用户参考的常用时间格式。
+pub const TIME_FORMAT_EXAMPLES: &[(&str, &str)] = &[
+    ("2026/09/10", "%Y/%m/%d"),
+    ("2026-09-10", "%Y-%m-%d"),
+    ("2026年9月10日", "%Y年%m月%d日"),
+    ("09/10 14:30", "%m/%d %H:%M"),
+    ("2026/09/10 14:30:05", "%Y/%m/%d %H:%M:%S"),
+    ("2026-09-10 星期四", "%Y-%m-%d %A"),
+];
+
+/// 判断 strftime 模板是否可用。
+///
+/// 模板直接来自界面输入框，而 chrono 在写出非法模板时会 panic（`Display` 失败被
+/// `to_string()` 转成了 panic），用户随手打一个孤立的 `%` 就能让导出整批崩掉。
+pub fn time_format_is_valid(time_format: &str) -> bool {
+    use chrono::format::{Item, StrftimeItems};
+
+    if time_format.trim().is_empty() {
+        return false;
+    }
+    !StrftimeItems::new(time_format).any(|item| matches!(item, Item::Error))
+}
+
 fn format_created_time(value: &ExifDateTime, time_format: &str) -> String {
+    // 非法模板退回默认格式，而不是让渲染整个失败。
+    let time_format = if time_format_is_valid(time_format) {
+        time_format
+    } else {
+        DEFAULT_TIME_FORMAT
+    };
     if let Some(dt) = value.aware() {
         dt.format(time_format).to_string()
     } else {
@@ -861,4 +894,40 @@ fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<Vips
     let path = format!("./static/logo/{}-{}.svg", make, suffix);
     let svg = std::fs::read_to_string(path).ok()?;
     ops::svgload_buffer(svg.as_bytes()).ok()
+}
+
+#[cfg(test)]
+mod time_format_tests {
+    use super::*;
+
+    #[test]
+    fn recognises_valid_and_invalid_templates() {
+        assert!(time_format_is_valid("%Y/%m/%d"));
+        assert!(time_format_is_valid("%Y年%m月%d日 %H:%M"));
+        // 孤立的 `%` 是界面输入框里最容易敲出来的非法模板。
+        assert!(!time_format_is_valid("%"));
+        assert!(!time_format_is_valid("%Y/%m/%d %"));
+        assert!(!time_format_is_valid("   "));
+    }
+
+    #[test]
+    fn invalid_template_falls_back_instead_of_panicking() {
+        let exif = ExifInfo::read(std::path::Path::new("./test_images/DSC_4587.jpg")).unwrap();
+        assert!(exif.created_time.is_some(), "测试图缺少拍摄时间");
+
+        let fallback = render_exif_template("{拍摄日期}", &exif, DEFAULT_TIME_FORMAT);
+
+        // chrono 写出非法模板时会 panic；这里必须退回默认格式而不是崩掉整批导出。
+        assert_eq!(render_exif_template("{拍摄日期}", &exif, "%"), fallback);
+        assert_eq!(
+            render_exif_template("{拍摄日期}", &exif, "%Y/%m/%d %"),
+            fallback
+        );
+
+        // 合法模板照常生效，说明上面比的不是「反正都一样」。
+        assert_ne!(
+            render_exif_template("{拍摄日期}", &exif, "%Y-%m-%d"),
+            fallback
+        );
+    }
 }

@@ -17,7 +17,7 @@ use libvips::{VipsImage, ops};
 
 use crate::{
     params::WatermarkParams,
-    photo::{ExifInfo, Photo},
+    photo::{ExifInfo, Photo, ensure_vips},
     process::text::Text,
 };
 
@@ -44,6 +44,7 @@ pub struct PreviewJob {
 
 /// 按预览分辨率渲染水印照片。会阻塞，请在后台线程调用。
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
+    ensure_vips();
     let base = load_scaled(&job.path, PREVIEW_MAX_EDGE).context("读取预览底图")?;
     let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text)
         .context("合成预览")?;
@@ -52,6 +53,8 @@ pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
 
 /// 生成队列用的缩略图（不带水印，只是原图）。会阻塞，请在后台线程调用。
 pub fn render_thumbnail(path: &Path) -> Result<Arc<RenderImage>> {
+    // 缩略图和预览合成会并发跑在后台线程池里，谁先到都得先初始化 libvips。
+    ensure_vips();
     let base = load_scaled(path, THUMBNAIL_MAX_EDGE).context("读取缩略图")?;
     to_render_image(&base).context("转换缩略图")
 }

@@ -1,11 +1,22 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Position;
 
 /// 水印生成参数。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WatermarkParams {
-    /// 输出文件夹
+    /// 输出文件夹。
+    ///
+    /// 这一项不写进预设：它属于「运行这台机器时的环境」，跟着预设走只会让预设换台机器
+    /// 之后导出到不存在的位置。
+    ///
+    /// 注意 `skip` 的实际语义：字段不会被写出，但反序列化时整个结构体会先取
+    /// `WatermarkParams::default()`，于是这里拿回来的是默认的图片目录，**不是** `None`。
+    /// 载入预设的人必须显式保留当前值（`AppView::apply_preset` 就是这么做的）。
+    #[serde(skip)]
     pub output_folder: Option<PathBuf>,
     /// 边框比例(上，下，左，右)。例如 `0.05` 表示边框尺寸 = 原尺寸 * `0.05`。
     pub border_ratio: (f64, f64, f64, f64),

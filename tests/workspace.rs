@@ -3,8 +3,8 @@
 //! 这些用例覆盖「队列 → 选中 → 预览」这条主链路。它跨了实体、订阅和后台任务三种机制，
 //! 只看单个函数的单元测试看不出接线有没有真的接上。
 //!
-//! 放在 crate 内而不是 `tests/`：用例要直接驱动 [`AppView`] 的命令方法（加入队列、
-//! 切换选中、移除），这些方法是对窗口内部的接口，不对外发布。
+//! 走的是 [`AppView`] 的公开命令接口（加入队列、切换选中、移除），和界面上的按钮调用
+//! 的是同一批方法，所以这里不会因为内部重构而失效。
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,7 +14,7 @@ use gpui_kit::{
     point, px,
 };
 
-use super::AppView;
+use lumen_frame::ui::AppView;
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
 const OTHER_PHOTO: &str = "./test_images/ultra_hdr.jpg";

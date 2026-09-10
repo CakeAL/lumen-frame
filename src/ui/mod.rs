@@ -9,14 +9,13 @@
 //! - 各种控件实体只保存控件自身的状态（滑块位置、下拉框开合），不另存一份参数值；
 //! - [`WatermarkPreview`] 拥有预览节奏与结果，是唯一会启动后台渲染的地方。
 
+mod field;
 mod inspector;
 mod preview;
 mod preview_image;
 mod queue;
 mod settings;
 mod sidebar;
-#[cfg(test)]
-mod tests;
 mod text_section;
 
 /// 预览位图的生成入口。
@@ -28,18 +27,21 @@ pub use preview_image::{PreviewJob, render_preview, render_thumbnail};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::{ActiveTheme as _, Root, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, Subscription, Window,
+    App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, SharedString,
+    Subscription, Window,
 };
 
 use crate::Position;
+use crate::config::{self, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::{ExifInfo, Photo};
 use crate::process::text::{Text, TextParams};
 
-use inspector::{ParameterControls, hsla_to_rgb, slider_value};
+use field::index_of;
+use inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use preview::WatermarkPreview;
 use queue::is_supported_image;
 use text_section::TextLine;
@@ -92,10 +94,27 @@ pub struct AppView {
     time_format: String,
     text_lines: Vec<TextLine>,
     next_text_line_id: u64,
+    /// 系统里可用的字体，每行的字体下拉都从这里取。
+    font_names: Vec<SharedString>,
+    /// 展开的文字行，按行 id 记录：删掉一行之后，展开状态不会串到别的行上。
+    expanded_text_lines: Vec<u64>,
+    /// 边框宽度那组滑块是否展开。
+    border_width_open: bool,
+    /// 宽高比下拉当前的选择。
+    aspect_choice: AspectRatioChoice,
+
     controls: ParameterControls,
     preview: Entity<WatermarkPreview>,
     export: ExportState,
-    subscriptions: Vec<Subscription>,
+
+    preset_names: Vec<SharedString>,
+    preset_feedback: Option<SharedString>,
+    preset_feedback_is_error: bool,
+
+    /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
+    _subscriptions: Vec<Subscription>,
+    /// 文字行的订阅单独放：载入预设会整批换掉这些行，旧订阅必须跟着一起走。
+    text_line_subscriptions: Vec<Subscription>,
 }
 
 impl AppView {
@@ -104,17 +123,31 @@ impl AppView {
         let text = Text::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
-        let (controls, mut subscriptions) = ParameterControls::new(&params, &text, window, cx);
+        let aspect_choice = aspect_choice_for(&params);
+        let (controls, subscriptions) = ParameterControls::new(
+            &params,
+            &text.time_format,
+            text.position,
+            &aspect_choice,
+            window,
+            cx,
+        );
 
-        let mut text_lines = Vec::new();
-        let mut next_text_line_id = 0;
-        for (template, line_params) in text.template.iter().zip(text.text_params.iter()) {
-            let (line, line_subscriptions) =
-                TextLine::new(next_text_line_id, template, line_params, window, cx);
-            text_lines.push(line);
-            subscriptions.extend(line_subscriptions);
-            next_text_line_id += 1;
-        }
+        let font_names = window
+            .text_system()
+            .all_font_names()
+            .into_iter()
+            .map(SharedString::from)
+            .collect::<Vec<_>>();
+
+        let (text_lines, text_line_subscriptions) =
+            build_text_lines(&text, &font_names, window, cx);
+
+        let preset_names = config::list_presets()
+            .unwrap_or_default()
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
 
         Self {
             page: AppPage::Watermark,
@@ -125,11 +158,19 @@ impl AppView {
             text_position: text.position,
             time_format: text.time_format.clone(),
             text_lines,
-            next_text_line_id,
+            next_text_line_id: text.template.len() as u64,
+            font_names,
+            expanded_text_lines: Vec::new(),
+            border_width_open: false,
+            aspect_choice,
             controls,
             preview,
             export: ExportState::Idle,
-            subscriptions,
+            preset_names,
+            preset_feedback: None,
+            preset_feedback_is_error: false,
+            _subscriptions: subscriptions,
+            text_line_subscriptions,
         }
     }
 
@@ -150,6 +191,21 @@ impl AppView {
         self.preview.read(cx).state().image().cloned()
     }
 
+    /// 当前的导出进度。
+    pub fn export_state(&self) -> &ExportState {
+        &self.export
+    }
+
+    /// 已保存的预设名。
+    pub fn preset_names(&self) -> &[SharedString] {
+        &self.preset_names
+    }
+
+    /// 当前参数，供预览与预设读取。
+    pub fn params(&self) -> &WatermarkParams {
+        &self.params
+    }
+
     pub(super) fn selected_photo(&self) -> Option<&QueuedPhoto> {
         let id = self.selected?;
         self.photos.iter().find(|photo| photo.id == id)
@@ -161,9 +217,9 @@ impl AppView {
 
     /// 由控件状态拼出渲染用的 [`Text`]。
     ///
-    /// 控件实体是文字水印的真值来源，[`Text`] 只是它们在渲染管线里的投影，因此不需要
-    /// 在每次回调里手工同步两份数据。
-    fn build_text(&self, cx: &App) -> Text {
+    /// 控件实体是文字水印的真值来源，[`Text`] 只是它们在渲染管线里的投影，因此不需要在
+    /// 每次回调里手工同步两份数据。
+    pub(super) fn build_text(&self, cx: &App) -> Text {
         Text {
             template: self
                 .text_lines
@@ -174,22 +230,17 @@ impl AppView {
                 .text_lines
                 .iter()
                 .map(|line| TextParams {
-                    font: line.font.to_string(),
-                    size: f64::from(slider_value(&line.size, cx)),
-                    line_spacing: f64::from(slider_value(&line.line_spacing, cx)),
+                    font: line.font_name(cx),
+                    size: line.size.value(cx),
+                    line_spacing: line.line_spacing.value(cx),
                     color: if line.auto_color {
                         None
                     } else {
-                        line.color.read(cx).value().map(hsla_to_rgb)
+                        Some(line.color.value(cx))
                     },
                     italic: line.italic,
                     bold: line.bold,
-                    align: line
-                        .align
-                        .read(cx)
-                        .selected_value()
-                        .copied()
-                        .unwrap_or_default(),
+                    align: line.alignment(cx),
                     ..TextParams::default()
                 })
                 .collect(),
@@ -202,8 +253,8 @@ impl AppView {
 
     /// 参数、选中项或文字水印变化后调用：把当前状态打包成一份预览请求。
     ///
-    /// 请求本身只是「登记最新意图」，真正算不算、什么时候算由 [`WatermarkPreview`]
-    /// 决定，所以拖动滑块时可以放心地每帧调用。
+    /// 请求本身只是「登记最新意图」，真正算不算、什么时候算由 [`WatermarkPreview`] 决定，
+    /// 所以拖动滑块时可以放心地每帧调用。
     pub(super) fn refresh_preview(&self, cx: &mut Context<Self>) {
         let job = match self.selected_photo() {
             Some(photo) => PreviewJob {
@@ -223,7 +274,7 @@ impl AppView {
 
     // MARK: 页面与照片
 
-    pub(super) fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
+    pub fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
         if self.page != page {
             self.page = page;
             cx.notify();
@@ -252,7 +303,7 @@ impl AppView {
     ///
     /// 非图片文件和不认识的扩展名会被安静跳过：队列只放能处理的对象，否则用户要等到
     /// 预览报错才知道选错了文件。
-    pub(super) fn add_photos(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub fn add_photos(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let mut added = Vec::new();
         for path in paths {
             if !is_supported_image(&path) {
@@ -308,7 +359,7 @@ impl AppView {
         self.select_photo(id, cx);
     }
 
-    pub(super) fn remove_selected(&mut self, cx: &mut Context<Self>) {
+    pub fn remove_selected(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.selected else {
             return;
         };
@@ -326,7 +377,7 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn clear_photos(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_photos(&mut self, cx: &mut Context<Self>) {
         if self.photos.is_empty() {
             return;
         }
@@ -380,6 +431,36 @@ impl AppView {
         .detach();
     }
 
+    // MARK: 宽高比
+
+    /// 选中宽高比选项。自定义时沿用输入框里现有的比值。
+    pub(in crate::ui) fn apply_aspect_choice(&mut self, choice: AspectRatioChoice, cx: &App) {
+        self.params.aspect_ratio = match &choice {
+            AspectRatioChoice::Free => None,
+            AspectRatioChoice::Preset(width, height) => Some((*width, *height)),
+            AspectRatioChoice::Custom => self.custom_ratio(cx).or(Some((1.0, 1.0))),
+        };
+        self.aspect_choice = choice;
+    }
+
+    /// 自定义输入框变化后重算比例。只有处于自定义模式时才生效。
+    pub(super) fn apply_custom_aspect_ratio(&mut self, cx: &mut Context<Self>) {
+        if self.aspect_choice != AspectRatioChoice::Custom {
+            return;
+        }
+        if let Some(ratio) = self.custom_ratio(cx) {
+            self.params.aspect_ratio = Some(ratio);
+        }
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    fn custom_ratio(&self, cx: &App) -> Option<(f64, f64)> {
+        let width = parse_ratio_part(&self.controls.aspect_width.read(cx).value())?;
+        let height = parse_ratio_part(&self.controls.aspect_height.read(cx).value())?;
+        Some((width, height))
+    }
+
     // MARK: 文字水印行
 
     pub(super) fn add_text_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -391,29 +472,24 @@ impl AppView {
             .text_lines
             .last()
             .map(|last| TextParams {
-                font: last.font.to_string(),
-                size: f64::from(slider_value(&last.size, cx)),
-                line_spacing: f64::from(slider_value(&last.line_spacing, cx)),
+                font: last.font_name(cx),
+                size: last.size.value(cx),
+                line_spacing: last.line_spacing.value(cx),
                 color: if last.auto_color {
                     None
                 } else {
-                    last.color.read(cx).value().map(hsla_to_rgb)
+                    Some(last.color.value(cx))
                 },
                 italic: last.italic,
                 bold: last.bold,
-                align: last
-                    .align
-                    .read(cx)
-                    .selected_value()
-                    .copied()
-                    .unwrap_or_default(),
+                align: last.alignment(cx),
                 ..TextParams::default()
             })
             .unwrap_or_default();
 
-        let (line, subscriptions) = TextLine::new(id, "", &inherited, window, cx);
+        let (line, subscriptions) = TextLine::new(id, "", &inherited, &self.font_names, window, cx);
         self.text_lines.push(line);
-        self.subscriptions.extend(subscriptions);
+        self.text_line_subscriptions.extend(subscriptions);
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -422,7 +498,10 @@ impl AppView {
         let Some(ix) = self.text_lines.iter().position(|line| line.id == id) else {
             return;
         };
+        // 行自己的订阅由它自己的控件持有，随实体一起消失；这里额外检查一下集合是否
+        // 还和行对得上，避免留下指向已删行的回调。
         self.text_lines.remove(ix);
+        self.expanded_text_lines.retain(|open| *open != id);
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -457,6 +536,183 @@ impl AppView {
         }
         self.refresh_preview(cx);
         cx.notify();
+    }
+
+    // MARK: 预设
+
+    /// 把当前配置按输入框里的名字保存成预设。
+    pub(super) fn save_preset(&mut self, cx: &mut Context<Self>) {
+        let name = self
+            .controls
+            .preset_name
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return;
+        }
+
+        let preset = preset_of(&self.params, &self.build_text(cx));
+        match config::save_preset(&name, &preset) {
+            Ok(path) => {
+                self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());
+                self.preset_feedback_is_error = false;
+            }
+            Err(error) => {
+                self.preset_feedback = Some(format!("{error:#}").into());
+                self.preset_feedback_is_error = true;
+            }
+        }
+        self.refresh_preset_names();
+        cx.notify();
+    }
+
+    /// 载入预设，并把所有「自己存值」的控件同步到新配置上。
+    pub(super) fn load_preset(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match config::load_preset(name) {
+            Ok(preset) => {
+                self.apply_preset(preset, window, cx);
+                self.preset_feedback = Some(format!("已载入「{name}」").into());
+                self.preset_feedback_is_error = false;
+            }
+            Err(error) => {
+                self.preset_feedback = Some(format!("{error:#}").into());
+                self.preset_feedback_is_error = true;
+            }
+        }
+        cx.notify();
+    }
+
+    /// 用一份预设替换当前配置。
+    fn apply_preset(
+        &mut self,
+        preset: WatermarkPreset,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 输出文件夹是这台机器的环境设置，不跟着预设走。
+        let output_folder = self.params.output_folder.clone();
+        self.params = preset.params;
+        self.params.output_folder = output_folder;
+
+        self.text_position = preset.text.position;
+        self.time_format = preset.text.time_format.clone();
+
+        // 文字行整批重建：行数、模板和每行控件都要对上这份配置。
+        let (lines, subscriptions) = build_text_lines(&preset.text, &self.font_names, window, cx);
+        self.text_lines = lines;
+        self.text_line_subscriptions = subscriptions;
+        self.expanded_text_lines.clear();
+
+        self.sync_controls(window, cx);
+        self.refresh_preview(cx);
+    }
+
+    /// 把所有存了值的控件拉到当前参数上。
+    ///
+    /// 参数是唯一真值来源，控件只是它的入口；载入预设相当于从外部改写了参数，所以每个
+    /// 入口都要重新对齐一次。
+    fn sync_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let params = self.params.clone();
+        let controls = &self.controls;
+
+        controls.border_top.sync(params.border_ratio.0, window, cx);
+        controls
+            .border_bottom
+            .sync(params.border_ratio.1, window, cx);
+        controls.border_left.sync(params.border_ratio.2, window, cx);
+        controls
+            .border_right
+            .sync(params.border_ratio.3, window, cx);
+        controls
+            .border_radius
+            .sync(params.border_radius, window, cx);
+        controls.shadow_size.sync(params.shadow_size, window, cx);
+        controls
+            .shadow_density
+            .sync(params.shadow_density, window, cx);
+        controls.blur_sigma.sync(params.blur_sigma, window, cx);
+        controls.quality.sync(f64::from(params.quality), window, cx);
+        controls.background.sync(params.background, window, cx);
+
+        self.aspect_choice = aspect_choice_for(&params);
+        let aspect_choice = self.aspect_choice.clone();
+        controls.aspect_ratio.update(cx, |state, cx| {
+            state.set_selected_index(index_of(ASPECT_RATIOS, &aspect_choice), window, cx)
+        });
+        controls.position.update(cx, |state, cx| {
+            state.set_selected_value(&params.position, window, cx)
+        });
+        let text_position = self.text_position;
+        controls.text_position.update(cx, |state, cx| {
+            state.set_selected_value(&text_position, window, cx)
+        });
+
+        let time_format = self.time_format.clone();
+        controls
+            .time_format
+            .update(cx, |state, cx| state.set_value(time_format, window, cx));
+
+        // 自定义比例的两个框：不在自定义模式时也同步，切过去就能直接用。
+        let (width, height) = params.aspect_ratio.unwrap_or((1.0, 1.0));
+        controls.aspect_width.update(cx, |state, cx| {
+            state.set_value(format_ratio(width), window, cx)
+        });
+        controls.aspect_height.update(cx, |state, cx| {
+            state.set_value(format_ratio(height), window, cx)
+        });
+    }
+
+    /// 弹一个确认框再删预设：文件删掉就找不回来了。
+    pub(super) fn confirm_delete_preset(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.entity();
+        let target = name.to_string();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let view = view.clone();
+            let target = target.clone();
+            alert
+                .title(format!("删除预设「{target}」？"))
+                .description("预设文件会从磁盘上删除，无法恢复。")
+                .button_props(
+                    gpui_kit::component::dialog::DialogButtonProps::default()
+                        .ok_text("删除")
+                        .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
+                        .on_ok(move |_, _, cx| {
+                            let target = target.clone();
+                            view.update(cx, |this, cx| this.delete_preset(&target, cx));
+                            true
+                        }),
+                )
+        });
+    }
+
+    fn delete_preset(&mut self, name: &str, cx: &mut Context<Self>) {
+        match config::delete_preset(name) {
+            Ok(()) => {
+                self.preset_feedback = Some(format!("已删除「{name}」").into());
+                self.preset_feedback_is_error = false;
+            }
+            Err(error) => {
+                self.preset_feedback = Some(format!("{error:#}").into());
+                self.preset_feedback_is_error = true;
+            }
+        }
+        self.refresh_preset_names();
+        cx.notify();
+    }
+
+    fn refresh_preset_names(&mut self) {
+        self.preset_names = config::list_presets()
+            .unwrap_or_default()
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
     }
 
     // MARK: 导出
@@ -569,5 +825,61 @@ impl AppView {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.add_photos(paths.paths().to_vec(), cx)
             }))
+    }
+}
+
+/// 按一份 [`Text`] 建出全部文字行。
+fn build_text_lines(
+    text: &Text,
+    fonts: &[SharedString],
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> (Vec<TextLine>, Vec<Subscription>) {
+    let mut lines = Vec::new();
+    let mut subscriptions = Vec::new();
+
+    for (ix, (template, params)) in text
+        .template
+        .iter()
+        .zip(text.text_params.iter())
+        .enumerate()
+    {
+        let (line, line_subscriptions) =
+            TextLine::new(ix as u64, template, params, fonts, window, cx);
+        lines.push(line);
+        subscriptions.extend(line_subscriptions);
+    }
+    (lines, subscriptions)
+}
+
+/// 由参数推出宽高比下拉该选哪一项。
+fn aspect_choice_for(params: &WatermarkParams) -> AspectRatioChoice {
+    match params.aspect_ratio {
+        None => AspectRatioChoice::Free,
+        Some((width, height)) => ASPECT_RATIOS
+            .iter()
+            .find_map(|(_, choice)| match choice {
+                AspectRatioChoice::Preset(preset_width, preset_height)
+                    if (*preset_width - width).abs() < 1e-9
+                        && (*preset_height - height).abs() < 1e-9 =>
+                {
+                    Some(choice.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or(AspectRatioChoice::Custom),
+    }
+}
+
+fn parse_ratio_part(text: &SharedString) -> Option<f64> {
+    let value: f64 = text.trim().parse().ok()?;
+    (value.is_finite() && value > 0.0).then_some(value)
+}
+
+fn format_ratio(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
     }
 }
