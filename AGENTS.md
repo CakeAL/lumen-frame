@@ -78,4 +78,4 @@ script/bundle-macos.sh
 - 保持中文 UI 文案与注释的语气一致；用户可见的错误消息应可操作。
 - 优先做小范围改动，避免无关重构和依赖升级。`Cargo.lock` 已受版本控制，改依赖时一并更新它。
 - 不要覆盖、回退或混入已有的用户改动。开始前和结束前检查 `git status --short`；当前工作区已存在 `src/photo.rs` 的未提交修改，除非任务明确涉及它，否则保留原样。
-- 修改打包脚本或 `main.rs` 的模块定位逻辑后，在干净环境验证产物；macOS 必须让 `dylibbundler` 同时处理主程序与每个运行期 vips 模块，确保没有残留的 Homebrew 绝对 dylib 路径，并完成重签名。
+- 修改打包脚本或 `main.rs` 的模块定位逻辑后，在干净环境验证产物；macOS 必须让 `dylibbundler` 同时处理主程序与每个运行期 vips 模块，移除它可能留下的重复 `LC_RPATH`，确保没有残留的 Homebrew 绝对 dylib 路径，并完成重签名。

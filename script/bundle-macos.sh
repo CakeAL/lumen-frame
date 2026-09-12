@@ -43,6 +43,21 @@ deps_of() {
     otool -L "$1" | tail -n +2 | sed 's/^[[:space:]]*//' | sed 's/ (compatibility.*//' | grep -v '^$' || true
 }
 
+# dylibbundler 会把输入库原有的 LC_RPATH 改成安装路径；若同一库有多条原始 rpath，
+# 1.0.5 会留下重复项。dyld 会因此拒绝加载该库（“duplicate LC_RPATH”）。
+# 本包所有非系统依赖都已被改成显式 @executable_path，因此不保留任何 rpath。
+rpaths_of() {
+    otool -l "$1" | awk '/cmd LC_RPATH/{found=1} found&&/path /{print $2; found=0}'
+}
+
+remove_rpaths() {
+    local file="$1" rpath
+    while IFS= read -r rpath; do
+        [ -n "$rpath" ] || continue
+        install_name_tool -delete_rpath "$rpath" "$file"
+    done < <(rpaths_of "$file")
+}
+
 # ---------------------------------------------------------------- 1. 构建
 
 say "构建 release"
@@ -101,18 +116,29 @@ dylibbundler -od -b \
 LIB_COUNT="$(find "$FRAMEWORKS" -type f -name '*.dylib' | wc -l | tr -d ' ')"
 [ "$LIB_COUNT" -gt 0 ] || die "dylibbundler 没有输出任何动态库"
 
+say "移除 dylibbundler 留下的 LC_RPATH"
+while IFS= read -r file; do
+    remove_rpaths "$file"
+done < <(find "$CONTENTS" -type f \( -name '*.dylib' -o -path "$MACOS_DIR/$EXECUTABLE" \))
+
 # ---------------------------------------------------------------- 4. 重新签名
 
 say "重新签名（dylibbundler 会改写 install name）"
 while IFS= read -r file; do
     codesign --force --sign - --timestamp=none "$file" >/dev/null 2>&1
-done < <(find "$CONTENTS" -type f \( -name '*.dylib' -o -perm -u+x \) ! -name 'Info.plist')
+done < <(find "$CONTENTS" -type f \( -name '*.dylib' -o -path "$MACOS_DIR/$EXECUTABLE" \))
+# 嵌套代码都签完之后还要封签整个 .app；否则 Finder 校验包时会把这些库视为“已修改”。
+codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
 
 # ---------------------------------------------------------------- 5. 校验
 
 say "校验：包内不应再有构建机绝对路径"
 PROBLEMS=""
 while IFS= read -r file; do
+    rpaths="$(rpaths_of "$file")"
+    if [ -n "$rpaths" ]; then
+        PROBLEMS="$PROBLEMS$(printf '%s\n    不应残留的 LC_RPATH：%s\n' "${file#$APP/}" "$rpaths")"
+    fi
     while IFS= read -r dep; do
         case "$dep" in
             /usr/lib/*|/System/*) ;;
@@ -132,7 +158,7 @@ while IFS= read -r file; do
                 ;;
         esac
     done < <(deps_of "$file")
-done < <(find "$CONTENTS" -type f \( -name '*.dylib' -o -perm -u+x \) ! -name 'Info.plist')
+done < <(find "$CONTENTS" -type f \( -name '*.dylib' -o -path "$MACOS_DIR/$EXECUTABLE" \))
 
 if [ -n "$PROBLEMS" ]; then
     printf '%s' "$PROBLEMS" | sed 's/^/  /'

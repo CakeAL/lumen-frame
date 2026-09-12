@@ -28,8 +28,10 @@ script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
 4. `dylibbundler` 递归收集非系统动态库到 `Contents/Frameworks/`，并将引用改为
    `@executable_path/../Frameworks/…`；对模块使用同一个路径是安全的，因为
    `@executable_path` 始终相对于主程序的 `Contents/MacOS/`
-5. 重新签名（`codesign --force -s -`）。`dylibbundler` 会调用 `install_name_tool`，
-   它让原签名失效；Apple Silicon 上不重签根本加载不了
+5. 移除 `dylibbundler` 留下的 `LC_RPATH`，再重新签名所有 `.dylib`、vips 模块与主程序，
+   最后封签整个 `.app`（`codesign --force -s -`）。
+   `dylibbundler` 1.0.5 可能在某些库留下重复 rpath，dyld 会拒绝加载它；它调用
+   `install_name_tool` 也会让原签名失效，Apple Silicon 上不重签根本加载不了
 6. 校验：任何漏网的绝对路径依赖、或无法在包内解析的 `@executable_path` / `@loader_path`
    都**报错退出**
 
