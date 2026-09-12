@@ -187,12 +187,7 @@ impl Photo {
                         img_y + img_h / 2 - text_h / 2,
                     )
                 }
-                // 居中：压在照片正中。此时 `Margin::cal_margin` 不为文字留边距，
-                // 中心点就是照片中心。
-                Position::Center => (
-                    img_x + img_w / 2 - text_w / 2,
-                    img_y + img_h / 2 - text_h / 2,
-                ),
+                Position::Center => (0, 0),
             };
             ops::composite2_with_opts(
                 &canvas,
