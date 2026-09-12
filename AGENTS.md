@@ -20,7 +20,7 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 - `src/theme.rs` 与 `assets/themes/`：内置主题注册及主题 JSON。
 - `static/logo/`：EXIF 相机品牌对应的黑白 SVG 标志。
 - `tests/`：集成测试；`test_images/` 是受版本控制的真实图片夹具。
-- `script/bundle-macos.sh`、`script/bundle-windows.ps1`：带 libvips 依赖的分发打包；完整说明见 `docs/packaging.md`。
+- `script/bundle-macos.sh`、`script/bundle-windows.ps1`：带 libvips 依赖的分发打包。macOS 用 `dylibbundler` 重写路径；Windows 将 DLL 与 exe 并排并校验整个 DLL/插件导入树；完整说明见 `docs/packaging.md`。
 
 ## 常用命令
 
@@ -32,7 +32,7 @@ cargo build --release
 script/bundle-macos.sh
 ```
 
-`cargo test` 和运行应用都需要本机可用的 libvips。macOS 打包脚本还需要 Homebrew 的 `vips`、`otool`、`install_name_tool` 和 `codesign`。不要把 `dist/` 或 `target/` 提交进仓库。
+`cargo test` 和运行应用都需要本机可用的 libvips。macOS 打包脚本还需要 Homebrew 的 `vips`、`glib`、`gettext`、`dylibbundler` 及系统的 `otool`、`codesign`。不要把 `dist/` 或 `target/` 提交进仓库。
 
 ## 关键约束
 
@@ -78,4 +78,4 @@ script/bundle-macos.sh
 - 保持中文 UI 文案与注释的语气一致；用户可见的错误消息应可操作。
 - 优先做小范围改动，避免无关重构和依赖升级。`Cargo.lock` 已受版本控制，改依赖时一并更新它。
 - 不要覆盖、回退或混入已有的用户改动。开始前和结束前检查 `git status --short`；当前工作区已存在 `src/photo.rs` 的未提交修改，除非任务明确涉及它，否则保留原样。
-- 修改打包脚本或 `main.rs` 的模块定位逻辑后，在干净环境验证产物；macOS 必须确保没有残留的 Homebrew 绝对 dylib 路径，并完成重签名。
+- 修改打包脚本或 `main.rs` 的模块定位逻辑后，在干净环境验证产物；macOS 必须让 `dylibbundler` 同时处理主程序与每个运行期 vips 模块，确保没有残留的 Homebrew 绝对 dylib 路径，并完成重签名。

@@ -9,13 +9,14 @@
 | --- | --- | --- |
 | 依赖怎么记 | 可执行文件里写死**绝对路径**（`/opt/homebrew/opt/vips/lib/libvips.42.dylib`） | 只记**文件名**（`libvips-42.dll`） |
 | 加载器去哪找 | 按记录的那个绝对路径；找不到就报 dyld 错误 | 先搜 **exe 所在目录**，再搜 PATH |
-| 所以需要做什么 | 拷库 + 改写 install name 为 `@rpath` + 重新签名 | **把 DLL 拷到 exe 旁边就行** |
+| 所以需要做什么 | `dylibbundler` 拷库并改写 install name + 重新签名 | **把 DLL 拷到 exe 旁边就行** |
 
 ---
 
 ## macOS
 
 ```bash
+brew install dylibbundler
 script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
 ```
 
@@ -23,14 +24,18 @@ script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
 
 1. `cargo build --release`
 2. 建 `.app` 骨架 + `Info.plist`
-3. 从主程序和 vips 模块出发递归收集依赖闭包，按 `realpath` 去重（Homebrew 的 `opt/` 是
-   `Cellar/` 的软链，同一份库会出现两次），拷进 `Contents/Frameworks/`
-4. 改写引用：依赖 → `@rpath/<名>`；每个库加 `@loader_path` rpath，主程序加
-   `@executable_path/../Frameworks`，vips 模块加 `@loader_path/../../Frameworks`；
-   **并删掉所有绝对路径的 LC_RPATH**
-5. 重新签名（`codesign --force -s -`）。`install_name_tool` 会让原签名失效，
-   Apple Silicon 上不重签根本加载不了
-6. 校验：任何漏网的绝对路径依赖、绝对 rpath、或解析不到的 `@rpath` 都**报错退出**
+3. 复制需要运行期加载的 vips 格式模块，并将主程序和这些模块一并传给 `dylibbundler`
+4. `dylibbundler` 递归收集非系统动态库到 `Contents/Frameworks/`，并将引用改为
+   `@executable_path/../Frameworks/…`；对模块使用同一个路径是安全的，因为
+   `@executable_path` 始终相对于主程序的 `Contents/MacOS/`
+5. 重新签名（`codesign --force -s -`）。`dylibbundler` 会调用 `install_name_tool`，
+   它让原签名失效；Apple Silicon 上不重签根本加载不了
+6. 校验：任何漏网的绝对路径依赖、或无法在包内解析的 `@executable_path` / `@loader_path`
+   都**报错退出**
+
+`dylibbundler` 通过 Homebrew 安装。脚本将 vips、glib 与 gettext 的 `lib/` 目录作为搜索路径，
+因为 Homebrew 库的依赖可能是 `@rpath` 形式。需要新增其它运行期插件时，要把该插件也加入
+脚本的 `VIPS_MODULES`，让 `dylibbundler` 同时处理它的依赖。
 
 ### vips 的格式模块
 
@@ -140,8 +145,9 @@ cargo build --release
 产物是 `dist\lumen-frame\`，直接整个目录发出去即可 —— 里面的 exe 和 DLL 并排放着，
 Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重签名。
 
-脚本会校验 exe 的导入表（`dumpbin /dependents` 或 `objdump -p`），确认每个非系统 DLL
-都在输出目录里，缺一个就报错退出。
+脚本会扫描 exe、随附 DLL 和 vips 格式插件的导入表（`dumpbin /dependents` 或 `objdump -p`），
+确认每个非系统 DLL 都在输出目录里，缺一个就报错退出。Windows DLL 搜索会优先查找 exe
+目录，因此这里不需要也不应采用 macOS 那种 install-name 改写。
 
 ### 还需要注意
 
@@ -161,7 +167,7 @@ Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重�
 
 发布前对产物做这几件事：
 
-- [ ] `deps_of` / `dumpbin` 校验通过（脚本已经做了）
+- [ ] `dylibbundler` / `dumpbin` 校验通过（脚本已经做了）
 - [ ] 在一台**没装 Homebrew / vips** 的机器上启动一次
 - [ ] 拖入一张照片，确认预览出现（这一步才真正跑通 libvips 管线）
 - [ ] 导出一次，确认输出文件正常

@@ -64,50 +64,63 @@ if (Test-Path $moduleSource) {
 
 # ------------------------------------------------------------------ 3. 校验
 
-Say '校验：exe 导入的每个 DLL 都必须在输出目录里'
+Say '校验：主程序、随附 DLL 与 vips 插件的导入都必须在输出目录里'
 
 # dumpbin 来自 Visual Studio，objdump 来自 MinGW —— 用哪个取决于本机工具链。
 $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
 $objdump = Get-Command objdump.exe -ErrorAction SilentlyContinue
 
-$imports = @()
-if ($dumpbin) {
-    $imports = & $dumpbin /dependents (Join-Path $outDir $exeName) |
-        Select-String -Pattern '^\s+(\S+\.dll)\s*$' |
-        ForEach-Object { $_.Matches[0].Groups[1].Value }
-} elseif ($objdump) {
-    $imports = & $objdump -p (Join-Path $outDir $exeName) |
-        Select-String -Pattern 'DLL Name:\s*(\S+)' |
-        ForEach-Object { $_.Matches[0].Groups[1].Value }
-} else {
-    Write-Warning '找不到 dumpbin 或 objdump，跳过导入表校验（建议装 Visual Studio Build Tools 或 MinGW）。'
-}
+# 系统 DLL 由 Windows 提供，其余必须随包分发。
+$systemPrefixes = @('api-ms-', 'ext-ms-', 'kernel32', 'user32', 'gdi32', 'advapi32',
+    'shell32', 'ole32', 'oleaut32', 'ws2_32', 'bcrypt', 'ntdll', 'crypt32',
+    'dwmapi', 'uxtheme', 'comdlg32', 'winmm', 'imm32', 'd3d', 'dxgi', 'opengl32',
+    'msvcrt', 'vcruntime', 'ucrtbase', 'shlwapi', 'version', 'setupapi', 'cfgmgr32',
+    'propsys', 'wintrust', 'userenv', 'powrprof', 'rpcrt4', 'secur32', 'dnsapi',
+    'iphlpapi', 'netapi32', 'wtsapi32', 'mswsock', 'normaliz', 'pdh', 'psapi',
+    'd2d1', 'windowscodecs', 'wldap32', 'dbghelp', 'ksuser', 'avrt', 'mfplat',
+    'mfuuid', 'mfreadwrite', 'gdiplus', 'msimg32', 'usp10', 'dwrite')
 
-$missing = @()
-foreach ($dll in ($imports | Sort-Object -Unique)) {
-    # 系统 DLL 由 Windows 提供，其余必须随包分发。
-    $systemPrefixes = @('api-ms-', 'ext-ms-', 'kernel32', 'user32', 'gdi32', 'advapi32',
-        'shell32', 'ole32', 'oleaut32', 'ws2_32', 'bcrypt', 'ntdll', 'crypt32',
-        'dwmapi', 'uxtheme', 'comdlg32', 'winmm', 'imm32', 'd3d', 'dxgi', 'opengl32',
-        'msvcrt', 'vcruntime', 'ucrtbase', 'shlwapi', 'version', 'setupapi', 'cfgmgr32',
-        'propsys', 'wintrust', 'userenv', 'powrprof', 'rpcrt4', 'secur32', 'dnsapi',
-        'iphlpapi', 'netapi32', 'wtsapi32', 'mswsock', 'normaliz', 'pdh', 'psapi',
-        'd2d1', 'windowscodecs', 'wldap32', 'dbghelp', 'ksuser', 'avrt', 'mfplat',
-        'mfuuid', 'mfreadwrite', 'gdiplus', 'msimg32', 'usp10', 'dwrite')
-    $isSystem = $false
-    foreach ($prefix in $systemPrefixes) {
-        if ($dll.ToLower().StartsWith($prefix)) { $isSystem = $true; break }
+function Get-Imports([string]$path) {
+    if ($dumpbin) {
+        return @(& $dumpbin /dependents $path |
+            Select-String -Pattern '^\s+(\S+\.dll)\s*$' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
     }
-    if ($isSystem) { continue }
-
-    if (-not (Test-Path (Join-Path $outDir $dll))) { $missing += $dll }
+    if ($objdump) {
+        return @(& $objdump -p $path |
+            Select-String -Pattern 'DLL Name:\s*(\S+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+    }
+    return @()
 }
 
-if ($missing.Count -gt 0) {
-    $missing | ForEach-Object { Write-Host "    缺少 $_" -ForegroundColor Red }
-    throw '有 DLL 没有随包分发，换台机器会启动失败'
+if (-not $dumpbin -and -not $objdump) {
+    Write-Warning '找不到 dumpbin 或 objdump，跳过导入表校验（建议装 Visual Studio Build Tools 或 MinGW）。'
+} else {
+    # vips 的格式插件也是运行期加载的 DLL；扫描整个输出树，才能发现它们缺失的依赖。
+    $binaries = @(Get-ChildItem $outDir -Recurse -File | Where-Object {
+        $_.Name -eq $exeName -or $_.Extension -eq '.dll'
+    })
+    $missing = @()
+
+    foreach ($binary in $binaries) {
+        foreach ($dll in (Get-Imports $binary.FullName | Sort-Object -Unique)) {
+            $lowerName = $dll.ToLower()
+            $isSystem = $systemPrefixes | Where-Object { $lowerName.StartsWith($_) } | Select-Object -First 1
+            if ($isSystem) { continue }
+
+            if (-not (Test-Path (Join-Path $outDir $dll))) {
+                $missing += "$($binary.FullName.Substring($outDir.Length + 1)) -> $dll"
+            }
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        $missing | Sort-Object -Unique | ForEach-Object { Write-Host "    缺少 $_" -ForegroundColor Red }
+        throw '有 DLL 没有随包分发，换台机器会启动失败'
+    }
+    Say "  已校验 $($binaries.Count) 个 PE 文件，导入的 DLL 全部就位"
 }
-Say '  导入的 DLL 全部就位'
 
 # ------------------------------------------------------------------ 4. 报告
 
