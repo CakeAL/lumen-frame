@@ -14,6 +14,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, KeyDownEvent, ObjectFit, Role, div, img};
 
 use super::{AppView, Thumbnail};
+use crate::workspace::QueuedPhoto;
 
 /// 队列接受的图片扩展名。
 ///
@@ -65,7 +66,7 @@ impl AppView {
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("{} 张", self.photos.len())),
+                            .child(format!("{} 张", self.photos().len())),
                     ),
             )
             .child(
@@ -84,7 +85,7 @@ impl AppView {
                             .label("移除")
                             .ghost()
                             .small()
-                            .disabled(self.selected.is_none())
+                            .disabled(self.selected_photo_id().is_none())
                             .on_click(cx.listener(|this, _, _, cx| this.remove_selected(cx))),
                     )
                     .child(
@@ -92,7 +93,7 @@ impl AppView {
                             .label("清空")
                             .ghost()
                             .small()
-                            .disabled(self.photos.is_empty())
+                            .disabled(self.photos().is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.clear_photos(cx))),
                     ),
             )
@@ -107,7 +108,7 @@ impl AppView {
             .pb_3()
             .min_h_0()
             .overflow_x_scroll()
-            .when(self.photos.is_empty(), |this| {
+            .when(self.photos().is_empty(), |this| {
                 this.child(
                     div()
                         .w_full()
@@ -118,29 +119,25 @@ impl AppView {
                         .child("拖入照片，或用「添加照片」选择；一次可以拖入多张"),
                 )
             })
-            .when(!self.photos.is_empty(), |this| {
+            .when(!self.photos().is_empty(), |this| {
                 this.children(
-                    self.photos
+                    self.photos()
                         .iter()
                         .map(|photo| self.render_photo_card(photo, cx)),
                 )
             })
     }
 
-    fn render_photo_card(
-        &self,
-        photo: &super::QueuedPhoto,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let id = photo.id;
-        let is_selected = self.selected == Some(id);
+    fn render_photo_card(&self, photo: &QueuedPhoto, cx: &Context<Self>) -> impl IntoElement {
+        let id = photo.id();
+        let is_selected = self.selected_photo_id() == Some(id);
         let name = photo
-            .path
+            .path()
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| photo.path.to_string_lossy().into_owned());
+            .unwrap_or_else(|| photo.path().to_string_lossy().into_owned());
 
-        let preview = match &photo.thumbnail {
+        let preview = match self.thumbnail(id).unwrap_or(&Thumbnail::Pending) {
             Thumbnail::Ready(image) => img(image.clone())
                 .size_full()
                 .object_fit(ObjectFit::Cover)
@@ -163,7 +160,7 @@ impl AppView {
         };
 
         v_flex()
-            .id(id.0 as usize)
+            .id(id.value() as usize)
             .flex_shrink_0()
             .w_32()
             .gap_2()

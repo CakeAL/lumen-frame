@@ -147,10 +147,10 @@ impl AppView {
     pub(super) fn render_preview_pane(&self, cx: &Context<Self>) -> impl IntoElement {
         let title = self.selected_photo().map(|photo| {
             photo
-                .path
+                .path()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| SharedString::from(photo.path.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| SharedString::from(photo.path().to_string_lossy().into_owned()))
         });
 
         v_flex()

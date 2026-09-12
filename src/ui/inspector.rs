@@ -723,7 +723,7 @@ impl AppView {
 
     /// 导出是这一页唯一的提交动作，所以它落在面板最底部，并且是唯一的 primary 按钮。
     fn render_export_footer(&self, cx: &Context<Self>) -> impl IntoElement {
-        let total = self.photos.len();
+        let total = self.photos().len();
         let status = match &self.export {
             ExportState::Running { completed, total } => format!("正在导出 {completed}/{total}"),
             ExportState::Finished {

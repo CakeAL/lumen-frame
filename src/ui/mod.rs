@@ -24,6 +24,7 @@ mod text_section;
 /// （给定参数就得到确定的位图），可以脱离窗口独立测试。
 pub use preview_image::{PreviewJob, render_preview, render_thumbnail};
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -41,6 +42,7 @@ use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::{ExifInfo, Photo};
 use crate::process::text::{Text, TextParams};
+use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use field::index_of;
 use inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
@@ -49,12 +51,6 @@ use queue::is_supported_image;
 use settings::SettingsControls;
 use text_section::TextLine;
 
-/// 队列中一张照片的稳定身份。
-///
-/// 用 id 而不是下标标记选中项：移除或重排照片时，下标会让选中状态漂移到隔壁那张。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct PhotoId(u64);
-
 /// 队列卡片的缩略图状态。
 ///
 /// 缩略图失败只影响卡片外观，所以不携带错误详情；真正的原因由选中后的预览面板说明。
@@ -62,13 +58,6 @@ pub enum Thumbnail {
     Pending,
     Ready(Arc<RenderImage>),
     Failed,
-}
-
-pub struct QueuedPhoto {
-    pub id: PhotoId,
-    pub path: PathBuf,
-    pub exif: Option<ExifInfo>,
-    pub thumbnail: Thumbnail,
 }
 
 /// 页面。设置整体替换中间工作区，而不是叠一层浮层。
@@ -87,9 +76,10 @@ pub enum ExportState {
 
 pub struct AppView {
     page: AppPage,
-    photos: Vec<QueuedPhoto>,
-    selected: Option<PhotoId>,
-    next_photo_id: u64,
+    /// 无 UI 依赖的照片队列、稳定身份和选择策略。
+    workspace: PhotoWorkspace,
+    /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
+    thumbnails: HashMap<PhotoId, Thumbnail>,
     /// 预览与导出共用的唯一一份参数。
     params: WatermarkParams,
     /// 文字水印的整体设置；每行自己的参数在 `text_lines` 里。
@@ -180,9 +170,8 @@ impl AppView {
 
         let view = Self {
             page: AppPage::Watermark,
-            photos: Vec::new(),
-            selected: None,
-            next_photo_id: 0,
+            workspace: PhotoWorkspace::default(),
+            thumbnails: HashMap::new(),
             params,
             text_position: text.position,
             time_format: text.time_format.clone(),
@@ -372,12 +361,12 @@ impl AppView {
 
     /// 队列里的照片数量。
     pub fn photo_count(&self) -> usize {
-        self.photos.len()
+        self.workspace.len()
     }
 
     /// 当前选中的照片路径。
     pub fn selected_path(&self) -> Option<&std::path::Path> {
-        self.selected_photo().map(|photo| photo.path.as_path())
+        self.selected_photo().map(QueuedPhoto::path)
     }
 
     /// 当前用于显示的预览位图；还没算出来时是 `None`。
@@ -401,12 +390,19 @@ impl AppView {
     }
 
     pub(super) fn selected_photo(&self) -> Option<&QueuedPhoto> {
-        let id = self.selected?;
-        self.photos.iter().find(|photo| photo.id == id)
+        self.workspace.selected_photo()
     }
 
-    fn photo_mut(&mut self, id: PhotoId) -> Option<&mut QueuedPhoto> {
-        self.photos.iter_mut().find(|photo| photo.id == id)
+    pub(super) fn photos(&self) -> &[QueuedPhoto] {
+        self.workspace.photos()
+    }
+
+    pub(super) fn selected_photo_id(&self) -> Option<PhotoId> {
+        self.workspace.selected_id()
+    }
+
+    pub(super) fn thumbnail(&self, id: PhotoId) -> Option<&Thumbnail> {
+        self.thumbnails.get(&id)
     }
 
     /// 由控件状态拼出渲染用的 [`Text`]。
@@ -452,8 +448,8 @@ impl AppView {
     pub(super) fn refresh_preview(&self, cx: &mut Context<Self>) {
         let job = match self.selected_photo() {
             Some(photo) => PreviewJob {
-                path: photo.path.clone(),
-                exif: photo.exif.clone(),
+                path: photo.path().to_path_buf(),
+                exif: photo.exif().cloned(),
                 params: self.params.clone(),
                 text: self.build_text(cx),
             },
@@ -503,18 +499,10 @@ impl AppView {
             if !is_supported_image(&path) {
                 continue;
             }
-            if self.photos.iter().any(|photo| photo.path == path) {
-                continue;
+            if let Some(id) = self.workspace.add(path.clone()) {
+                self.thumbnails.insert(id, Thumbnail::Pending);
+                added.push((id, path));
             }
-            let id = PhotoId(self.next_photo_id);
-            self.next_photo_id += 1;
-            self.photos.push(QueuedPhoto {
-                id,
-                path: path.clone(),
-                exif: None,
-                thumbnail: Thumbnail::Pending,
-            });
-            added.push((id, path));
         }
 
         if added.is_empty() {
@@ -527,18 +515,17 @@ impl AppView {
             self.load_exif(id, path, cx);
         }
 
-        if self.selected.is_none() {
-            self.selected = Some(first);
+        if self.workspace.selected_id().is_none() {
+            self.workspace.select(first);
             self.refresh_preview(cx);
         }
         cx.notify();
     }
 
     pub(super) fn select_photo(&mut self, id: PhotoId, cx: &mut Context<Self>) {
-        if self.selected == Some(id) {
+        if !self.workspace.select(id) {
             return;
         }
-        self.selected = Some(id);
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -547,36 +534,27 @@ impl AppView {
     ///
     /// 选中项本身由领域 id 标识；这里是按位置操作队列的一条受控通道。
     pub fn select_photo_at(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(id) = self.photos.get(index).map(|photo| photo.id) else {
+        if !self.workspace.select_at(index) {
             return;
-        };
-        self.select_photo(id, cx);
+        }
+        self.refresh_preview(cx);
+        cx.notify();
     }
 
     pub fn remove_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected else {
+        let Some(id) = self.workspace.remove_selected() else {
             return;
         };
-        let Some(ix) = self.photos.iter().position(|photo| photo.id == id) else {
-            return;
-        };
-        self.photos.remove(ix);
-        // 选中项落到原位置的下一张，没有就退回上一张：删掉一张后视线不必重新找位置。
-        self.selected = self
-            .photos
-            .get(ix)
-            .or_else(|| self.photos.last())
-            .map(|photo| photo.id);
+        self.thumbnails.remove(&id);
         self.refresh_preview(cx);
         cx.notify();
     }
 
     pub fn clear_photos(&mut self, cx: &mut Context<Self>) {
-        if self.photos.is_empty() {
+        if self.workspace.clear() == 0 {
             return;
         }
-        self.photos.clear();
-        self.selected = None;
+        self.thumbnails.clear();
         self.export = ExportState::Idle;
         self.refresh_preview(cx);
         cx.notify();
@@ -589,13 +567,16 @@ impl AppView {
                 .background_spawn(async move { render_thumbnail(&path) })
                 .await;
             this.update(cx, |this, cx| {
-                let Some(photo) = this.photo_mut(id) else {
+                if this.workspace.photo(id).is_none() {
                     return;
-                };
-                photo.thumbnail = match rendered {
-                    Ok(image) => Thumbnail::Ready(image),
-                    Err(_) => Thumbnail::Failed,
-                };
+                }
+                this.thumbnails.insert(
+                    id,
+                    match rendered {
+                        Ok(image) => Thumbnail::Ready(image),
+                        Err(_) => Thumbnail::Failed,
+                    },
+                );
                 cx.notify();
             })
             .ok();
@@ -611,9 +592,9 @@ impl AppView {
                 .await;
 
             this.update(cx, |this, cx| {
-                let is_selected = this.selected == Some(id);
-                if let Some(photo) = this.photo_mut(id) {
-                    photo.exif = exif;
+                let is_selected = this.workspace.selected_id() == Some(id);
+                if let Some(photo) = this.workspace.photo_mut(id) {
+                    photo.set_exif(exif);
                 }
                 if is_selected {
                     this.refresh_preview(cx);
@@ -950,7 +931,7 @@ impl AppView {
     /// 逐张串行处理而不是并发：libvips 自己就吃满多核，再叠并发只会让每张都变慢，还会
     /// 让进度读数失去意义。
     pub(super) fn export_all(&mut self, cx: &mut Context<Self>) {
-        if self.photos.is_empty() || matches!(self.export, ExportState::Running { .. }) {
+        if self.workspace.is_empty() || matches!(self.export, ExportState::Running { .. }) {
             return;
         }
         if self.params.output_folder.is_none() {
@@ -959,7 +940,12 @@ impl AppView {
 
         let params = self.params.clone();
         let text = self.build_text(cx);
-        let paths: Vec<PathBuf> = self.photos.iter().map(|photo| photo.path.clone()).collect();
+        let paths: Vec<PathBuf> = self
+            .workspace
+            .photos()
+            .iter()
+            .map(|photo| photo.path().to_path_buf())
+            .collect();
         let total = paths.len();
 
         self.export = ExportState::Running {

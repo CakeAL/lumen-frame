@@ -14,6 +14,7 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 - `src/main.rs`：应用启动、窗口配置，以及打包后 `VIPS_LIBDIR` 的设置。
 - `src/lib.rs`：库模块和共享的 `Position` 枚举。
 - `src/ui/`：GPUI 界面。`ui/mod.rs` 中的 `AppView` 是应用状态所有者；`preview.rs` 管理后台预览节奏；`preview_image.rs` 是图像管线到 GPUI 位图的边界。
+- `src/workspace.rs`：无 GPUI 依赖的照片队列状态、稳定 `PhotoId` 与选择规则；缩略图等展示缓存不得放入这里。
 - `src/photo.rs`：照片加载、EXIF 提取、整条水印合成与导出；也是 libvips 初始化的唯一入口。
 - `src/process/`：纯图像/文本处理细节：画布、阴影、圆角、Ultra HDR gain map 和 EXIF 文本渲染。
 - `src/config.rs` / `src/params.rs`：预设、应用设置及水印参数的序列化。
@@ -21,6 +22,7 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 - `static/logo/`：EXIF 相机品牌对应的黑白 SVG 标志。
 - `tests/`：集成测试；`test_images/` 是受版本控制的真实图片夹具。
 - `script/bundle-macos.sh`、`script/bundle-windows.ps1`：带 libvips 依赖的分发打包。macOS 用 `dylibbundler` 重写路径；Windows 将 DLL 与 exe 并排并校验整个 DLL/插件导入树；完整说明见 `docs/packaging.md`。
+- `docs/architecture.md`：模块分层、状态归属与新增代码的边界规则。
 
 ## 常用命令
 

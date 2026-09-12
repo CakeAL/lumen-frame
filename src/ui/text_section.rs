@@ -184,7 +184,9 @@ pub(super) fn position_hint(position: crate::Position) -> &'static str {
 
 impl AppView {
     pub(super) fn render_text_section(&self, cx: &Context<Self>) -> impl IntoElement {
-        let exif = self.selected_photo().and_then(|photo| photo.exif.clone());
+        let exif = self
+            .selected_photo()
+            .and_then(|photo| photo.exif().cloned());
         let time_format = self.time_format.clone();
 
         // 组件默认铺满父级高度，在自动高度的分组里显式交回去。
