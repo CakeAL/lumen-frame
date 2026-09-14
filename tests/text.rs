@@ -1,6 +1,6 @@
 use chrono::Local;
 use libvips::ops;
-use nom_exif::ExifDateTime;
+use nom_exif::{Altitude, ExifDateTime, GPSInfo, URational};
 
 use lumen_frame::{
     params::WatermarkParams,
@@ -42,6 +42,33 @@ fn test_render_exif_template_missing_and_dedupe() {
     assert_eq!(t1, "Xiaomi 15");
     let t2 = render_exif_template("{型号} - {镜头型号}", &exif_info, "%Y/%m/%d");
     assert_eq!(t2, "15");
+}
+
+#[test]
+fn test_render_exif_template_gps_and_administrative_area() {
+    let mut gps_info: GPSInfo = "+22.1643139-113.5570944/".parse().unwrap();
+    gps_info.altitude = Altitude::BelowSeaLevel(URational::new(1234, 100));
+    let exif_info = ExifInfo {
+        gps_info: Some(gps_info),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        render_exif_template("{GPS}", &exif_info, "%Y/%m/%d"),
+        "22°9.86'N 113°33.43'W"
+    );
+    assert_eq!(
+        render_exif_template("{海拔}", &exif_info, "%Y/%m/%d"),
+        "-12.34"
+    );
+
+    let china_gps: GPSInfo = "+22.1643139+113.5570944/".parse().unwrap();
+    let china_exif = ExifInfo {
+        gps_info: Some(china_gps),
+        ..Default::default()
+    };
+    let address = render_exif_template("{省} {市} {区}", &china_exif, "%Y/%m/%d");
+    assert_eq!(address.split_whitespace().count(), 3);
 }
 
 #[tokio::test]

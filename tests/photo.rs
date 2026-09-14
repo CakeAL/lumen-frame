@@ -6,7 +6,7 @@ use lumen_frame::{
 
 #[tokio::test]
 async fn test_dump_exif() {
-    let path = "./test_images/DSC_4587.jpg";
+    let path = "./test_images/ultra_hdr.jpg";
     let photo = Photo::new(&path).await.unwrap();
     dbg!(photo.exif);
 }

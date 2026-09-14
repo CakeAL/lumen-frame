@@ -11,6 +11,8 @@ libvips = "2.3.0"
 dirs = "7"
 regex = "1"
 num-integer = "0.1"
+# 离线将 EXIF GPS 坐标解析为中国省、市、区县。
+reverse-geocoder-cn = "0.1"
 chrono = "0.4"
 # 预览位图：水印合成结果需要转成 GPUI 可渲染的 BGRA 缓冲区，版本必须与 gpui-pre 一致
 image = "0.25"

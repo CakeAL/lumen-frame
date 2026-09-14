@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use libvips::{VipsApp, VipsImage, ops};
-use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, read_exif_async};
+use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, GPSInfo, read_exif_async};
 use num_integer::Integer;
 use std::{
     fmt::Display,
@@ -349,6 +349,8 @@ pub struct ExifInfo {
     pub lens_make: Option<String>,
     // 镜头型号
     pub lens_model: Option<String>,
+    // GPS Info
+    pub gps_info: Option<GPSInfo>,
 }
 
 impl ExifInfo {
@@ -382,6 +384,7 @@ impl ExifInfo {
             focal_length_in35mm_film: get(ExifTag::FocalLengthIn35mmFilm).and_then(|v| v.as_u16()),
             lens_make: get(ExifTag::LensMake).and_then(to_string),
             lens_model: get(ExifTag::LensModel).and_then(to_string),
+            gps_info: exif.gps_info().cloned(),
         }
     }
 }

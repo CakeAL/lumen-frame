@@ -34,7 +34,7 @@ use super::field::{
 ///
 /// `{Logo}` 在渲染时会被替换成对应相机的品牌标志图片，其余字段来自 EXIF。缺失的字段会
 /// 被整段丢弃，不会留下 `{xxx}` 字面量。
-const TEMPLATE_FIELDS: &str = "{拍摄日期} {品牌} {型号} {镜头型号} {快门} {光圈} {ISO} {曝光补偿} {实际焦距} {等效焦距} {Logo}";
+const TEMPLATE_FIELDS: &str = "{拍摄日期} {品牌} {型号} {镜头型号} {快门} {光圈} {ISO} {曝光补偿} {实际焦距} {等效焦距} {Logo} {GPS} {省} {市} {区}";
 
 /// 对齐方式的选项。
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[

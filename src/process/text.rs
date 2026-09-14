@@ -1,4 +1,8 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use libvips::error::Error as VipsError;
 use libvips::{Result, VipsImage, ops};
@@ -9,6 +13,7 @@ use parley::{
     PositionedLayoutItem,
 };
 use regex::Regex;
+use reverse_geocoder_cn::{Address, ReverseGeocoder};
 use swash::FontRef;
 use swash::scale::image::{Content, Image};
 use swash::scale::{Render, ScaleContext, Source};
@@ -774,10 +779,95 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
         "等效焦距" => exif.focal_length_in35mm_film.map(|v| v.to_string()),
         "镜头生产商" => exif.lens_make.clone(),
         "镜头型号" => exif.lens_model.clone(),
+        "GPS" => exif.gps_info.as_ref().and_then(format_gps),
+        "海拔" => exif
+            .gps_info
+            .as_ref()
+            .and_then(|gps| gps.altitude_meters())
+            .map(format_gps_number),
+        "省" | "市" | "区" => {
+            administrative_address(exif.gps_info.as_ref()).map(|address| match key {
+                "省" => address.province.name.clone(),
+                "市" => address.city.name.clone(),
+                "区" => address.county.name.clone(),
+                _ => unreachable!("已在外层匹配行政区字段"),
+            })
+        }
         // Logo 由 render_text 的 InlineBox 处理，这里不替换成文本
         "Logo" => None,
         _ => None,
     }
+}
+
+/// 将 EXIF 的度、分、秒坐标格式化为便于水印展示的度分文本。
+fn format_gps(gps: &nom_exif::GPSInfo) -> Option<String> {
+    let latitude = format_gps_coordinate(
+        gps.latitude.degrees.to_f64()?,
+        gps.latitude.minutes.to_f64()?,
+        gps.latitude.seconds.to_f64()?,
+        gps.latitude_ref.as_char(),
+    )?;
+    let longitude = format_gps_coordinate(
+        gps.longitude.degrees.to_f64()?,
+        gps.longitude.minutes.to_f64()?,
+        gps.longitude.seconds.to_f64()?,
+        gps.longitude_ref.as_char(),
+    )?;
+    Some(format!("{latitude} {longitude}"))
+}
+
+fn format_gps_coordinate(
+    degrees: f64,
+    minutes: f64,
+    seconds: f64,
+    hemisphere: char,
+) -> Option<String> {
+    if !(degrees.is_finite() && minutes.is_finite() && seconds.is_finite()) {
+        return None;
+    }
+    let total_minutes = ((minutes + seconds / 60.0) * 100.0).round() / 100.0;
+    if total_minutes >= 60.0 {
+        return Some(format!("{:.0}°0.00'{hemisphere}", degrees + 1.0));
+    }
+    Some(format!("{degrees:.0}°{total_minutes:.2}'{hemisphere}"))
+}
+
+fn format_gps_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned()
+    }
+}
+
+/// 进程级缓存：同一张（或多张拥有相同 GPS 的）照片在模板中先后使用 `{省}`、`{市}`、
+/// `{区}` 时只进行一次逆地理查询。数据源由 crate 内嵌，整个过程不会访问网络。
+fn administrative_address(gps: Option<&nom_exif::GPSInfo>) -> Option<Address> {
+    let gps = gps?;
+    let latitude = gps.latitude_decimal()?;
+    let longitude = gps.longitude_decimal()?;
+    let key = (latitude.to_bits(), longitude.to_bits());
+
+    static GEOCODER: OnceLock<Option<ReverseGeocoder>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<(u64, u64), Option<Address>>>> = OnceLock::new();
+
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(address) = cache.get(&key) {
+        return address.clone();
+    }
+
+    let address = GEOCODER
+        .get_or_init(|| ReverseGeocoder::embedded().ok())
+        .as_ref()
+        .and_then(|geocoder| geocoder.reverse_geocode(latitude, longitude));
+    cache.insert(key, address.clone());
+    address
 }
 
 /// 时间格式的默认值。
