@@ -388,9 +388,9 @@ impl ExifInfo {
 
 /// 在所有 IFD 中查找指定 tag 的首个条目（拍摄参数通常位于 Exif 子 IFD 中）。
 fn find_value(exif: &Exif, tag: ExifTag) -> Option<&EntryValue> {
-    exif.iter()
-        .find(|e| e.tag.tag() == Some(tag))
-        .map(|e| e.value)
+    exif.entries()
+        .find(|e| e.tag().tag() == Some(tag))
+        .map(|e| e.value())
 }
 
 fn format_iso(value: &EntryValue) -> Option<u32> {
