@@ -91,7 +91,7 @@ pub enum AppearanceMode {
 }
 
 /// 应用级偏好的内容。
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
     pub appearance: AppearanceMode,
@@ -108,6 +108,28 @@ pub struct AppSettings {
     /// 它落在 GPUI 全局主题的 `font_size` 上，而那个值不跨进程保留，所以必须在这里
     /// 单独记一份，否则「设置里选了宽松、重启又变回标准」。
     pub interface_scale: Option<f32>,
+    /// 照片展示区域的背景色。它只影响预览，不参与导出。
+    #[serde(default = "default_preview_background")]
+    pub preview_background: [u8; 3],
+}
+
+/// 新安装时的照片展示背景：中性偏冷的蓝灰色，既能衬出浅色照片也不会压暗深色照片。
+pub const DEFAULT_PREVIEW_BACKGROUND: [u8; 3] = [0x9a, 0xa7, 0xb1];
+
+fn default_preview_background() -> [u8; 3] {
+    DEFAULT_PREVIEW_BACKGROUND
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            appearance: AppearanceMode::System,
+            light_theme: None,
+            dark_theme: None,
+            interface_scale: None,
+            preview_background: DEFAULT_PREVIEW_BACKGROUND,
+        }
+    }
 }
 
 /// 读取应用偏好。文件不存在或读坏了都退回默认值 —— 一个偏好文件不该拦住启动。

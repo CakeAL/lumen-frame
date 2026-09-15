@@ -4,13 +4,15 @@
 //! 实体，并把组级参数与文字行分列展示，因此调整参数时主窗口中的照片预览仍然可见。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, IndexPath, Root, Sizable as _,
+    ActiveTheme as _, IconName, IndexPath, Root, Sizable as _, TitleBar,
     accordion::{Accordion, AccordionItem},
     button::{Button, ButtonVariants as _},
     combobox::{Combobox, ComboboxEvent, ComboboxState},
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
+    menu::{DropdownMenu as _, PopupMenuItem},
+    scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::{Select, SelectState},
     switch::Switch,
@@ -25,8 +27,8 @@ use gpui_kit::{
 use crate::Position;
 use crate::photo::ExifInfo;
 use crate::process::text::{
-    Text, TextAlign, TextDirection, TextGroup, TextParams, render_exif_template,
-    time_format_is_valid,
+    TIME_FORMAT_EXAMPLES, Text, TextAlign, TextDirection, TextGroup, TextParams,
+    render_exif_template, time_format_is_valid,
 };
 
 use super::AppView;
@@ -53,6 +55,24 @@ const TEXT_DIRECTIONS: &[(&str, TextDirection)] = &[
     ("竖排（顺时针旋转 90°）", TextDirection::Vertical),
 ];
 
+const TEMPLATE_FIELDS: &[(&str, &str)] = &[
+    ("拍摄日期", "{拍摄日期}"),
+    ("品牌", "{品牌}"),
+    ("型号", "{型号}"),
+    ("镜头型号", "{镜头型号}"),
+    ("快门", "{快门}"),
+    ("光圈", "{光圈}"),
+    ("ISO", "{ISO}"),
+    ("曝光补偿", "{曝光补偿}"),
+    ("实际焦距", "{实际焦距}"),
+    ("等效焦距", "{等效焦距}"),
+    ("Logo", "{Logo}"),
+    ("GPS", "{GPS}"),
+    ("省", "{省}"),
+    ("市", "{市}"),
+    ("区", "{区}"),
+];
+
 type FontSelect = ComboboxState<SearchableVec<SharedString>>;
 type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
 type PositionSelect = SelectState<Vec<Choice<Position>>>;
@@ -60,15 +80,22 @@ type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
 pub(super) struct TextGroupWindow {
     group_id: u64,
+    title: SharedString,
     app: Entity<AppView>,
     _subscription: Subscription,
 }
 
 impl TextGroupWindow {
-    fn new(group_id: u64, app: Entity<AppView>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        group_id: u64,
+        title: SharedString,
+        app: Entity<AppView>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&app, |_, _, cx| cx.notify());
         Self {
             group_id,
+            title,
             app,
             _subscription: subscription,
         }
@@ -81,9 +108,20 @@ impl Render for TextGroupWindow {
             self.app
                 .read(cx)
                 .render_text_group_editor(self.group_id, self.app.clone(), cx);
-        div()
+        v_flex()
             .size_full()
-            .child(content)
+            .min_h_0()
+            .child(
+                TitleBar::new().child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                        .child(self.title.clone()),
+                ),
+            )
+            // 这里明确建立一个有限高度的视口，右栏才有可滚动的剩余空间；外层只裁切，
+            // 滚动所有权仍然属于具体的「文字行」栏。
+            .child(div().flex_1().min_h_0().overflow_hidden().child(content))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
@@ -489,18 +527,16 @@ impl AppView {
             }
             let bounds = Bounds::centered(None, size(px(960.), px(720.)), cx);
             let editor_view = view.clone();
+            let editor_title = title.clone();
             let result = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(760.), px(560.))),
-                    titlebar: Some(gpui_kit::TitlebarOptions {
-                        title: Some(title),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
+                    ..TitleBar::window_options()
                 },
                 move |window, cx| {
-                    let editor = cx.new(|cx| TextGroupWindow::new(group_id, editor_view, cx));
+                    let editor =
+                        cx.new(|cx| TextGroupWindow::new(group_id, editor_title, editor_view, cx));
                     cx.new(|cx| Root::new(editor, window, cx))
                 },
             );
@@ -552,19 +588,25 @@ impl AppView {
         }
         let toggle_view = view.clone();
         let add_view = view.clone();
-        let show_padding = matches!(value.position, Position::Left | Position::Right);
+        let time_input = group.time_format.clone();
+        let time_view = view.clone();
+        // 组对齐决定文字贴哪一侧；留白应从那一侧把文字向中心推开，与文字组实际位于
+        // 上下还是左右无关。
+        let show_padding = matches!(value.align, TextAlign::Left | TextAlign::Right);
 
         h_flex()
             .id(("text-group-editor", group_id))
             .items_stretch()
             .size_full()
+            .min_h_0()
+            .w_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
                 v_flex()
                     .id(("text-group-settings", group_id))
                     .w_80()
-                    .h_full()
+                    .min_h_0()
                     .flex_shrink_0()
                     .gap_4()
                     .p_4()
@@ -579,11 +621,46 @@ impl AppView {
                     )
                     .child(field("位置", Select::new(&group.position).w_full(), cx))
                     .child(field("组对齐", Select::new(&group.align).w_full(), cx))
-                    .when(show_padding, |this| {
-                        this.child(group.padding.render("向中心留白", false, cx))
-                    })
+                    .child(group.padding.render("向中心留白", !show_padding, cx))
                     .child(field("方向", Select::new(&group.direction).w_full(), cx))
-                    .child(field("时间格式", Input::new(&group.time_format), cx))
+                    .child(field(
+                        "时间格式",
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&group.time_format)),
+                            )
+                            .child(
+                                Button::new(("time-format-options", group_id))
+                                    .label("常用格式")
+                                    .dropdown_caret(true)
+                                    .outline()
+                                    .small()
+                                    .dropdown_menu(move |menu, _, _| {
+                                        TIME_FORMAT_EXAMPLES.iter().fold(
+                                            menu,
+                                            |menu, (label, value)| {
+                                                let input = time_input.clone();
+                                                let view = time_view.clone();
+                                                menu.item(PopupMenuItem::new(*label).on_click(
+                                                    move |_, window, cx| {
+                                                        view.update(cx, |this, cx| {
+                                                            this.set_input_value(
+                                                                &input, value, window, cx,
+                                                            )
+                                                        });
+                                                    },
+                                                ))
+                                            },
+                                        )
+                                    }),
+                            ),
+                        cx,
+                    ))
                     .child(if time_format_is_valid(&value.time_format) {
                         div().into_any_element()
                     } else {
@@ -594,11 +671,12 @@ impl AppView {
                 v_flex()
                     .id(("text-group-lines", group_id))
                     .flex_1()
-                    .min_w_0()
                     .h_full()
+                    .min_w_0()
+                    .min_h_0()
                     .gap_4()
                     .p_4()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .child(
                         h_flex()
                             .w_full()
@@ -657,7 +735,7 @@ impl AppView {
         let remove_view = view.clone();
         let auto_color_view = view.clone();
         let bold_view = view.clone();
-        let italic_view = view;
+        let italic_view = view.clone();
         let title = h_flex()
             .w_full()
             .min_w_0()
@@ -714,7 +792,17 @@ impl AppView {
 
         item.open(open)
             .title(title)
-            .child(Input::new(&line.template))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(Input::new(&line.template)))
+                    .child(self.render_template_field_menu(
+                        line.template.clone(),
+                        view.clone(),
+                        id,
+                    )),
+            )
             .child(resolved)
             .child(line.size.render("字号", false, cx))
             .child(line.line_spacing.render("行距", false, cx))
@@ -763,6 +851,53 @@ impl AppView {
                             }),
                     ),
             )
+    }
+
+    fn render_template_field_menu(
+        &self,
+        input: Entity<InputState>,
+        view: Entity<AppView>,
+        line_id: u64,
+    ) -> impl IntoElement {
+        Button::new(("template-field-options", line_id))
+            .label("插入字段")
+            .dropdown_caret(true)
+            .outline()
+            .small()
+            .dropdown_menu(move |menu, _, _| {
+                TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
+                    let input = input.clone();
+                    let view = view.clone();
+                    menu.item(PopupMenuItem::new(*label).on_click(move |_, window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.append_to_input(&input, value, window, cx)
+                        });
+                    }))
+                })
+            })
+    }
+
+    fn set_input_value(
+        &mut self,
+        input: &Entity<InputState>,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        input.update(cx, |state, cx| state.set_value(value, window, cx));
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
+    fn append_to_input(
+        &mut self,
+        input: &Entity<InputState>,
+        suffix: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = format!("{}{}", input.read(cx).value(), suffix);
+        self.set_input_value(input, &value, window, cx);
     }
 
     pub(super) fn add_text_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {

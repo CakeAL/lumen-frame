@@ -21,7 +21,7 @@ use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Win
 use crate::config::AppearanceMode;
 
 use super::AppView;
-use super::field::field;
+use super::field::{ColorField, field};
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
@@ -45,12 +45,18 @@ type ThemeSelect = SelectState<Vec<SharedString>>;
 pub(super) struct SettingsControls {
     pub light_theme: Entity<ThemeSelect>,
     pub dark_theme: Entity<ThemeSelect>,
+    pub preview_background: ColorField,
 }
 
 impl SettingsControls {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<AppView>) -> (Self, Vec<Subscription>) {
+    pub(super) fn new(
+        preview_background_rgb: [u8; 3],
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> (Self, Vec<Subscription>) {
         let light_theme = make_theme_select(ThemeMode::Light, window, cx);
         let dark_theme = make_theme_select(ThemeMode::Dark, window, cx);
+        let preview_background = ColorField::new(preview_background_rgb, window, cx);
 
         let mut subscriptions = Vec::new();
         subscriptions.push(
@@ -69,11 +75,15 @@ impl SettingsControls {
                 this.set_theme_slot(ThemeMode::Dark, name.clone(), window, cx);
             }),
         );
+        subscriptions.extend(preview_background.subscribe(window, cx, |this, rgb| {
+            this.set_preview_background(rgb);
+        }));
 
         (
             Self {
                 light_theme,
                 dark_theme,
+                preview_background,
             },
             subscriptions,
         )
@@ -214,6 +224,19 @@ impl AppView {
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(
                                                         "浅色与深色各选一套配色；切换明暗时用对应的那一套。",
+                                                    ),
+                                            )
+                                            .child(self.settings.preview_background.render(
+                                                "照片展示背景",
+                                                false,
+                                                cx,
+                                            ))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "只影响照片展示区域，不影响预览生成结果或导出。",
                                                     ),
                                             )
                                             .child(

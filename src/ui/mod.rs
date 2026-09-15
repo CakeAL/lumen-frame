@@ -1,7 +1,7 @@
 //! 照片水印工作台的界面层。
 //!
-//! 界面分成三块稳定区域：左侧导航、中间工作区（上：预览，下：照片队列）、右侧参数面板。
-//! 设置是独立页面，切换时整体替换中间工作区。
+//! 界面分成自绘标题栏、顶部页面标签，以及预设、工作区、参数三块稳定区域。
+//! 设置页面复用顶部标签，整体替换下方内容。
 //!
 //! 状态归属：
 //!
@@ -29,7 +29,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Root, Theme, ThemeMode, ThemeRegistry, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Root, Theme, ThemeMode, ThemeRegistry, TitleBar, WindowExt as _, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -87,6 +88,8 @@ pub struct AppView {
     text_editor_windows: HashMap<u64, WindowHandle<Root>>,
     /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
     opening_text_editor_ids: HashSet<u64>,
+    /// 左侧预设栏可以收起，为照片预览腾出更多空间。
+    preset_sidebar_collapsed: bool,
     next_text_group_id: u64,
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
@@ -114,6 +117,8 @@ pub struct AppView {
     dark_theme: Option<SharedString>,
     /// 界面缩放的基础字号。
     interface_scale: f32,
+    /// 照片展示区域的背景色；属于本机界面偏好，不属于导出参数。
+    preview_background: [u8; 3],
     settings: SettingsControls,
     settings_feedback: Option<SharedString>,
 
@@ -164,7 +169,8 @@ impl AppView {
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
         let settings = config::load_settings();
-        let (settings_controls, settings_subscriptions) = SettingsControls::new(window, cx);
+        let (settings_controls, settings_subscriptions) =
+            SettingsControls::new(settings.preview_background, window, cx);
 
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
@@ -184,6 +190,7 @@ impl AppView {
             text_groups,
             text_editor_windows: HashMap::new(),
             opening_text_editor_ids: HashSet::new(),
+            preset_sidebar_collapsed: false,
             next_text_group_id: 1,
             next_text_line_id,
             font_names,
@@ -202,6 +209,7 @@ impl AppView {
             interface_scale: settings
                 .interface_scale
                 .unwrap_or(settings::DEFAULT_INTERFACE_SCALE),
+            preview_background: settings.preview_background,
             settings: settings_controls,
             settings_feedback: None,
             _subscriptions: subscriptions,
@@ -236,6 +244,15 @@ impl AppView {
         cx.notify();
     }
 
+    /// 改变照片展示区域的底色；它不进入水印参数，所以不会影响导出文件。
+    pub(super) fn set_preview_background(&mut self, rgb: [u8; 3]) {
+        if self.preview_background == rgb {
+            return;
+        }
+        self.preview_background = rgb;
+        self.persist_settings_inner();
+    }
+
     // MARK: 配色槽位
 
     /// 把两个槽位里选中的配色装进主题。
@@ -252,17 +269,22 @@ impl AppView {
     }
 
     fn persist_settings(&mut self, cx: &App) {
+        self.persist_settings_inner();
+        let _ = cx;
+    }
+
+    fn persist_settings_inner(&mut self) {
         let settings = config::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
             interface_scale: Some(self.interface_scale),
+            preview_background: self.preview_background,
         };
         // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
         self.settings_feedback = config::save_settings(&settings)
             .err()
             .map(|error| format!("偏好没能保存：{error:#}").into());
-        let _ = cx;
     }
 
     /// 把界面偏好恢复到默认：跟随系统、两套默认配色、标准缩放。
@@ -274,6 +296,7 @@ impl AppView {
         self.light_theme = None;
         self.dark_theme = None;
         self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
+        self.preview_background = config::DEFAULT_PREVIEW_BACKGROUND;
 
         // 两个槽位换回注册表里自带的那两套。
         let (light, dark) = {
@@ -294,6 +317,9 @@ impl AppView {
         self.settings.dark_theme.update(cx, |state, cx| {
             state.set_selected_value(&dark_name, window, cx)
         });
+        self.settings
+            .preview_background
+            .sync(self.preview_background, window, cx);
 
         settings::apply_interface_scale(self.interface_scale, window, cx);
         self.apply_appearance(window, cx);
@@ -463,6 +489,11 @@ impl AppView {
             self.page = page;
             cx.notify();
         }
+    }
+
+    pub(super) fn toggle_preset_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.preset_sidebar_collapsed = !self.preset_sidebar_collapsed;
+        cx.notify();
     }
 
     /// 用系统文件选择器挑照片。
@@ -844,6 +875,27 @@ impl AppView {
         cx.notify();
     }
 
+    /// 确保预设目录存在后交给系统文件管理器显示；空目录也应可直接打开，方便手工管理。
+    pub(super) fn open_preset_folder(&mut self, cx: &mut Context<Self>) {
+        let Some(dir) = config::preset_dir() else {
+            self.preset_feedback = Some("找不到系统的配置目录".into());
+            self.preset_feedback_is_error = true;
+            cx.notify();
+            return;
+        };
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                cx.reveal_path(&dir);
+                self.preset_feedback = None;
+            }
+            Err(error) => {
+                self.preset_feedback = Some(format!("无法打开预设文件夹：{error}").into());
+                self.preset_feedback_is_error = true;
+            }
+        }
+        cx.notify();
+    }
+
     fn refresh_preset_names(&mut self) {
         self.preset_names = config::list_presets()
             .unwrap_or_default()
@@ -943,14 +995,22 @@ impl Render for AppView {
             AppPage::Settings => (self.render_settings_page(cx).into_any_element(), None),
         };
 
-        h_flex()
-            .items_stretch()
+        v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_sidebar(window, cx))
-            .child(center)
-            .children(inspector)
+            .child(TitleBar::new().child(self.render_page_tabs(cx)))
+            .child(
+                h_flex()
+                    .items_stretch()
+                    .flex_1()
+                    .min_h_0()
+                    .when(self.page == AppPage::Watermark, |this| {
+                        this.child(self.render_preset_sidebar(cx))
+                    })
+                    .child(center)
+                    .children(inspector),
+            )
             // 叠加层必须由应用的第一个视图渲染一次，`Root` 只负责协调它们。
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))

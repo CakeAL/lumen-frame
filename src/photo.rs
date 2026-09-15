@@ -116,11 +116,12 @@ impl Photo {
         if let Some(exif) = exif {
             for group in text_groups {
                 if let Some(image) = group.render_text(exif, img_h, params)? {
-                    let padding = if matches!(group.position, Position::Left | Position::Right) {
-                        (img_h as f64 * group.padding.max(0.0)).round() as i32
-                    } else {
-                        0
-                    };
+                    let padding =
+                        if matches!(group.align, text::TextAlign::Left | text::TextAlign::Right) {
+                            (img_h as f64 * group.padding.max(0.0)).round() as i32
+                        } else {
+                            0
+                        };
                     rendered_text_groups.push((group.position, group.align, padding, image));
                 }
             }

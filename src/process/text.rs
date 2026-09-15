@@ -38,7 +38,7 @@ pub struct TextGroup {
     pub direction: TextDirection,
     /// 文字组在所在边上的位置，不影响组内每行的对齐方式。
     pub align: TextAlign,
-    /// 文字组位于图片左/右侧时，向图片中心收拢的留白比例。
+    /// 文字组左/右对齐时，向图片中心收拢的留白比例。
     #[serde(default)]
     pub padding: f64,
     /// 时间格式
@@ -175,11 +175,11 @@ impl TextGroup {
             image
         };
         let padding = (img_h as f64 * self.padding.max(0.0)).round() as i32;
-        if padding == 0 || !matches!(self.position, Position::Left | Position::Right) {
+        if padding == 0 || !matches!(self.align, TextAlign::Left | TextAlign::Right) {
             return Ok(Some(image));
         }
 
-        let x = if self.position == Position::Left {
+        let x = if self.align == TextAlign::Left {
             padding
         } else {
             0

@@ -19,6 +19,10 @@ fn default_appearance_follows_the_system() {
     // 新装的应用没有偏好文件，这时应该跟随系统，而不是自作主张选一个明暗。
     assert_eq!(AppSettings::default().appearance, AppearanceMode::System);
     assert_eq!(
+        AppSettings::default().preview_background,
+        [0x9a, 0xa7, 0xb1]
+    );
+    assert_eq!(
         load_settings_at(&scratch_file("missing")),
         AppSettings::default()
     );
@@ -64,6 +68,7 @@ fn theme_slots_round_trip() {
         light_theme: Some("Catppuccin Latte".to_string()),
         dark_theme: Some("Catppuccin Mocha".to_string()),
         interface_scale: Some(18.0),
+        preview_background: [0x24, 0x32, 0x4a],
     };
     save_settings_at(&path, &settings).unwrap();
     assert_eq!(load_settings_at(&path), settings);
@@ -77,6 +82,7 @@ fn theme_slots_round_trip() {
         loaded.interface_scale, None,
         "没调过缩放时应为 None，而不是某个数值"
     );
+    assert_eq!(loaded.preview_background, [0x9a, 0xa7, 0xb1]);
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

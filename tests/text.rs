@@ -63,14 +63,14 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
     let exif = photo.exif.as_ref().unwrap();
     let params = WatermarkParams::default();
     let plain = TextGroup {
-        position: lumen_frame::Position::Left,
+        align: TextAlign::Left,
         ..TextGroup::default()
     }
     .render_text(exif, 1_000, &params)
     .unwrap()
     .unwrap();
     let padded = TextGroup {
-        position: lumen_frame::Position::Left,
+        align: TextAlign::Left,
         padding: 0.05,
         ..TextGroup::default()
     }

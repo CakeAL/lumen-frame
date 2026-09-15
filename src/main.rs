@@ -65,13 +65,9 @@ fn main() {
         cx.spawn(async move |cx| {
             cx.open_window(
                 WindowOptions {
-                    // 三栏工作区在更窄的窗口里会挤掉预览，所以给一个明确的窗口下限。
-                    window_min_size: Some(size(px(1040.), px(680.))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Lumen Frame".into()),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
+                    // 预设、工作区与参数面板都需要保留可用宽度。
+                    window_min_size: Some(size(px(1180.), px(680.))),
+                    ..TitleBar::window_options()
                 },
                 |window, cx| {
                     let view = cx.new(|cx| AppView::new(window, cx));

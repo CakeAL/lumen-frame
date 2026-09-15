@@ -1,4 +1,4 @@
-//! 右侧参数面板。
+//! 预设面板与右侧参数面板。
 //!
 //! 面板里的控件实体只保存控件自身的状态（滑块位置、下拉框开合、取色器面板），参数值
 //! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样预览、
@@ -431,7 +431,6 @@ impl AppView {
                     .gap_6()
                     .p_4()
                     .overflow_y_scroll()
-                    .child(self.render_preset_section(cx))
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))
@@ -442,77 +441,164 @@ impl AppView {
 
     // MARK: 预设
 
-    fn render_preset_section(&self, cx: &Context<Self>) -> impl IntoElement {
+    /// 左侧预设栏：两列卡片在独立滚动区内，保存与打开文件夹固定在顶部。
+    pub(super) fn render_preset_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
+        if self.preset_sidebar_collapsed {
+            return v_flex()
+                .id("preset-section")
+                .w_12()
+                .h_full()
+                .flex_shrink_0()
+                .items_center()
+                .pt_2()
+                .border_r_1()
+                .border_color(cx.theme().border)
+                .child(
+                    Button::new("preset-sidebar-expand")
+                        .icon(IconName::PanelLeftOpen)
+                        .ghost()
+                        .small()
+                        .tooltip("展开预设")
+                        .accessibility_label("展开预设")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_preset_sidebar(cx))),
+                )
+                .into_any_element();
+        }
         let name_ready = !self.controls.preset_name.read(cx).value().trim().is_empty();
 
-        GroupBox::new().id("preset-section").title("预设").child(
-            v_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&self.controls.preset_name)),
-                        )
-                        .child(
-                            Button::new("preset-save")
-                                .label("保存")
-                                .disabled(!name_ready)
-                                .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
-                        ),
-                )
-                .child(hint(
-                    "预设保存参数与文字水印；输出文件夹属于本机设置，不写进预设。",
-                    cx,
-                ))
-                .when_some(self.preset_feedback.clone(), |this, feedback| {
-                    this.child(if self.preset_feedback_is_error {
-                        warning(feedback, cx)
-                    } else {
-                        hint(feedback, cx)
-                    })
-                })
-                .when(self.preset_names.is_empty(), |this| {
-                    this.child(
-                        v_flex()
-                            .w_full()
-                            .gap_1()
-                            .child(hint("还没有保存过预设。", cx)),
+        v_flex()
+            .id("preset-section")
+            .w_72()
+            .h_full()
+            .flex_shrink_0()
+            .bg(cx.theme().background)
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_shrink_0()
+                    .justify_between()
+                    .gap_2()
+                    .px_4()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(cx.theme().foreground)
+                            .child("预设"),
                     )
-                })
-                .when(!self.preset_names.is_empty(), |this| {
-                    this.child(
+                    .child(
                         h_flex()
-                            .id("preset-cards")
+                            .gap_1()
+                            .child(
+                                Button::new("preset-open-folder")
+                                    .icon(IconName::FolderOpen)
+                                    .ghost()
+                                    .small()
+                                    .tooltip("打开预设文件夹")
+                                    .accessibility_label("打开预设文件夹")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.open_preset_folder(cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("preset-sidebar-collapse")
+                                    .icon(IconName::PanelLeftClose)
+                                    .ghost()
+                                    .small()
+                                    .tooltip("收起预设")
+                                    .accessibility_label("收起预设")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.toggle_preset_sidebar(cx)
+                                        }),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .p_4()
+                    .child(
+                        h_flex()
                             .w_full()
-                            .gap_3()
-                            .pb_2()
-                            .overflow_x_scroll()
-                            .children(
-                                self.preset_names
-                                    .iter()
-                                    .map(|name| self.render_preset_card(name.clone(), cx)),
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(Input::new(&self.controls.preset_name)),
+                            )
+                            .child(
+                                Button::new("preset-save")
+                                    .label("添加")
+                                    .disabled(!name_ready)
+                                    .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
                             ),
                     )
-                })
-                .child(
-                    Button::new("preset-reset")
-                        .icon(IconName::Undo2)
-                        .label("恢复默认参数")
-                        .ghost()
-                        .w_full()
-                        .on_click(
-                            cx.listener(|this, _, window, cx| {
+                    .when_some(self.preset_feedback.clone(), |this, feedback| {
+                        this.child(if self.preset_feedback_is_error {
+                            warning(feedback, cx)
+                        } else {
+                            hint(feedback, cx)
+                        })
+                    }),
+            )
+            .child(
+                v_flex()
+                    .id("preset-cards")
+                    .flex_1()
+                    .min_h_0()
+                    .gap_2()
+                    .p_4()
+                    .overflow_y_scroll()
+                    .when(self.preset_names.is_empty(), |this| {
+                        this.child(hint("还没有保存过预设。", cx))
+                    })
+                    .when(!self.preset_names.is_empty(), |this| {
+                        this.children(self.preset_names.chunks(2).map(|names| {
+                            h_flex()
+                                .w_full()
+                                .items_stretch()
+                                .gap_2()
+                                // 每一列始终有自己的等分容器。末行只有一张卡时，空列仍
+                                // 占据另一半，卡片不会因为少了邻居而突然变宽。
+                                .children((0..2).map(|column| {
+                                    div().flex_1().min_w_0().children(
+                                        names
+                                            .get(column)
+                                            .map(|name| self.render_preset_card(name.clone(), cx)),
+                                    )
+                                }))
+                        }))
+                    }),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px_4()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        Button::new("preset-reset")
+                            .icon(IconName::Undo2)
+                            .label("恢复默认参数")
+                            .ghost()
+                            .w_full()
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.confirm_reset_params(window, cx)
-                            }),
-                        ),
-                ),
-        )
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_preset_card(&self, name: SharedString, cx: &Context<Self>) -> impl IntoElement {
@@ -526,8 +612,8 @@ impl AppView {
 
         v_flex()
             .id(format!("preset-card-{name}"))
-            .w_48()
-            .flex_shrink_0()
+            .w_full()
+            .min_w_0()
             .gap_2()
             .p_3()
             .border_1()
@@ -583,7 +669,7 @@ impl AppView {
             .h_24()
             .overflow_hidden()
             .rounded(cx.theme().radius)
-            .bg(cx.theme().muted)
+            .bg(white())
             .child(
                 div()
                     .absolute()

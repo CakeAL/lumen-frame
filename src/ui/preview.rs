@@ -14,6 +14,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, ObjectFit, RenderImage, SharedString, Task, div, img};
 
 use super::AppView;
+use super::field::rgb_to_hsla;
 use super::preview_image::{PreviewJob, render_preview};
 
 /// 参数连续变化时先攒一会儿再算。
@@ -255,6 +256,7 @@ impl AppView {
             .min_h_0()
             .items_center()
             .justify_center()
+            .bg(rgb_to_hsla(self.preview_background))
             .p_6()
             .child(content)
     }
