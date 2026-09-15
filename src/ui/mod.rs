@@ -9,14 +9,17 @@
 //! - 各种控件实体只保存控件自身的状态（滑块位置、下拉框开合），不另存一份参数值；
 //! - [`WatermarkPreview`] 拥有预览节奏与结果，是唯一会启动后台渲染的地方。
 
+mod appearance;
+mod export;
 mod field;
 mod inspector;
+mod layout;
 mod preview;
 mod preview_image;
 mod queue;
 mod settings;
-mod sidebar;
 mod text_section;
+mod title_bar;
 
 /// 预览位图的生成入口。
 ///
@@ -28,19 +31,16 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::{
-    ActiveTheme as _, Root, Theme, ThemeMode, ThemeRegistry, TitleBar, WindowExt as _, h_flex,
-    v_flex,
-};
+use gpui_kit::component::{Root, Theme, WindowExt as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, SharedString,
-    Subscription, Window, WindowAppearance, WindowHandle,
+    App, Context, Entity, PathPromptOptions, RenderImage, SharedString, Subscription, Window,
+    WindowHandle,
 };
 
 use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
-use crate::photo::{ExifInfo, Photo};
+use crate::photo::ExifInfo;
 use crate::process::text::TextGroup;
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
@@ -88,8 +88,8 @@ pub struct AppView {
     text_editor_windows: HashMap<u64, WindowHandle<Root>>,
     /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
     opening_text_editor_ids: HashSet<u64>,
-    /// 左侧预设栏可以收起，为照片预览腾出更多空间。
-    preset_sidebar_collapsed: bool,
+    /// 左侧预设面板可以收起，为照片预览腾出更多空间。
+    preset_panel_collapsed: bool,
     next_text_group_id: u64,
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
@@ -190,7 +190,7 @@ impl AppView {
             text_groups,
             text_editor_windows: HashMap::new(),
             opening_text_editor_ids: HashSet::new(),
-            preset_sidebar_collapsed: false,
+            preset_panel_collapsed: false,
             next_text_group_id: 1,
             next_text_line_id,
             font_names,
@@ -219,176 +219,6 @@ impl AppView {
         view.apply_theme_slots(cx);
         view.apply_appearance(window, cx);
         view
-    }
-
-    /// 当前的界面缩放。
-    pub fn interface_scale(&self) -> f32 {
-        self.interface_scale
-    }
-
-    /// 浅色槽位选中的配色名；`None` 表示用默认的那套。
-    pub fn light_theme_name(&self) -> Option<String> {
-        self.light_theme.as_ref().map(|name| name.to_string())
-    }
-
-    /// 深色槽位选中的配色名；`None` 表示用默认的那套。
-    pub fn dark_theme_name(&self) -> Option<String> {
-        self.dark_theme.as_ref().map(|name| name.to_string())
-    }
-
-    /// 记住界面缩放。
-    pub fn set_interface_scale(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
-        self.interface_scale = scale;
-        settings::apply_interface_scale(scale, window, cx);
-        self.persist_settings(cx);
-        cx.notify();
-    }
-
-    /// 改变照片展示区域的底色；它不进入水印参数，所以不会影响导出文件。
-    pub(super) fn set_preview_background(&mut self, rgb: [u8; 3]) {
-        if self.preview_background == rgb {
-            return;
-        }
-        self.preview_background = rgb;
-        self.persist_settings_inner();
-    }
-
-    // MARK: 配色槽位
-
-    /// 把两个槽位里选中的配色装进主题。
-    ///
-    /// 必须在 [`Self::apply_appearance`] 之前调用：`Theme::change` 会去槽位里取当前明暗
-    /// 对应的一套配色，槽位没填好就会取到上一次的。
-    fn apply_theme_slots(&self, cx: &mut App) {
-        for name in [&self.light_theme, &self.dark_theme].into_iter().flatten() {
-            let Some(config) = crate::theme::find(name, cx) else {
-                continue;
-            };
-            Theme::global_mut(cx).apply_config(&config);
-        }
-    }
-
-    fn persist_settings(&mut self, cx: &App) {
-        self.persist_settings_inner();
-        let _ = cx;
-    }
-
-    fn persist_settings_inner(&mut self) {
-        let settings = config::AppSettings {
-            appearance: self.appearance,
-            light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
-            dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
-            interface_scale: Some(self.interface_scale),
-            preview_background: self.preview_background,
-        };
-        // 存不下来不影响这次使用，但下次启动不会记住，得让人知道。
-        self.settings_feedback = config::save_settings(&settings)
-            .err()
-            .map(|error| format!("偏好没能保存：{error:#}").into());
-    }
-
-    /// 把界面偏好恢复到默认：跟随系统、两套默认配色、标准缩放。
-    ///
-    /// 只影响界面偏好，不碰水印参数和文字水印 —— 那是两份不同作用域的设置，混在一个
-    /// 按钮里会让人不敢按。
-    pub fn reset_appearance_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.appearance = AppearanceMode::System;
-        self.light_theme = None;
-        self.dark_theme = None;
-        self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
-        self.preview_background = config::DEFAULT_PREVIEW_BACKGROUND;
-
-        // 两个槽位换回注册表里自带的那两套。
-        let (light, dark) = {
-            let registry = ThemeRegistry::global(cx);
-            (
-                registry.default_light_theme().clone(),
-                registry.default_dark_theme().clone(),
-            )
-        };
-        Theme::global_mut(cx).apply_config(&light);
-        Theme::global_mut(cx).apply_config(&dark);
-
-        // 下拉框显示的也得跟上，否则界面上还停在上一次的选择。
-        let (light_name, dark_name) = (light.name.clone(), dark.name.clone());
-        self.settings.light_theme.update(cx, |state, cx| {
-            state.set_selected_value(&light_name, window, cx)
-        });
-        self.settings.dark_theme.update(cx, |state, cx| {
-            state.set_selected_value(&dark_name, window, cx)
-        });
-        self.settings
-            .preview_background
-            .sync(self.preview_background, window, cx);
-
-        settings::apply_interface_scale(self.interface_scale, window, cx);
-        self.apply_appearance(window, cx);
-        self.persist_settings(cx);
-        self.settings_feedback = Some("已恢复默认外观。".into());
-        cx.notify();
-    }
-
-    /// 换掉某个槽位里的配色。
-    pub fn set_theme_slot(
-        &mut self,
-        mode: ThemeMode,
-        name: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match mode {
-            ThemeMode::Light => self.light_theme = Some(name),
-            ThemeMode::Dark => self.dark_theme = Some(name),
-        }
-        self.apply_theme_slots(cx);
-        // 槽位换了，当前生效的那一套要重新应用一次才会看到效果。
-        self.apply_appearance(window, cx);
-        self.persist_settings(cx);
-        cx.notify();
-    }
-
-    // MARK: 明暗外观
-
-    /// 把当前的明暗选择落到主题和窗口外观上。
-    ///
-    /// 窗口外观要单独设：GPUI 的原生窗口边框和标题栏由 `NSApplication.appearance` 决定，
-    /// 它不会跟着 GPUI 的主题走，所以「应用是深色而系统是浅色」时窗口边缘会不匹配。
-    fn apply_appearance(&self, window: &mut Window, cx: &mut App) {
-        match self.appearance {
-            AppearanceMode::System => {
-                // 先清掉可能存在的强制外观，否则窗口会一直停在上一次的选择上。
-                cx.set_window_appearance(None);
-                Theme::sync_system_appearance(Some(window), cx);
-            }
-            AppearanceMode::Light => {
-                cx.set_window_appearance(Some(WindowAppearance::Light));
-                Theme::change(ThemeMode::Light, Some(window), cx);
-            }
-            AppearanceMode::Dark => {
-                cx.set_window_appearance(Some(WindowAppearance::Dark));
-                Theme::change(ThemeMode::Dark, Some(window), cx);
-            }
-        }
-    }
-
-    /// 当前的明暗选择。
-    pub fn appearance(&self) -> AppearanceMode {
-        self.appearance
-    }
-
-    pub fn set_appearance_mode(
-        &mut self,
-        mode: AppearanceMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.appearance == mode {
-            return;
-        }
-        self.appearance = mode;
-        self.apply_appearance(window, cx);
-        self.persist_settings(cx);
-        cx.notify();
     }
 
     // MARK: 读取
@@ -491,8 +321,8 @@ impl AppView {
         }
     }
 
-    pub(super) fn toggle_preset_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.preset_sidebar_collapsed = !self.preset_sidebar_collapsed;
+    pub(super) fn toggle_preset_panel(&mut self, cx: &mut Context<Self>) {
+        self.preset_panel_collapsed = !self.preset_panel_collapsed;
         cx.notify();
     }
 
@@ -911,131 +741,6 @@ impl AppView {
                     .map(|preset| (name.clone(), preset))
             })
             .collect();
-    }
-
-    // MARK: 导出
-
-    /// 按当前参数把队列里的照片全部导出。
-    ///
-    /// 逐张串行处理而不是并发：libvips 自己就吃满多核，再叠并发只会让每张都变慢，还会
-    /// 让进度读数失去意义。
-    pub(super) fn export_all(&mut self, cx: &mut Context<Self>) {
-        if self.workspace.is_empty() || matches!(self.export, ExportState::Running { .. }) {
-            return;
-        }
-        if self.params.output_folder.is_none() {
-            return;
-        }
-
-        let params = self.params.clone();
-        let text_groups = self.build_text_groups(cx);
-        let paths: Vec<PathBuf> = self
-            .workspace
-            .photos()
-            .iter()
-            .map(|photo| photo.path().to_path_buf())
-            .collect();
-        let total = paths.len();
-
-        self.export = ExportState::Running {
-            completed: 0,
-            total,
-        };
-        cx.notify();
-
-        cx.spawn(async move |this, cx| {
-            let mut succeeded = 0usize;
-            for (ix, path) in paths.into_iter().enumerate() {
-                let params = params.clone();
-                let text_groups = text_groups.clone();
-                let result = cx
-                    .background_spawn(async move {
-                        let photo = Photo::open_blocking(&path)?;
-                        let watermark = photo.generate_watermark(&params, &text_groups)?;
-                        photo.save_image(&params, &watermark)
-                    })
-                    .await;
-
-                if result.is_ok() {
-                    succeeded += 1;
-                }
-
-                let completed = ix + 1;
-                let alive = this
-                    .update(cx, |this, cx| {
-                        this.export = ExportState::Running { completed, total };
-                        cx.notify();
-                    })
-                    .is_ok();
-                if !alive {
-                    return;
-                }
-            }
-
-            this.update(cx, |this, cx| {
-                this.export = ExportState::Finished {
-                    succeeded,
-                    failed: total - succeeded,
-                };
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-}
-
-impl Render for AppView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (center, inspector) = match self.page {
-            AppPage::Watermark => (
-                self.render_watermark_page(cx).into_any_element(),
-                Some(self.render_inspector(cx).into_any_element()),
-            ),
-            AppPage::Settings => (self.render_settings_page(cx).into_any_element(), None),
-        };
-
-        v_flex()
-            .size_full()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-            .child(TitleBar::new().child(self.render_page_tabs(cx)))
-            .child(
-                h_flex()
-                    .items_stretch()
-                    .flex_1()
-                    .min_h_0()
-                    .when(self.page == AppPage::Watermark, |this| {
-                        this.child(self.render_preset_sidebar(cx))
-                    })
-                    .child(center)
-                    .children(inspector),
-            )
-            // 叠加层必须由应用的第一个视图渲染一次，`Root` 只负责协调它们。
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_sheet_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
-    }
-}
-
-impl AppView {
-    /// 水印工作区：上方预览、下方队列。
-    fn render_watermark_page(&self, cx: &Context<Self>) -> impl IntoElement {
-        // 拖放挂在整块工作区上：拖到预览上也算数，不必瞄准下面那条队列。
-        v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_preview_pane(cx))
-                    .child(self.render_queue_pane(cx)),
-            )
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.add_photos(paths.paths().to_vec(), cx)
-            }))
     }
 }
 

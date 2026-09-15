@@ -441,11 +441,11 @@ impl AppView {
 
     // MARK: 预设
 
-    /// 左侧预设栏：两列卡片在独立滚动区内，保存与打开文件夹固定在顶部。
-    pub(super) fn render_preset_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
-        if self.preset_sidebar_collapsed {
+    /// 左侧预设面板：两列卡片在独立滚动区内，保存与打开文件夹固定在顶部。
+    pub(super) fn render_preset_panel(&self, cx: &Context<Self>) -> impl IntoElement {
+        if self.preset_panel_collapsed {
             return v_flex()
-                .id("preset-section")
+                .id("preset-panel")
                 .w_12()
                 .h_full()
                 .flex_shrink_0()
@@ -454,20 +454,20 @@ impl AppView {
                 .border_r_1()
                 .border_color(cx.theme().border)
                 .child(
-                    Button::new("preset-sidebar-expand")
+                    Button::new("preset-panel-expand")
                         .icon(IconName::PanelLeftOpen)
                         .ghost()
                         .small()
                         .tooltip("展开预设")
                         .accessibility_label("展开预设")
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_preset_sidebar(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_preset_panel(cx))),
                 )
                 .into_any_element();
         }
         let name_ready = !self.controls.preset_name.read(cx).value().trim().is_empty();
 
         v_flex()
-            .id("preset-section")
+            .id("preset-panel")
             .w_72()
             .h_full()
             .flex_shrink_0()
@@ -506,16 +506,14 @@ impl AppView {
                                     ),
                             )
                             .child(
-                                Button::new("preset-sidebar-collapse")
+                                Button::new("preset-panel-collapse")
                                     .icon(IconName::PanelLeftClose)
                                     .ghost()
                                     .small()
                                     .tooltip("收起预设")
                                     .accessibility_label("收起预设")
                                     .on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.toggle_preset_sidebar(cx)
-                                        }),
+                                        cx.listener(|this, _, _, cx| this.toggle_preset_panel(cx)),
                                     ),
                             ),
                     ),

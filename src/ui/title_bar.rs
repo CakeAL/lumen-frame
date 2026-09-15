@@ -1,8 +1,8 @@
-//! 顶部页面标签。
+//! 主窗口标题栏与页面导航。
 
 use gpui_kit::Context;
 use gpui_kit::component::{
-    Icon, IconName, Sizable as _,
+    Icon, IconName, Sizable as _, TitleBar,
     button::Button,
     h_flex,
     tab::{Tab, TabBar},
@@ -12,7 +12,12 @@ use gpui_kit::prelude::*;
 use super::{AppPage, AppView};
 
 impl AppView {
-    pub(super) fn render_page_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 主窗口的原生标题栏承载应用级导航；内容工作区不再拥有第二套侧栏导航。
+    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        TitleBar::new().child(self.render_title_bar_navigation(cx))
+    }
+
+    fn render_title_bar_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
             .h_full()
