@@ -28,6 +28,20 @@ use crate::{
 
 pub type SvgString = String;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TextGroup {
+    /// 文字组的多行文本。
+    pub text: Text,
+    /// 文字组相对于图片的位置。
+    pub position: Position,
+    /// 整组文字的方向；竖排会在渲染后顺时针旋转 90°。
+    pub direction: TextDirection,
+    /// 文字组在所在边上的位置，不影响组内每行的对齐方式。
+    pub align: TextAlign,
+    /// 时间格式
+    pub time_format: String,
+}
+
 /// 需要渲染的多行文本
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Text {
@@ -35,38 +49,15 @@ pub struct Text {
     pub template: Vec<String>,
     /// 每行文本参数
     pub text_params: Vec<TextParams>,
-    /// 文本位置
-    pub position: Position,
-    /// 时间格式
-    pub time_format: String,
 }
 
 impl Text {
-    /// 计算多行文本占用高度px，用于计算有字体一侧的margin宽度
-    /// 返回 (文本相对于图片的位置, 文本高度)
-    pub fn cal_height(&self, img_h: i32) -> (Position, i32) {
-        if self.text_params.is_empty() {
-            return (Position::Bottom, 0);
-        }
-        let img_h = img_h as f64;
-        let text_height: i32 = self
-            .text_params
-            .iter()
-            .map(|text_params| (text_params.size * img_h).round() as i32)
-            .sum();
-        let spacing: i32 = self
-            .text_params
-            .windows(2)
-            .map(|lines| (lines[0].size * img_h * (lines[0].line_spacing - 1.0)).round() as i32)
-            .sum();
-        (self.position, text_height + spacing)
-    }
-
     pub fn render_text(
         &self,
         exif: &ExifInfo,
         img_h: i32,
         watermark_params: &WatermarkParams,
+        time_format: &str,
     ) -> Result<Option<VipsImage>> {
         // 行数
         let line_count = self.template.len().min(self.text_params.len());
@@ -79,7 +70,7 @@ impl Text {
             .template
             .iter()
             .take(line_count)
-            .map(|t| parse_template(t, exif, &self.time_format))
+            .map(|t| parse_template(t, exif, time_format))
             .collect();
 
         // 计算每一行的字号
@@ -159,6 +150,30 @@ impl Text {
     }
 }
 
+impl TextGroup {
+    /// 渲染整组文字。竖排是对完成组内排版后的位图整体旋转，因此不会改变每行自己的
+    /// `TextParams::align` 语义。
+    pub fn render_text(
+        &self,
+        exif: &ExifInfo,
+        img_h: i32,
+        watermark_params: &WatermarkParams,
+    ) -> Result<Option<VipsImage>> {
+        let Some(image) =
+            self.text
+                .render_text(exif, img_h, watermark_params, &self.time_format)?
+        else {
+            return Ok(None);
+        };
+
+        if self.direction == TextDirection::Vertical {
+            Ok(Some(ops::rot(&image, ops::Angle::D90)?))
+        } else {
+            Ok(Some(image))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TextAlign {
     Left,
@@ -187,8 +202,6 @@ pub struct TextParams {
     pub italic: bool,
     pub bold: bool,
     pub align: TextAlign,
-    /// 文字方向
-    pub direction: TextDirection,
 }
 
 impl Default for TextParams {
@@ -201,7 +214,6 @@ impl Default for TextParams {
             italic: false,
             bold: false,
             align: TextAlign::default(),
-            direction: TextDirection::default(),
         }
     }
 }
@@ -227,7 +239,17 @@ impl Default for Text {
                     ..Default::default()
                 },
             ],
+        }
+    }
+}
+
+impl Default for TextGroup {
+    fn default() -> Self {
+        Self {
+            text: Text::default(),
             position: Position::Bottom,
+            direction: TextDirection::Horizontal,
+            align: TextAlign::Center,
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
         }
     }
@@ -851,8 +873,9 @@ fn administrative_address(gps: Option<&nom_exif::GPSInfo>) -> Option<Address> {
     let longitude = gps.longitude_decimal()?;
     let key = (latitude.to_bits(), longitude.to_bits());
 
+    type AddressCache = Mutex<HashMap<(u64, u64), Option<Address>>>;
     static GEOCODER: OnceLock<Option<ReverseGeocoder>> = OnceLock::new();
-    static CACHE: OnceLock<Mutex<HashMap<(u64, u64), Option<Address>>>> = OnceLock::new();
+    static CACHE: OnceLock<AddressCache> = OnceLock::new();
 
     let mut cache = CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))

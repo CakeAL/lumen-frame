@@ -80,10 +80,10 @@ impl Photo {
     pub fn generate_watermark(
         &self,
         params: &WatermarkParams,
-        text: &text::Text,
+        text_groups: &[text::TextGroup],
     ) -> Result<VipsImage> {
         let img = Self::load_base_image(&self.path)?;
-        Self::compose_watermark(img, self.exif.as_ref(), params, text)
+        Self::compose_watermark(img, self.exif.as_ref(), params, text_groups)
     }
 
     /// 在给定的底图上合成水印。
@@ -94,7 +94,7 @@ impl Photo {
         img: VipsImage,
         exif: Option<&ExifInfo>,
         params: &WatermarkParams,
-        text: &text::Text,
+        text_groups: &[text::TextGroup],
     ) -> Result<VipsImage> {
         vips();
 
@@ -111,14 +111,40 @@ impl Photo {
         // 计算水印照片的图片尺寸
         let (img_w, img_h) = (img.get_width(), img.get_height());
 
-        // 计算文字占用尺寸
-        let (text_position, text_height) = if exif.is_some() {
-            text.cal_height(img_h)
-        } else {
-            (Position::Bottom, 0)
-        };
+        // 先渲染每个文字组，旋转后的真实尺寸才能准确决定四周需要扩出多少画布。
+        let mut rendered_text_groups = Vec::new();
+        if let Some(exif) = exif {
+            for group in text_groups {
+                if let Some(image) = group.render_text(exif, img_h, params)? {
+                    rendered_text_groups.push((group.position, group.align, image));
+                }
+            }
+        }
+
         // 计算画布边框尺寸
-        let margin = canvas::Margin::cal_margin(img_w, img_h, text_height, text_position, params);
+        let mut margin = canvas::Margin::cal_margin(img_w, img_h, params);
+        let mut text_thickness = [0; 4];
+        for (position, _, image) in &rendered_text_groups {
+            let thickness = match position {
+                Position::Up | Position::Bottom => image.get_height(),
+                Position::Left | Position::Right => image.get_width(),
+                Position::Center => 0,
+            };
+            let slot = match position {
+                Position::Up => Some(0),
+                Position::Right => Some(1),
+                Position::Bottom => Some(2),
+                Position::Left => Some(3),
+                Position::Center => None,
+            };
+            if let Some(slot) = slot {
+                text_thickness[slot] = text_thickness[slot].max(thickness);
+            }
+        }
+        margin.include_text_thickness(Position::Up, text_thickness[0]);
+        margin.include_text_thickness(Position::Right, text_thickness[1]);
+        margin.include_text_thickness(Position::Bottom, text_thickness[2]);
+        margin.include_text_thickness(Position::Left, text_thickness[3]);
         // 画布尺寸
         let (canvas_w, canvas_h) = canvas::cal_size(&margin, img_w, img_h, params);
         // 计算图片坐标
@@ -157,39 +183,34 @@ impl Photo {
         )
         .context("composite image err")?;
 
-        // 渲染字体图片
-        let text_layer = if let Some(exif) = exif {
-            text.render_text(exif, img_h, params)?
-        } else {
-            None
-        };
-        let mut canvas = if let Some(mut text_layer) = text_layer {
+        // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
+        let mut canvas = canvas;
+        for (position, align, text_layer) in rendered_text_groups {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
-            let (text_x, text_y) = match text.position {
-                Position::Up => (img_x + img_w / 2 - text_w / 2, (margin.top - text_h) / 2),
-                Position::Bottom => (
-                    img_x + img_w / 2 - text_w / 2,
-                    canvas_h - (text_h + margin.bottom) / 2,
-                ),
-                Position::Left => {
-                    text_layer = ops::rot(&text_layer, libvips::ops::Angle::D90)?;
-                    let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
-                    (
-                        (margin.left - text_w) / 2,
-                        margin.top + img_h / 2 - text_h / 2,
-                    )
-                }
-                Position::Right => {
-                    text_layer = ops::rot(&text_layer, libvips::ops::Angle::D90)?;
-                    let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
-                    (
-                        canvas_w - (text_w + margin.right) / 2,
-                        img_y + img_h / 2 - text_h / 2,
-                    )
-                }
-                Position::Center => (0, 0),
+            let aligned_x = || match align {
+                text::TextAlign::Left => img_x,
+                text::TextAlign::Center => img_x + (img_w - text_w) / 2,
+                text::TextAlign::Right => img_x + img_w - text_w,
             };
-            ops::composite2_with_opts(
+            let aligned_y = || match align {
+                text::TextAlign::Left => img_y,
+                text::TextAlign::Center => img_y + (img_h - text_h) / 2,
+                text::TextAlign::Right => img_y + img_h - text_h,
+            };
+            let (text_x, text_y) = match position {
+                Position::Up => (aligned_x(), (img_y - text_h) / 2),
+                Position::Bottom => (
+                    aligned_x(),
+                    img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
+                ),
+                Position::Left => ((img_x - text_w) / 2, aligned_y()),
+                Position::Right => (
+                    img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
+                    aligned_y(),
+                ),
+                Position::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
+            };
+            canvas = ops::composite2_with_opts(
                 &canvas,
                 &text_layer,
                 ops::BlendMode::Over,
@@ -199,10 +220,8 @@ impl Photo {
                     ..Default::default()
                 },
             )
-            .context("composite text layer err")?
-        } else {
-            canvas
-        };
+            .context("composite text layer err")?;
+        }
 
         // 原图带 Ultra HDR gain map 时，重写一个只覆盖中间照片区域、四周为
         // boost=1（0）的新 gain map，避免水印边框/背景被额外提亮。

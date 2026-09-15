@@ -12,7 +12,7 @@ use lumen_frame::{
         save_preset_in,
     },
     params::WatermarkParams,
-    process::text::{Text, TextAlign, TextParams},
+    process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
 };
 
 /// 每个用例一个独立目录，互不干扰。
@@ -37,24 +37,28 @@ fn colourful_preset() -> WatermarkPreset {
             output_folder: Some(PathBuf::from("/should/not/be/saved")),
             ..Default::default()
         },
-        text: Text {
-            template: vec!["{Logo} {型号}".to_owned(), "自定义一行".to_owned()],
-            text_params: vec![
-                TextParams {
-                    size: 0.026,
-                    bold: true,
-                    align: TextAlign::Right,
-                    ..Default::default()
-                },
-                TextParams {
-                    size: 0.018,
-                    italic: true,
-                    ..Default::default()
-                },
-            ],
+        text_groups: vec![TextGroup {
+            text: Text {
+                template: vec!["{Logo} {型号}".to_owned(), "自定义一行".to_owned()],
+                text_params: vec![
+                    TextParams {
+                        size: 0.026,
+                        bold: true,
+                        align: TextAlign::Right,
+                        ..Default::default()
+                    },
+                    TextParams {
+                        size: 0.018,
+                        italic: true,
+                        ..Default::default()
+                    },
+                ],
+            },
             position: Position::Center,
+            direction: TextDirection::Vertical,
+            align: TextAlign::Right,
             time_format: "%Y年%m月%d日".to_owned(),
-        },
+        }],
     }
 }
 
@@ -73,11 +77,15 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.background, original.params.background);
     assert_eq!(loaded.params.quality, original.params.quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
-    assert_eq!(loaded.text.template, original.text.template);
-    assert_eq!(loaded.text.position, original.text.position);
-    assert_eq!(loaded.text.time_format, original.text.time_format);
-    assert_eq!(loaded.text.text_params[0].align, TextAlign::Right);
-    assert!(loaded.text.text_params[1].italic);
+    assert_eq!(loaded.text_groups, original.text_groups);
+    assert_eq!(loaded.text_groups[0].position, Position::Center);
+    assert_eq!(loaded.text_groups[0].direction, TextDirection::Vertical);
+    assert_eq!(loaded.text_groups[0].align, TextAlign::Right);
+    assert_eq!(
+        loaded.text_groups[0].text.text_params[0].align,
+        TextAlign::Right
+    );
+    assert!(loaded.text_groups[0].text.text_params[1].italic);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -98,6 +106,43 @@ fn output_folder_is_not_part_of_a_preset() {
     // `AppView::apply_preset` 就是这么做的。
     let loaded = load_preset_in(&dir, "no-folder").unwrap();
     assert_ne!(loaded.params.output_folder, preset.params.output_folder);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn version_one_single_text_is_migrated_to_a_text_group() {
+    let dir = scratch_dir("v1-migration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let document = r#"
+version = 1
+name = "旧预设"
+
+[params]
+
+[text]
+template = ["旧格式文字"]
+position = "Up"
+time_format = "%Y/%m/%d"
+
+[[text.text_params]]
+font = "Arial"
+size = 0.03
+line_spacing = 1.3
+italic = false
+bold = false
+align = "Left"
+"#;
+    std::fs::write(dir.join("旧预设.toml"), document).unwrap();
+
+    let loaded = load_preset_in(&dir, "旧预设").expect("v1 预设应自动迁移");
+
+    assert_eq!(loaded.text_groups.len(), 1);
+    let group = &loaded.text_groups[0];
+    assert_eq!(group.position, Position::Up);
+    assert_eq!(group.direction, TextDirection::Horizontal);
+    assert_eq!(group.align, TextAlign::Center);
+    assert_eq!(group.text.template, ["旧格式文字"]);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

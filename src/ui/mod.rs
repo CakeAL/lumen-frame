@@ -41,7 +41,7 @@ use crate::Position;
 use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::{ExifInfo, Photo};
-use crate::process::text::{Text, TextParams};
+use crate::process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams};
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use field::index_of;
@@ -84,7 +84,11 @@ pub struct AppView {
     params: WatermarkParams,
     /// 文字水印的整体设置；每行自己的参数在 `text_lines` 里。
     text_position: Position,
+    text_group_align: TextAlign,
+    text_direction: TextDirection,
     time_format: String,
+    /// 当前界面只编辑第一组；其余组仍由预览、导出和预设完整保留。
+    other_text_groups: Vec<TextGroup>,
     text_lines: Vec<TextLine>,
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
@@ -124,14 +128,15 @@ pub struct AppView {
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let params = WatermarkParams::default();
-        let text = Text::default();
+        let text_group = TextGroup::default();
+        let text = &text_group.text;
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(
             &params,
-            &text.time_format,
-            text.position,
+            &text_group.time_format,
+            text_group.position,
             &aspect_choice,
             window,
             cx,
@@ -144,8 +149,7 @@ impl AppView {
             .map(SharedString::from)
             .collect::<Vec<_>>();
 
-        let (text_lines, text_line_subscriptions) =
-            build_text_lines(&text, &font_names, window, cx);
+        let (text_lines, text_line_subscriptions) = build_text_lines(text, &font_names, window, cx);
 
         let preset_names = config::list_presets()
             .unwrap_or_default()
@@ -173,8 +177,11 @@ impl AppView {
             workspace: PhotoWorkspace::default(),
             thumbnails: HashMap::new(),
             params,
-            text_position: text.position,
-            time_format: text.time_format.clone(),
+            text_position: text_group.position,
+            text_group_align: text_group.align,
+            text_direction: text_group.direction,
+            time_format: text_group.time_format.clone(),
+            other_text_groups: Vec::new(),
             text_lines,
             next_text_line_id: text.template.len() as u64,
             font_names,
@@ -405,12 +412,12 @@ impl AppView {
         self.thumbnails.get(&id)
     }
 
-    /// 由控件状态拼出渲染用的 [`Text`]。
+    /// 由控件状态拼出渲染用的文字组。
     ///
     /// 控件实体是文字水印的真值来源，[`Text`] 只是它们在渲染管线里的投影，因此不需要在
     /// 每次回调里手工同步两份数据。
-    pub(super) fn build_text(&self, cx: &App) -> Text {
-        Text {
+    pub(super) fn build_text_groups(&self, cx: &App) -> Vec<TextGroup> {
+        let text = Text {
             template: self
                 .text_lines
                 .iter()
@@ -431,12 +438,19 @@ impl AppView {
                     italic: line.italic,
                     bold: line.bold,
                     align: line.alignment(cx),
-                    ..TextParams::default()
                 })
                 .collect(),
+        };
+        let mut groups = Vec::with_capacity(1 + self.other_text_groups.len());
+        groups.push(TextGroup {
+            text,
             position: self.text_position,
+            direction: self.text_direction,
+            align: self.text_group_align,
             time_format: self.time_format.clone(),
-        }
+        });
+        groups.extend(self.other_text_groups.iter().cloned());
+        groups
     }
 
     // MARK: 预览
@@ -451,7 +465,7 @@ impl AppView {
                 path: photo.path().to_path_buf(),
                 exif: photo.exif().cloned(),
                 params: self.params.clone(),
-                text: self.build_text(cx),
+                text_groups: self.build_text_groups(cx),
             },
             None => {
                 self.preview.update(cx, |preview, cx| preview.clear(cx));
@@ -658,7 +672,6 @@ impl AppView {
                 italic: last.italic,
                 bold: last.bold,
                 align: last.alignment(cx),
-                ..TextParams::default()
             })
             .unwrap_or_default();
 
@@ -728,7 +741,7 @@ impl AppView {
             return;
         }
 
-        let preset = preset_of(&self.params, &self.build_text(cx));
+        let preset = preset_of(&self.params, &self.build_text_groups(cx));
         match config::save_preset(&name, &preset) {
             Ok(path) => {
                 self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());
@@ -771,11 +784,21 @@ impl AppView {
         self.params = preset.params;
         self.params.output_folder = output_folder;
 
-        self.text_position = preset.text.position;
-        self.time_format = preset.text.time_format.clone();
+        let mut text_groups = preset.text_groups;
+        let text_group = if text_groups.is_empty() {
+            TextGroup::default()
+        } else {
+            text_groups.remove(0)
+        };
+        self.text_position = text_group.position;
+        self.text_group_align = text_group.align;
+        self.text_direction = text_group.direction;
+        self.time_format = text_group.time_format.clone();
+        self.other_text_groups = text_groups;
 
         // 文字行整批重建：行数、模板和每行控件都要对上这份配置。
-        let (lines, subscriptions) = build_text_lines(&preset.text, &self.font_names, window, cx);
+        let (lines, subscriptions) =
+            build_text_lines(&text_group.text, &self.font_names, window, cx);
         self.text_lines = lines;
         self.text_line_subscriptions = subscriptions;
         self.expanded_text_lines.clear();
@@ -868,7 +891,7 @@ impl AppView {
     /// 预览重算都不用再写一遍。
     pub(super) fn reset_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 输出文件夹是这台机器的设置，恢复画面效果不该把它一起清掉（`apply_preset` 会保留）。
-        let preset = preset_of(&WatermarkParams::default(), &Text::default());
+        let preset = preset_of(&WatermarkParams::default(), &[TextGroup::default()]);
         self.apply_preset(preset, window, cx);
         cx.notify();
     }
@@ -939,7 +962,7 @@ impl AppView {
         }
 
         let params = self.params.clone();
-        let text = self.build_text(cx);
+        let text_groups = self.build_text_groups(cx);
         let paths: Vec<PathBuf> = self
             .workspace
             .photos()
@@ -958,11 +981,11 @@ impl AppView {
             let mut succeeded = 0usize;
             for (ix, path) in paths.into_iter().enumerate() {
                 let params = params.clone();
-                let text = text.clone();
+                let text_groups = text_groups.clone();
                 let result = cx
                     .background_spawn(async move {
                         let photo = Photo::open_blocking(&path)?;
-                        let watermark = photo.generate_watermark(&params, &text)?;
+                        let watermark = photo.generate_watermark(&params, &text_groups)?;
                         photo.save_image(&params, &watermark)
                     })
                     .await;

@@ -18,7 +18,7 @@ use libvips::{VipsImage, ops};
 use crate::{
     params::WatermarkParams,
     photo::{ExifInfo, Photo, ensure_vips},
-    process::text::Text,
+    process::text::TextGroup,
 };
 
 /// 预览底图的长边上限（px）。
@@ -39,14 +39,14 @@ pub struct PreviewJob {
     pub path: PathBuf,
     pub exif: Option<ExifInfo>,
     pub params: WatermarkParams,
-    pub text: Text,
+    pub text_groups: Vec<TextGroup>,
 }
 
 /// 按预览分辨率渲染水印照片。会阻塞，请在后台线程调用。
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
     ensure_vips();
     let base = load_scaled(&job.path, PREVIEW_MAX_EDGE).context("读取预览底图")?;
-    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text)
+    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text_groups)
         .context("合成预览")?;
     to_render_image(&composed).context("转换预览位图")
 }

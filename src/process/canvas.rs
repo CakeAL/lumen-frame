@@ -15,14 +15,8 @@ pub struct Margin {
 }
 
 impl Margin {
-    pub fn cal_margin(
-        img_w: i32,
-        img_h: i32,
-        text_height: i32,
-        text_position: Position,
-        params: &WatermarkParams,
-    ) -> Self {
-        let (mut top, mut bottom, mut left, mut right) = if params.border_equal {
+    pub fn cal_margin(img_w: i32, img_h: i32, params: &WatermarkParams) -> Self {
+        let (top, bottom, left, right) = if params.border_equal {
             // 边框等宽，根据上边框的宽度确定所有边框宽度
             let margin = (img_h as f64 * params.border_ratio.0).round() as i32;
             (margin, margin, margin, margin)
@@ -34,19 +28,23 @@ impl Margin {
                 (img_w as f64 * params.border_ratio.3).round() as i32,
             )
         };
-        // 根据文字的位置，边框添加文字宽度
-        match text_position {
-            Position::Up => top += text_height,
-            Position::Left => left += text_height,
-            Position::Bottom => bottom += text_height,
-            Position::Right => right += text_height,
-            _ => {}
-        };
         Self {
             top,
             right,
             bottom,
             left,
+        }
+    }
+
+    /// 在原有边框外扩出文字组所需的厚度。同一侧的多个文字组共享一条带状区域，
+    /// 因此该侧只取最厚的一组，而不是把它们逐组累加。
+    pub fn include_text_thickness(&mut self, position: Position, thickness: i32) {
+        match position {
+            Position::Up => self.top += thickness,
+            Position::Right => self.right += thickness,
+            Position::Bottom => self.bottom += thickness,
+            Position::Left => self.left += thickness,
+            Position::Center => {}
         }
     }
 }

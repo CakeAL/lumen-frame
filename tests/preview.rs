@@ -9,7 +9,7 @@ use lumen_frame::{
     Position,
     params::WatermarkParams,
     photo::ExifInfo,
-    process::text::Text,
+    process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
     ui::{PreviewJob, render_preview, render_thumbnail},
 };
 
@@ -21,7 +21,7 @@ fn job(params: WatermarkParams) -> PreviewJob {
         path: path.clone(),
         exif: ExifInfo::read(Path::new(PHOTO)).ok(),
         params,
-        text: Text::default(),
+        text_groups: vec![TextGroup::default()],
     }
 }
 
@@ -120,17 +120,19 @@ fn thumbnail_stays_within_its_box() {
 fn centred_text_lands_in_the_middle_of_the_canvas() {
     // 「居中」曾经落到 `Position` 匹配的兜底分支上，也就是画布左上角 (0, 0)，
     // 所以这里用「文字像素落在哪」来验证它真的居中。
-    let text = Text {
+    let text_group = TextGroup {
         position: Position::Center,
-        ..Text::default()
+        align: TextAlign::Center,
+        ..TextGroup::default()
     };
 
-    let mut without_text = text.clone();
-    without_text.template.clear();
-    without_text.text_params.clear();
+    let mut without_text = text_group.clone();
+    without_text.text.template.clear();
+    without_text.text.text_params.clear();
 
-    let with_text = render_preview(&job_with(WatermarkParams::default(), text)).unwrap();
-    let bare = render_preview(&job_with(WatermarkParams::default(), without_text)).unwrap();
+    let with_text =
+        render_preview(&job_with(WatermarkParams::default(), vec![text_group])).unwrap();
+    let bare = render_preview(&job_with(WatermarkParams::default(), vec![without_text])).unwrap();
 
     let canvas = with_text.size(0);
     let (left, top, right, bottom) =
@@ -153,13 +155,84 @@ fn centred_text_lands_in_the_middle_of_the_canvas() {
     );
 }
 
-fn job_with(params: WatermarkParams, text: Text) -> PreviewJob {
+#[test]
+fn text_groups_on_the_same_side_share_the_largest_thickness() {
+    let params = WatermarkParams {
+        border_ratio: (0.0, 0.0, 0.0, 0.0),
+        shadow_size: 0.0,
+        solid_background: true,
+        ..Default::default()
+    };
+    let left = simple_group(Position::Up, TextAlign::Left, TextDirection::Horizontal);
+    let mut right = left.clone();
+    right.align = TextAlign::Right;
+
+    let one = render_preview(&job_with(params.clone(), vec![left.clone()])).unwrap();
+    let two = render_preview(&job_with(params, vec![left, right])).unwrap();
+
+    assert_eq!(
+        one.size(0),
+        two.size(0),
+        "同侧两组文字应共享按最大组厚度计算的边框，而不是叠加边框"
+    );
+}
+
+#[test]
+fn vertical_text_group_expands_canvas_by_its_rotated_height() {
+    let params = WatermarkParams {
+        border_ratio: (0.0, 0.0, 0.0, 0.0),
+        shadow_size: 0.0,
+        solid_background: true,
+        ..Default::default()
+    };
+    let horizontal = render_preview(&job_with(
+        params.clone(),
+        vec![simple_group(
+            Position::Up,
+            TextAlign::Center,
+            TextDirection::Horizontal,
+        )],
+    ))
+    .unwrap();
+    let vertical = render_preview(&job_with(
+        params,
+        vec![simple_group(
+            Position::Up,
+            TextAlign::Center,
+            TextDirection::Vertical,
+        )],
+    ))
+    .unwrap();
+
+    assert!(
+        vertical.size(0).height.0 > horizontal.size(0).height.0,
+        "长文字组旋转后应按旋转后的高度扩展上方画布"
+    );
+}
+
+fn simple_group(position: Position, align: TextAlign, direction: TextDirection) -> TextGroup {
+    TextGroup {
+        text: Text {
+            template: vec!["LUMEN FRAME TEXT GROUP".to_owned()],
+            text_params: vec![TextParams {
+                size: 0.03,
+                ..Default::default()
+            }],
+        },
+        position,
+        direction,
+        align,
+        time_format: "%Y/%m/%d".to_owned(),
+    }
+}
+
+fn job_with(params: WatermarkParams, text_groups: Vec<TextGroup>) -> PreviewJob {
     let path = PathBuf::from(PHOTO);
     PreviewJob {
         path: path.clone(),
         exif: ExifInfo::read(Path::new(PHOTO)).ok(),
         params,
-        text,
+        text_groups,
     }
 }
 

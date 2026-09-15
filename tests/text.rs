@@ -7,7 +7,7 @@ use lumen_frame::{
     photo::{ExifInfo, Photo, Rational},
     process::{
         canvas::{self, Margin},
-        text::{Text, TextAlign, TextParams, render_exif_template},
+        text::{Text, TextAlign, TextDirection, TextGroup, TextParams, render_exif_template},
     },
 };
 
@@ -26,6 +26,35 @@ fn test_render_exif_template() {
     };
     let text = render_exif_template(template, &exif_info, "%Y/%m/%d %H:%M:%S");
     dbg!(text);
+}
+
+#[tokio::test]
+async fn vertical_text_group_rotates_the_complete_group() {
+    let photo = Photo::new("./test_images/DSC_4587.jpg").await.unwrap();
+    let exif = photo.exif.as_ref().unwrap();
+    let params = WatermarkParams::default();
+    let text = Text {
+        template: vec!["第一行".to_owned(), "第二行更长".to_owned()],
+        text_params: vec![TextParams::default(), TextParams::default()],
+    };
+    let horizontal = TextGroup {
+        text: text.clone(),
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1000, &params)
+    .unwrap()
+    .unwrap();
+    let vertical = TextGroup {
+        text,
+        direction: TextDirection::Vertical,
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1000, &params)
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(vertical.get_width(), horizontal.get_height());
+    assert_eq!(vertical.get_height(), horizontal.get_width());
 }
 
 #[test]
@@ -77,7 +106,6 @@ async fn test_render_text_with_logo_mixed() {
     let output_path = "./test_images/watermark";
     let photo = Photo::new(photo_path).await.unwrap();
     let text = Text {
-        position: lumen_frame::Position::Bottom,
         template: vec![
             "{Logo} {型号} - {镜头型号} {品牌}".to_owned(),
             "{拍摄日期} {等效焦距}mm {实际焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
@@ -98,7 +126,6 @@ async fn test_render_text_with_logo_mixed() {
                 ..Default::default()
             },
         ],
-        time_format: "%Y/%m/%d".to_owned(),
     };
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
@@ -119,12 +146,11 @@ async fn test_render_text_with_logo_mixed() {
     )
     .unwrap();
     let (img_w, img_h) = (img.get_width(), img.get_height());
-    let (text_position, text_height) = text.cal_height(img_h);
-    let margin = Margin::cal_margin(img_w, img_h, text_height, text_position, &params);
+    let margin = Margin::cal_margin(img_w, img_h, &params);
     let (canvas_w, _canvas_h) = canvas::cal_size(&margin, img_w, img_h, &params);
 
     let text_img = text
-        .render_text(&photo.exif.as_ref().unwrap(), img_h, &params)
+        .render_text(photo.exif.as_ref().unwrap(), img_h, &params, "%Y/%m/%d")
         .unwrap()
         .expect("render_text should produce an image");
 
@@ -139,7 +165,7 @@ async fn test_render_text_with_logo_mixed() {
 
     // 确保确实有可见像素（文字或 logo）
     let pixels = text_img.image_write_to_memory();
-    let has_visible = pixels.chunks_exact(4).any(|p| p[3] > 0);
+    let has_visible = pixels.as_chunks::<4>().0.iter().any(|p| p[3] > 0);
     assert!(
         has_visible,
         "rendered text image should not be fully transparent"
@@ -150,17 +176,15 @@ async fn test_render_text_with_logo_mixed() {
 
     // 一个没有 EXIF 相机品牌（无 logo）的模板也能正常渲染出图片
     let text = Text {
-        position: lumen_frame::Position::Bottom,
         template: vec!["{拍摄日期} {光圈}".to_owned()],
         text_params: vec![TextParams {
             size: 0.03,
             ..Default::default()
         }],
-        time_format: "%Y/%m/%d".to_owned(),
     };
     let params = WatermarkParams::default();
     let fallback_img = text
-        .render_text(&photo.exif.as_ref().unwrap(), img_h, &params)
+        .render_text(photo.exif.as_ref().unwrap(), img_h, &params, "%Y/%m/%d")
         .unwrap()
         .expect("render_text should produce an image");
     assert!(fallback_img.get_width() > 0);

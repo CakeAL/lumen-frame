@@ -12,13 +12,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{params::WatermarkParams, process::text::Text};
+use crate::{
+    Position,
+    params::WatermarkParams,
+    process::text::{Text, TextAlign, TextDirection, TextGroup},
+};
 
 /// 一个命名保存的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WatermarkPreset {
     pub params: WatermarkParams,
-    pub text: Text,
+    pub text_groups: Vec<TextGroup>,
 }
 
 /// 预设文件里记录的元信息。
@@ -30,10 +34,37 @@ struct PresetFile {
     version: u32,
     name: String,
     params: WatermarkParams,
-    text: Text,
+    #[serde(default)]
+    text_groups: Vec<TextGroup>,
+    /// v1 预设只有一个文字块；读入时迁移成单元素文字组。
+    #[serde(default, skip_serializing)]
+    text: Option<LegacyText>,
 }
 
-const PRESET_FORMAT_VERSION: u32 = 1;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyText {
+    template: Vec<String>,
+    text_params: Vec<crate::process::text::TextParams>,
+    position: Position,
+    time_format: String,
+}
+
+impl From<LegacyText> for TextGroup {
+    fn from(value: LegacyText) -> Self {
+        Self {
+            text: Text {
+                template: value.template,
+                text_params: value.text_params,
+            },
+            position: value.position,
+            direction: TextDirection::Horizontal,
+            align: TextAlign::Center,
+            time_format: value.time_format,
+        }
+    }
+}
+
+const PRESET_FORMAT_VERSION: u32 = 2;
 
 /// 预设的存放目录。
 pub fn preset_dir() -> Option<PathBuf> {
@@ -156,7 +187,8 @@ pub fn save_preset_in(dir: &Path, name: &str, preset: &WatermarkPreset) -> Resul
         version: PRESET_FORMAT_VERSION,
         name: name.trim().to_string(),
         params: preset.params.clone(),
-        text: preset.text.clone(),
+        text_groups: preset.text_groups.clone(),
+        text: None,
     };
     let document = toml::to_string_pretty(&file).context("序列化预设失败")?;
     let path = dir.join(file_name);
@@ -185,9 +217,15 @@ pub fn load_preset_in(dir: &Path, name: &str) -> Result<WatermarkPreset> {
             file.version
         );
     }
+    let mut text_groups = file.text_groups;
+    if text_groups.is_empty()
+        && let Some(text) = file.text
+    {
+        text_groups.push(text.into());
+    }
     Ok(WatermarkPreset {
         params: file.params,
-        text: file.text,
+        text_groups,
     })
 }
 
@@ -261,21 +299,21 @@ mod tests {
     fn preset_round_trips_through_toml() {
         let preset = WatermarkPreset {
             params: WatermarkParams::default(),
-            text: Text::default(),
+            text_groups: vec![TextGroup::default()],
         };
         let file = PresetFile {
             version: PRESET_FORMAT_VERSION,
             name: "round trip".to_string(),
             params: preset.params.clone(),
-            text: preset.text.clone(),
+            text_groups: preset.text_groups.clone(),
+            text: None,
         };
         let document = toml::to_string_pretty(&file).unwrap();
         let parsed: PresetFile = toml::from_str(&document).unwrap();
 
         assert_eq!(parsed.name, "round trip");
         assert_eq!(parsed.params.border_ratio, preset.params.border_ratio);
-        assert_eq!(parsed.text.template, preset.text.template);
-        assert_eq!(parsed.text.text_params.len(), preset.text.text_params.len());
+        assert_eq!(parsed.text_groups, preset.text_groups);
         // 输出文件夹不写进预设。反序列化会拿到 `WatermarkParams::default()` 的那份，
         // 所以载入预设的人必须显式保留当前值 —— 见 `AppView::apply_preset`。
         assert!(!document.contains("output_folder"));

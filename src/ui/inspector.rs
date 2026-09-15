@@ -23,7 +23,7 @@ use gpui_kit::{Context, Entity, FontWeight, IntoElement, SharedString, Subscript
 
 use crate::Position;
 use crate::params::WatermarkParams;
-use crate::process::text::Text;
+use crate::process::text::TextGroup;
 
 use super::field::{
     Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
@@ -401,10 +401,13 @@ pub(super) fn format_number(value: f64) -> String {
 }
 
 /// 从当前配置生成一个预设。
-pub(super) fn preset_of(params: &WatermarkParams, text: &Text) -> crate::config::WatermarkPreset {
+pub(super) fn preset_of(
+    params: &WatermarkParams,
+    text_groups: &[TextGroup],
+) -> crate::config::WatermarkPreset {
     crate::config::WatermarkPreset {
         params: params.clone(),
-        text: text.clone(),
+        text_groups: text_groups.to_vec(),
     }
 }
 
