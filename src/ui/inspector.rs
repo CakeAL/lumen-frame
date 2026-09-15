@@ -13,7 +13,6 @@ use gpui_kit::component::{
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    select::SelectEvent,
     select::{Select, SelectState},
     switch::Switch,
     v_flex,
@@ -72,7 +71,6 @@ pub(super) const POSITIONS: &[(&str, Position)] = &[
 /// 下拉框状态的具体类型别名，免得这串泛型在签名里反复出现。
 pub(super) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
 pub(super) type PositionSelect = SelectState<Vec<Choice<Position>>>;
-pub(super) type TimeFormatSelect = SelectState<Vec<Choice<String>>>;
 
 /// 面板里所有需要跨帧保留的控件状态。
 pub(super) struct ParameterControls {
@@ -92,11 +90,6 @@ pub(super) struct ParameterControls {
     pub aspect_width: Entity<InputState>,
     pub aspect_height: Entity<InputState>,
     pub position: Entity<PositionSelect>,
-    pub text_position: Entity<PositionSelect>,
-
-    pub time_format: Entity<InputState>,
-    /// 常用时间格式：选一个例子就把它填进时间格式输入框。
-    pub time_format_example: Entity<TimeFormatSelect>,
     pub output_folder: Entity<InputState>,
     pub preset_name: Entity<InputState>,
 }
@@ -105,8 +98,6 @@ impl ParameterControls {
     /// 创建全部控件，并把「控件变化 → 写回参数 → 请求预览」这条链路一次接好。
     pub(super) fn new(
         params: &WatermarkParams,
-        time_format: &str,
-        text_position: crate::Position,
         aspect_choice: &AspectRatioChoice,
         window: &mut Window,
         cx: &mut Context<AppView>,
@@ -268,12 +259,6 @@ impl ParameterControls {
             window,
             cx,
         );
-        let text_position = select_state(
-            choices(POSITIONS),
-            index_of(POSITIONS, &text_position),
-            window,
-            cx,
-        );
 
         subscriptions.push(on_select(&aspect_ratio, window, cx, |this, choice, cx| {
             this.apply_aspect_choice(choice, cx);
@@ -281,14 +266,6 @@ impl ParameterControls {
         subscriptions.push(on_select(&position, window, cx, |this, position, _| {
             this.params.position = position;
         }));
-        subscriptions.push(on_select(
-            &text_position,
-            window,
-            cx,
-            |this, position, _| {
-                this.text_position = position;
-            },
-        ));
 
         // 自定义比例：两个框任意一个变了，就拿两个框当前的值重算比例。
         for input in [&aspect_width, &aspect_height] {
@@ -298,21 +275,6 @@ impl ParameterControls {
                 }
             }));
         }
-
-        let time_format = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(time_format.to_owned())
-                .placeholder("%Y/%m/%d")
-        });
-        subscriptions.push(
-            cx.subscribe_in(&time_format, window, |this, state, event, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.time_format = state.read(cx).value().to_string();
-                    this.refresh_preview(cx);
-                    cx.notify();
-                }
-            }),
-        );
 
         let output_folder = cx.new(|cx| {
             InputState::new(window, cx)
@@ -339,23 +301,6 @@ impl ParameterControls {
             }),
         );
 
-        let time_format_example =
-            select_state(super::text_section::time_format_choices(), None, window, cx);
-        subscriptions.push(cx.subscribe_in(&time_format_example, window, {
-            let input = time_format.clone();
-            move |this, _, event, window, cx| {
-                let SelectEvent::Confirm(Some(template)) = event else {
-                    return;
-                };
-                this.time_format = template.clone();
-                input.update(cx, |state, cx| {
-                    state.set_value(template.clone(), window, cx)
-                });
-                this.refresh_preview(cx);
-                cx.notify();
-            }
-        }));
-
         let preset_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("给这套配置起个名字"));
 
@@ -375,9 +320,6 @@ impl ParameterControls {
                 aspect_width,
                 aspect_height,
                 position,
-                text_position,
-                time_format,
-                time_format_example,
                 output_folder,
                 preset_name,
             },

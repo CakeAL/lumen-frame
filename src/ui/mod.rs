@@ -37,11 +37,10 @@ use gpui_kit::{
     Subscription, Window, WindowAppearance,
 };
 
-use crate::Position;
 use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::{ExifInfo, Photo};
-use crate::process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams};
+use crate::process::text::TextGroup;
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use field::index_of;
@@ -49,7 +48,7 @@ use inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use preview::WatermarkPreview;
 use queue::is_supported_image;
 use settings::SettingsControls;
-use text_section::TextLine;
+use text_section::TextGroupEditor;
 
 /// 队列卡片的缩略图状态。
 ///
@@ -82,19 +81,12 @@ pub struct AppView {
     thumbnails: HashMap<PhotoId, Thumbnail>,
     /// 预览与导出共用的唯一一份参数。
     params: WatermarkParams,
-    /// 文字水印的整体设置；每行自己的参数在 `text_lines` 里。
-    text_position: Position,
-    text_group_align: TextAlign,
-    text_direction: TextDirection,
-    time_format: String,
-    /// 当前界面只编辑第一组；其余组仍由预览、导出和预设完整保留。
-    other_text_groups: Vec<TextGroup>,
-    text_lines: Vec<TextLine>,
+    /// 每个文字组各自持有组级控件与文字行；稳定 id 不随增删其它组改变。
+    text_groups: Vec<TextGroupEditor>,
+    next_text_group_id: u64,
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
     font_names: Vec<SharedString>,
-    /// 展开的文字行，按行 id 记录：删掉一行之后，展开状态不会串到别的行上。
-    expanded_text_lines: Vec<u64>,
     /// 边框宽度那组滑块是否展开。
     border_width_open: bool,
     /// 宽高比下拉当前的选择。
@@ -121,26 +113,16 @@ pub struct AppView {
 
     /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
     _subscriptions: Vec<Subscription>,
-    /// 文字行的订阅单独放：载入预设会整批换掉这些行，旧订阅必须跟着一起走。
-    text_line_subscriptions: Vec<Subscription>,
 }
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let params = WatermarkParams::default();
         let text_group = TextGroup::default();
-        let text = &text_group.text;
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let aspect_choice = aspect_choice_for(&params);
-        let (controls, subscriptions) = ParameterControls::new(
-            &params,
-            &text_group.time_format,
-            text_group.position,
-            &aspect_choice,
-            window,
-            cx,
-        );
+        let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
         let font_names = window
             .text_system()
@@ -149,7 +131,15 @@ impl AppView {
             .map(SharedString::from)
             .collect::<Vec<_>>();
 
-        let (text_lines, text_line_subscriptions) = build_text_lines(text, &font_names, window, cx);
+        let mut next_text_line_id = 0;
+        let text_groups = vec![TextGroupEditor::new(
+            0,
+            &text_group,
+            &mut next_text_line_id,
+            &font_names,
+            window,
+            cx,
+        )];
 
         let preset_names = config::list_presets()
             .unwrap_or_default()
@@ -177,15 +167,10 @@ impl AppView {
             workspace: PhotoWorkspace::default(),
             thumbnails: HashMap::new(),
             params,
-            text_position: text_group.position,
-            text_group_align: text_group.align,
-            text_direction: text_group.direction,
-            time_format: text_group.time_format.clone(),
-            other_text_groups: Vec::new(),
-            text_lines,
-            next_text_line_id: text.template.len() as u64,
+            text_groups,
+            next_text_group_id: 1,
+            next_text_line_id,
             font_names,
-            expanded_text_lines: Vec::new(),
             border_width_open: false,
             aspect_choice,
             controls,
@@ -203,7 +188,6 @@ impl AppView {
             settings: settings_controls,
             settings_feedback: None,
             _subscriptions: subscriptions,
-            text_line_subscriptions,
         };
         // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
         settings::apply_interface_scale(view.interface_scale, window, cx);
@@ -371,6 +355,11 @@ impl AppView {
         self.workspace.len()
     }
 
+    /// 当前配置里的 EXIF 文字组数量。
+    pub fn text_group_count(&self) -> usize {
+        self.text_groups.len()
+    }
+
     /// 当前选中的照片路径。
     pub fn selected_path(&self) -> Option<&std::path::Path> {
         self.selected_photo().map(QueuedPhoto::path)
@@ -414,43 +403,12 @@ impl AppView {
 
     /// 由控件状态拼出渲染用的文字组。
     ///
-    /// 控件实体是文字水印的真值来源，[`Text`] 只是它们在渲染管线里的投影，因此不需要在
-    /// 每次回调里手工同步两份数据。
+    /// 控件实体是文字组的真值来源，领域结构只在预览、导出和保存预设时投影生成。
     pub(super) fn build_text_groups(&self, cx: &App) -> Vec<TextGroup> {
-        let text = Text {
-            template: self
-                .text_lines
-                .iter()
-                .map(|line| line.template.read(cx).value().to_string())
-                .collect(),
-            text_params: self
-                .text_lines
-                .iter()
-                .map(|line| TextParams {
-                    font: line.font_name(cx),
-                    size: line.size.value(cx),
-                    line_spacing: line.line_spacing.value(cx),
-                    color: if line.auto_color {
-                        None
-                    } else {
-                        Some(line.color.value(cx))
-                    },
-                    italic: line.italic,
-                    bold: line.bold,
-                    align: line.alignment(cx),
-                })
-                .collect(),
-        };
-        let mut groups = Vec::with_capacity(1 + self.other_text_groups.len());
-        groups.push(TextGroup {
-            text,
-            position: self.text_position,
-            direction: self.text_direction,
-            align: self.text_group_align,
-            time_format: self.time_format.clone(),
-        });
-        groups.extend(self.other_text_groups.iter().cloned());
-        groups
+        self.text_groups
+            .iter()
+            .map(|group| group.to_group(cx))
+            .collect()
     }
 
     // MARK: 预览
@@ -650,82 +608,6 @@ impl AppView {
         Some((width, height))
     }
 
-    // MARK: 文字水印行
-
-    pub(super) fn add_text_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let id = self.next_text_line_id;
-        self.next_text_line_id += 1;
-
-        // 新行沿用上一行的样式：连续添加几行时不用逐行重设字号和对齐。
-        let inherited = self
-            .text_lines
-            .last()
-            .map(|last| TextParams {
-                font: last.font_name(cx),
-                size: last.size.value(cx),
-                line_spacing: last.line_spacing.value(cx),
-                color: if last.auto_color {
-                    None
-                } else {
-                    Some(last.color.value(cx))
-                },
-                italic: last.italic,
-                bold: last.bold,
-                align: last.alignment(cx),
-            })
-            .unwrap_or_default();
-
-        let (line, subscriptions) = TextLine::new(id, "", &inherited, &self.font_names, window, cx);
-        self.text_lines.push(line);
-        self.text_line_subscriptions.extend(subscriptions);
-        self.refresh_preview(cx);
-        cx.notify();
-    }
-
-    pub(super) fn remove_text_line(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(ix) = self.text_lines.iter().position(|line| line.id == id) else {
-            return;
-        };
-        // 行自己的订阅由它自己的控件持有，随实体一起消失；这里额外检查一下集合是否
-        // 还和行对得上，避免留下指向已删行的回调。
-        self.text_lines.remove(ix);
-        self.expanded_text_lines.retain(|open| *open != id);
-        self.refresh_preview(cx);
-        cx.notify();
-    }
-
-    pub(super) fn set_text_line_auto_color(
-        &mut self,
-        id: u64,
-        auto_color: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(line) = self.text_lines.iter_mut().find(|line| line.id == id) {
-            line.auto_color = auto_color;
-        }
-        self.refresh_preview(cx);
-        cx.notify();
-    }
-
-    pub(super) fn set_text_line_style(
-        &mut self,
-        id: u64,
-        bold: Option<bool>,
-        italic: Option<bool>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(line) = self.text_lines.iter_mut().find(|line| line.id == id) {
-            if let Some(bold) = bold {
-                line.bold = bold;
-            }
-            if let Some(italic) = italic {
-                line.italic = italic;
-            }
-        }
-        self.refresh_preview(cx);
-        cx.notify();
-    }
-
     // MARK: 预设
 
     /// 把当前配置按输入框里的名字保存成预设。
@@ -784,24 +666,25 @@ impl AppView {
         self.params = preset.params;
         self.params.output_folder = output_folder;
 
-        let mut text_groups = preset.text_groups;
-        let text_group = if text_groups.is_empty() {
-            TextGroup::default()
+        let text_groups = if preset.text_groups.is_empty() {
+            vec![TextGroup::default()]
         } else {
-            text_groups.remove(0)
+            preset.text_groups
         };
-        self.text_position = text_group.position;
-        self.text_group_align = text_group.align;
-        self.text_direction = text_group.direction;
-        self.time_format = text_group.time_format.clone();
-        self.other_text_groups = text_groups;
-
-        // 文字行整批重建：行数、模板和每行控件都要对上这份配置。
-        let (lines, subscriptions) =
-            build_text_lines(&text_group.text, &self.font_names, window, cx);
-        self.text_lines = lines;
-        self.text_line_subscriptions = subscriptions;
-        self.expanded_text_lines.clear();
+        let mut editors = Vec::with_capacity(text_groups.len());
+        for text_group in text_groups {
+            let id = self.next_text_group_id;
+            self.next_text_group_id += 1;
+            editors.push(TextGroupEditor::new(
+                id,
+                &text_group,
+                &mut self.next_text_line_id,
+                &self.font_names,
+                window,
+                cx,
+            ));
+        }
+        self.text_groups = editors;
 
         self.sync_controls(window, cx);
         self.refresh_preview(cx);
@@ -842,16 +725,6 @@ impl AppView {
         controls.position.update(cx, |state, cx| {
             state.set_selected_value(&params.position, window, cx)
         });
-        let text_position = self.text_position;
-        controls.text_position.update(cx, |state, cx| {
-            state.set_selected_value(&text_position, window, cx)
-        });
-
-        let time_format = self.time_format.clone();
-        controls
-            .time_format
-            .update(cx, |state, cx| state.set_value(time_format, window, cx));
-
         // 自定义比例的两个框：不在自定义模式时也同步，切过去就能直接用。
         let (width, height) = params.aspect_ratio.unwrap_or((1.0, 1.0));
         controls.aspect_width.update(cx, |state, cx| {
@@ -1063,30 +936,6 @@ impl AppView {
                 this.add_photos(paths.paths().to_vec(), cx)
             }))
     }
-}
-
-/// 按一份 [`Text`] 建出全部文字行。
-fn build_text_lines(
-    text: &Text,
-    fonts: &[SharedString],
-    window: &mut Window,
-    cx: &mut Context<AppView>,
-) -> (Vec<TextLine>, Vec<Subscription>) {
-    let mut lines = Vec::new();
-    let mut subscriptions = Vec::new();
-
-    for (ix, (template, params)) in text
-        .template
-        .iter()
-        .zip(text.text_params.iter())
-        .enumerate()
-    {
-        let (line, line_subscriptions) =
-            TextLine::new(ix as u64, template, params, fonts, window, cx);
-        lines.push(line);
-        subscriptions.extend(line_subscriptions);
-    }
-    (lines, subscriptions)
 }
 
 /// 由参数推出宽高比下拉该选哪一项。

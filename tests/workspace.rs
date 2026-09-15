@@ -8,10 +8,13 @@
 
 use std::path::PathBuf;
 use std::time::Duration;
+use std::{cell::RefCell, rc::Rc};
 
+use gpui_kit::component::Root;
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
-    Entity, ExternalPaths, FileDropEvent, InputEvent as _, TestAppContext, VisualTestContext,
-    point, px,
+    AppContext as _, Entity, ExternalPaths, FileDropEvent, InputEvent as _, ScrollDelta,
+    TestAppContext, VisualTestContext, point, px,
 };
 
 use lumen_frame::ui::{AppPage, AppView};
@@ -24,7 +27,17 @@ fn workspace(cx: &mut TestAppContext) -> (Entity<AppView>, &mut VisualTestContex
         gpui_kit::init(cx);
         gpui_kit::component::set_locale("zh-CN");
     });
-    cx.add_window_view(AppView::new)
+    let view = Rc::new(RefCell::new(None));
+    let (_, cx) = cx.add_window_view({
+        let view_slot = view.clone();
+        move |window, cx| {
+            let app = cx.new(|cx| AppView::new(window, cx));
+            view_slot.borrow_mut().replace(app.clone());
+            Root::new(app, window, cx)
+        }
+    });
+    let app = view.borrow().clone().expect("测试窗口没有创建 AppView");
+    (app, cx)
 }
 
 /// 预览走后台线程，而且要越过防抖窗口，所以得推着调度器的时钟往前走。
@@ -196,4 +209,75 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
 
     // 切回来之后主界面仍然可用。
     assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
+}
+
+/// 文字参数入口保持在检查器里，详细设置在窗口中央的模态窗完成。
+#[gpui_kit::test]
+fn text_group_editor_opens_as_a_centered_modal(cx: &mut TestAppContext) {
+    let (_view, cx) = workspace(cx);
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.scroll(
+            "solid-background",
+            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click(("text-group-edit", 0_u64), cx);
+        window.render_frame(cx);
+    });
+    // Dialog 的入场动画使用真实时钟，等它结束后再检查最终布局。
+    std::thread::sleep(Duration::from_millis(260));
+
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("dialog").is_some());
+        assert!(
+            window
+                .within("dialog")
+                .try_find(("text-add-line", 0_u64))
+                .is_some()
+        );
+
+        let modal = window.within("dialog").find(0_usize).bounds();
+        let viewport = window.viewport_size();
+        let center_x = modal.left() + modal.size.width / 2.;
+        let center_y = modal.top() + modal.size.height / 2.;
+        assert!((center_x - viewport.width / 2.).abs() <= px(1.));
+        // Linux 的无头测试窗口会给客户端阴影留出 20px；macOS 实际窗口没有这层偏移。
+        assert!(
+            (center_y - viewport.height / 2.).abs() <= px(20.),
+            "模态窗中心 {center_y:?}，视口中心 {:?}",
+            viewport.height / 2.
+        );
+        assert!((modal.size.width - viewport.width * 0.7).abs() <= px(1.));
+        assert!((modal.size.height - viewport.height * 0.8).abs() <= px(1.));
+    });
+}
+
+/// 新建文字组会得到独立状态，并直接进入该组的编辑模态窗。
+#[gpui_kit::test]
+fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    cx.run_until_parked();
+
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 1);
+    cx.update(|window, cx| {
+        window.scroll(
+            "solid-background",
+            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click("text-group-add", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .within("dialog")
+                .try_find(("text-add-line", 1_u64))
+                .is_some()
+        );
+    });
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 2);
 }
