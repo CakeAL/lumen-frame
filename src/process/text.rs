@@ -38,6 +38,9 @@ pub struct TextGroup {
     pub direction: TextDirection,
     /// 文字组在所在边上的位置，不影响组内每行的对齐方式。
     pub align: TextAlign,
+    /// 文字组位于图片左/右侧时，向图片中心收拢的留白比例。
+    #[serde(default)]
+    pub padding: f64,
     /// 时间格式
     pub time_format: String,
 }
@@ -166,11 +169,32 @@ impl TextGroup {
             return Ok(None);
         };
 
-        if self.direction == TextDirection::Vertical {
-            Ok(Some(ops::rot(&image, ops::Angle::D90)?))
+        let image = if self.direction == TextDirection::Vertical {
+            ops::rot(&image, ops::Angle::D90)?
         } else {
-            Ok(Some(image))
+            image
+        };
+        let padding = (img_h as f64 * self.padding.max(0.0)).round() as i32;
+        if padding == 0 || !matches!(self.position, Position::Left | Position::Right) {
+            return Ok(Some(image));
         }
+
+        let x = if self.position == Position::Left {
+            padding
+        } else {
+            0
+        };
+        Ok(Some(ops::embed_with_opts(
+            &image,
+            x,
+            0,
+            image.get_width() + padding,
+            image.get_height(),
+            &ops::EmbedOptions {
+                extend: ops::Extend::Background,
+                background: vec![0.0, 0.0, 0.0, 0.0],
+            },
+        )?))
     }
 }
 
@@ -250,6 +274,7 @@ impl Default for TextGroup {
             position: Position::Bottom,
             direction: TextDirection::Horizontal,
             align: TextAlign::Center,
+            padding: 0.0,
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
         }
     }

@@ -1,31 +1,32 @@
-//! EXIF 文字组列表与文字组编辑模态窗。
+//! EXIF 文字组列表与独立编辑窗口。
 //!
-//! [`AppView`] 持有全部文字组及其控件状态；右侧参数面板只展示文字组摘要。点击“编辑…”
-//! 后使用 GPUI Kit 的原生 `Dialog` 在窗口中央编辑组级参数和组内文字行，因此焦点陷阱、
-//! Esc/遮罩关闭和焦点恢复都由框架负责。
+//! [`AppView`] 持有全部文字组及其控件状态；右侧参数面板只展示摘要。编辑窗口复用这些
+//! 实体，并把组级参数与文字行分列展示，因此调整参数时主窗口中的照片预览仍然可见。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, IndexPath, Sizable as _, WindowExt as _,
+    ActiveTheme as _, IconName, IndexPath, Root, Sizable as _,
     accordion::{Accordion, AccordionItem},
     button::{Button, ButtonVariants as _},
-    dialog::{DialogAction, DialogFooter},
+    combobox::{Combobox, ComboboxEvent, ComboboxState},
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    select::{Select, SelectEvent, SelectState},
+    searchable_list::SearchableVec,
+    select::{Select, SelectState},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, IntoElement, SharedString, Subscription, Window, div,
+    AnyElement, App, Bounds, Context, Entity, IntoElement, SharedString, Subscription, Window,
+    WindowBounds, WindowOptions, div, px, size,
 };
 
 use crate::Position;
 use crate::photo::ExifInfo;
 use crate::process::text::{
-    TIME_FORMAT_EXAMPLES, Text, TextAlign, TextDirection, TextGroup, TextParams,
-    render_exif_template, time_format_is_valid,
+    Text, TextAlign, TextDirection, TextGroup, TextParams, render_exif_template,
+    time_format_is_valid,
 };
 
 use super::AppView;
@@ -34,8 +35,6 @@ use super::field::{
     warning,
 };
 use super::inspector::POSITIONS;
-
-const TEMPLATE_FIELDS: &str = "{拍摄日期} {品牌} {型号} {镜头型号} {快门} {光圈} {ISO} {曝光补偿} {实际焦距} {等效焦距} {Logo} {GPS} {省} {市} {区}";
 
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("左对齐", TextAlign::Left),
@@ -54,19 +53,18 @@ const TEXT_DIRECTIONS: &[(&str, TextDirection)] = &[
     ("竖排（顺时针旋转 90°）", TextDirection::Vertical),
 ];
 
-type FontSelect = SelectState<Vec<SharedString>>;
+type FontSelect = ComboboxState<SearchableVec<SharedString>>;
 type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
 type PositionSelect = SelectState<Vec<Choice<Position>>>;
 type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
-type TimeFormatSelect = SelectState<Vec<Choice<String>>>;
 
-struct TextGroupModal {
+pub(super) struct TextGroupWindow {
     group_id: u64,
     app: Entity<AppView>,
     _subscription: Subscription,
 }
 
-impl TextGroupModal {
+impl TextGroupWindow {
     fn new(group_id: u64, app: Entity<AppView>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&app, |_, _, cx| cx.notify());
         Self {
@@ -77,11 +75,18 @@ impl TextGroupModal {
     }
 }
 
-impl Render for TextGroupModal {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.app
-            .read(cx)
-            .render_text_group_dialog(self.group_id, self.app.clone(), cx)
+impl Render for TextGroupWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content =
+            self.app
+                .read(cx)
+                .render_text_group_editor(self.group_id, self.app.clone(), cx);
+        div()
+            .size_full()
+            .child(content)
+            .children(Root::render_dialog_layer(window, cx))
+            .children(Root::render_sheet_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
     }
 }
 
@@ -127,8 +132,15 @@ impl TextLine {
             .iter()
             .position(|font| font == &configured)
             .unwrap_or(0);
-        let font =
-            cx.new(|cx| SelectState::new(font_items, Some(IndexPath::new(font_index)), window, cx));
+        let font = cx.new(|cx| {
+            ComboboxState::new(
+                SearchableVec::new(font_items),
+                vec![IndexPath::new(font_index)],
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
         let align = select_state(
             choices(TEXT_ALIGNS),
             index_of(TEXT_ALIGNS, &params.align),
@@ -149,7 +161,7 @@ impl TextLine {
         subscriptions.extend(size.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(line_spacing.subscribe(window, cx, |_, _| {}));
         subscriptions.push(cx.subscribe_in(&font, window, |this, _, event, _, cx| {
-            if let SelectEvent::Confirm(Some(_)) = event {
+            if matches!(event, ComboboxEvent::Change(_) | ComboboxEvent::Confirm(_)) {
                 this.refresh_preview(cx);
                 cx.notify();
             }
@@ -177,7 +189,8 @@ impl TextLine {
             font: self
                 .font
                 .read(cx)
-                .selected_value()
+                .selected_values()
+                .first()
                 .cloned()
                 .unwrap_or_default()
                 .to_string(),
@@ -205,8 +218,8 @@ pub(super) struct TextGroupEditor {
     pub position: Entity<PositionSelect>,
     pub align: Entity<AlignSelect>,
     pub direction: Entity<DirectionSelect>,
+    pub padding: NumberField,
     pub time_format: Entity<InputState>,
-    pub time_format_example: Entity<TimeFormatSelect>,
     pub lines: Vec<TextLine>,
     pub expanded_line_ids: Vec<u64>,
     _subscriptions: Vec<Subscription>,
@@ -239,18 +252,18 @@ impl TextGroupEditor {
             window,
             cx,
         );
+        let padding = NumberField::new(group.padding, 0.0, 30.0, 0.5, 1, 100.0, "%", window, cx);
         let time_format = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(group.time_format.clone())
                 .placeholder("%Y/%m/%d")
         });
-        let time_format_example = select_state(time_format_choices(), None, window, cx);
-
         let mut subscriptions = vec![
             on_select(&position, window, cx, |_, _, _| {}),
             on_select(&align, window, cx, |_, _, _| {}),
             on_select(&direction, window, cx, |_, _, _| {}),
         ];
+        subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
         subscriptions.push(
             cx.subscribe_in(&time_format, window, |this, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -259,20 +272,6 @@ impl TextGroupEditor {
                 }
             }),
         );
-        subscriptions.push(cx.subscribe_in(&time_format_example, window, {
-            let input = time_format.clone();
-            move |this, _, event, window, cx| {
-                let SelectEvent::Confirm(Some(template)) = event else {
-                    return;
-                };
-                input.update(cx, |state, cx| {
-                    state.set_value(template.clone(), window, cx)
-                });
-                this.refresh_preview(cx);
-                cx.notify();
-            }
-        }));
-
         let lines = group
             .text
             .template
@@ -290,8 +289,8 @@ impl TextGroupEditor {
             position,
             align,
             direction,
+            padding,
             time_format,
-            time_format_example,
             lines,
             expanded_line_ids: Vec::new(),
             _subscriptions: subscriptions,
@@ -326,16 +325,10 @@ impl TextGroupEditor {
                 .selected_value()
                 .copied()
                 .unwrap_or_default(),
+            padding: self.padding.value(cx),
             time_format: self.time_format.read(cx).value().to_string(),
         }
     }
-}
-
-fn time_format_choices() -> Vec<Choice<String>> {
-    TIME_FORMAT_EXAMPLES
-        .iter()
-        .map(|(example, template)| Choice::new(*example, (*template).to_string()))
-        .collect()
 }
 
 fn position_label(position: Position) -> &'static str {
@@ -360,16 +353,6 @@ fn direction_label(direction: TextDirection) -> &'static str {
     match direction {
         TextDirection::Horizontal => "横排",
         TextDirection::Vertical => "竖排",
-    }
-}
-
-fn position_hint(position: Position) -> &'static str {
-    match position {
-        Position::Center => "文字组覆盖在照片中间。",
-        Position::Up => "文字组排在照片上方的边框里。",
-        Position::Bottom => "文字组排在照片下方的边框里。",
-        Position::Left => "文字组排在照片左侧的边框里。",
-        Position::Right => "文字组排在照片右侧的边框里。",
     }
 }
 
@@ -409,13 +392,16 @@ impl AppView {
     ) -> AnyElement {
         let id = group.id;
         let value = group.to_group(cx);
-        let summary = format!(
+        let mut summary = format!(
             "{} · {} · {} · {} 行",
             position_label(value.position),
             align_label(value.align),
             direction_label(value.direction),
             value.text.template.len()
         );
+        if matches!(value.position, Position::Left | Position::Right) && value.padding > 0.0 {
+            summary.push_str(&format!(" · 向中心 {:.1}%", value.padding * 100.0));
+        }
         let edit_view = view.clone();
 
         v_flex()
@@ -466,7 +452,7 @@ impl AppView {
     pub(super) fn open_text_group_editor(
         &mut self,
         group_id: u64,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.text_groups.iter().any(|group| group.id == group_id) {
@@ -477,30 +463,63 @@ impl AppView {
             .iter()
             .position(|group| group.id == group_id)
             .expect("已确认文字组存在");
-        let view = cx.entity();
-        let modal = cx.new(|cx| TextGroupModal::new(group_id, view, cx));
-        window.open_dialog(cx, move |dialog, window, _| {
-            let viewport = window.viewport_size();
+        if let Some(handle) = self.text_editor_windows.get(&group_id).copied() {
+            if handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return;
+            }
+            self.text_editor_windows.remove(&group_id);
+        }
+        if !self.opening_text_editor_ids.insert(group_id) {
+            return;
+        }
 
-            dialog
-                .title(format!("编辑文字组 {}", ix + 1))
-                .w(viewport.width * 0.7)
-                .h(viewport.height * 0.8)
-                .child(modal.clone())
-                .footer(
-                    DialogFooter::new().child(
-                        DialogAction::new().child(
-                            Button::new("text-group-done")
-                                .label("完成")
-                                .primary()
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        ),
-                    ),
-                )
+        let view = cx.entity();
+        let title: SharedString = format!("文字组 {}", ix + 1).into();
+        cx.defer(move |cx| {
+            let should_open = {
+                let app = view.read(cx);
+                app.opening_text_editor_ids.contains(&group_id)
+                    && app.text_groups.iter().any(|group| group.id == group_id)
+            };
+            if !should_open {
+                return;
+            }
+            let bounds = Bounds::centered(None, size(px(960.), px(720.)), cx);
+            let editor_view = view.clone();
+            let result = cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(760.), px(560.))),
+                    titlebar: Some(gpui_kit::TitlebarOptions {
+                        title: Some(title),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                move |window, cx| {
+                    let editor = cx.new(|cx| TextGroupWindow::new(group_id, editor_view, cx));
+                    cx.new(|cx| Root::new(editor, window, cx))
+                },
+            );
+            view.update(cx, |this, cx| {
+                this.opening_text_editor_ids.remove(&group_id);
+                match result {
+                    Ok(handle) => {
+                        this.text_editor_windows.insert(group_id, handle);
+                    }
+                    Err(error) => {
+                        eprintln!("无法打开文字组编辑窗口: {error:#}");
+                    }
+                }
+                cx.notify();
+            });
         });
     }
 
-    fn render_text_group_dialog(
+    fn render_text_group_editor(
         &self,
         group_id: u64,
         view: Entity<AppView>,
@@ -533,38 +552,75 @@ impl AppView {
         }
         let toggle_view = view.clone();
         let add_view = view.clone();
+        let show_padding = matches!(value.position, Position::Left | Position::Right);
 
-        v_flex()
+        h_flex()
             .id(("text-group-editor", group_id))
-            .w_full()
-            .gap_6()
+            .items_stretch()
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
-                GroupBox::new()
-                    .title("文字组设置")
+                v_flex()
+                    .id(("text-group-settings", group_id))
+                    .w_80()
+                    .h_full()
+                    .flex_shrink_0()
+                    .gap_4()
+                    .p_4()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
+                    .overflow_y_scroll()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .child("文字组设置"),
+                    )
                     .child(field("位置", Select::new(&group.position).w_full(), cx))
-                    .child(hint(position_hint(value.position), cx))
                     .child(field("组对齐", Select::new(&group.align).w_full(), cx))
-                    .child(hint(
-                        "组对齐只决定文字组沿图片边的位置，不影响每行文字的对齐。",
-                        cx,
-                    ))
+                    .when(show_padding, |this| {
+                        this.child(group.padding.render("向中心留白", false, cx))
+                    })
                     .child(field("方向", Select::new(&group.direction).w_full(), cx))
                     .child(field("时间格式", Input::new(&group.time_format), cx))
-                    .child(field(
-                        "常用格式",
-                        Select::new(&group.time_format_example).w_full(),
-                        cx,
-                    ))
                     .child(if time_format_is_valid(&value.time_format) {
-                        hint("占位符遵循 strftime，例如 %Y/%m/%d 和 %H:%M:%S。", cx)
+                        div().into_any_element()
                     } else {
                         warning("时间格式无效，将使用默认的 %Y/%m/%d。", cx)
                     }),
             )
             .child(
-                GroupBox::new()
-                    .title("文字行")
-                    .child(hint(format!("模板可用字段：{TEMPLATE_FIELDS}"), cx))
+                v_flex()
+                    .id(("text-group-lines", group_id))
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .gap_4()
+                    .p_4()
+                    .overflow_y_scroll()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                    .child("文字行"),
+                            )
+                            .child(
+                                Button::new(("text-add-line", group_id))
+                                    .icon(IconName::Plus)
+                                    .label("添加一行")
+                                    .on_click(move |_, window, cx| {
+                                        add_view.update(cx, |this, cx| {
+                                            this.add_text_line(group_id, window, cx)
+                                        });
+                                    }),
+                            ),
+                    )
                     .when(group.lines.is_empty(), |this| {
                         this.child(hint("这个文字组还没有文字行。", cx))
                     })
@@ -574,18 +630,7 @@ impl AppView {
                                 this.set_expanded_text_lines(group_id, open, cx)
                             });
                         }))
-                    })
-                    .child(
-                        Button::new(("text-add-line", group_id))
-                            .icon(IconName::Plus)
-                            .label("添加一行")
-                            .w_full()
-                            .on_click(move |_, window, cx| {
-                                add_view.update(cx, |this, cx| {
-                                    this.add_text_line(group_id, window, cx)
-                                });
-                            }),
-                    ),
+                    }),
             )
             .into_any_element()
     }
@@ -673,7 +718,13 @@ impl AppView {
             .child(resolved)
             .child(line.size.render("字号", false, cx))
             .child(line.line_spacing.render("行距", false, cx))
-            .child(field("字体", Select::new(&line.font).w_full(), cx))
+            .child(field(
+                "字体",
+                Combobox::new(&line.font)
+                    .search_placeholder("搜索字体…")
+                    .w_full(),
+                cx,
+            ))
             .child(field("行对齐", Select::new(&line.align).w_full(), cx))
             .child(line.color.render("文字颜色", line.auto_color, cx))
             .child(
@@ -690,6 +741,7 @@ impl AppView {
                 h_flex()
                     .w_full()
                     .gap_4()
+                    .pt_2()
                     .child(
                         Switch::new(("text-bold", id))
                             .checked(line.bold)
@@ -735,6 +787,12 @@ impl AppView {
             return;
         };
         self.text_groups.remove(ix);
+        self.opening_text_editor_ids.remove(&id);
+        if let Some(handle) = self.text_editor_windows.remove(&id) {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
+        }
         self.refresh_preview(cx);
         cx.notify();
     }

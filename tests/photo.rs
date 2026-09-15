@@ -74,6 +74,7 @@ async fn test_generate_watermark() {
             position: lumen_frame::Position::Right,
             direction: TextDirection::Vertical,
             align: TextAlign::Center,
+            padding: 0.03,
             time_format: "%Y/%m/%d".to_owned(),
         },
     ];

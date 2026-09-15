@@ -59,6 +59,7 @@ impl From<LegacyText> for TextGroup {
             position: value.position,
             direction: TextDirection::Horizontal,
             align: TextAlign::Center,
+            padding: 0.0,
             time_format: value.time_format,
         }
     }

@@ -211,10 +211,10 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
 }
 
-/// 文字参数入口保持在检查器里，详细设置在窗口中央的模态窗完成。
+/// 文字参数入口保持在检查器里，详细设置另开窗口，不能遮挡主窗口的照片。
 #[gpui_kit::test]
-fn text_group_editor_opens_as_a_centered_modal(cx: &mut TestAppContext) {
-    let (_view, cx) = workspace(cx);
+fn text_group_editor_opens_in_a_separate_window(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
     cx.run_until_parked();
 
     cx.update(|window, cx| {
@@ -226,37 +226,15 @@ fn text_group_editor_opens_as_a_centered_modal(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click(("text-group-edit", 0_u64), cx);
         window.render_frame(cx);
+        assert!(window.try_find("dialog").is_none());
     });
-    // Dialog 的入场动画使用真实时钟，等它结束后再检查最终布局。
-    std::thread::sleep(Duration::from_millis(260));
-
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("dialog").is_some());
-        assert!(
-            window
-                .within("dialog")
-                .try_find(("text-add-line", 0_u64))
-                .is_some()
-        );
-
-        let modal = window.within("dialog").find(0_usize).bounds();
-        let viewport = window.viewport_size();
-        let center_x = modal.left() + modal.size.width / 2.;
-        let center_y = modal.top() + modal.size.height / 2.;
-        assert!((center_x - viewport.width / 2.).abs() <= px(1.));
-        // Linux 的无头测试窗口会给客户端阴影留出 20px；macOS 实际窗口没有这层偏移。
-        assert!(
-            (center_y - viewport.height / 2.).abs() <= px(20.),
-            "模态窗中心 {center_y:?}，视口中心 {:?}",
-            viewport.height / 2.
-        );
-        assert!((modal.size.width - viewport.width * 0.7).abs() <= px(1.));
-        assert!((modal.size.height - viewport.height * 0.8).abs() <= px(1.));
-    });
+    assert_eq!(
+        view.read_with(cx, |view, _| view.text_editor_window_count()),
+        1
+    );
 }
 
-/// 新建文字组会得到独立状态，并直接进入该组的编辑模态窗。
+/// 新建文字组会得到独立状态，并直接打开该组的独立编辑窗口。
 #[gpui_kit::test]
 fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
@@ -272,12 +250,11 @@ fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("text-group-add", cx);
         window.render_frame(cx);
-        assert!(
-            window
-                .within("dialog")
-                .try_find(("text-add-line", 1_u64))
-                .is_some()
-        );
+        assert!(window.try_find("dialog").is_none());
     });
     assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 2);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.text_editor_window_count()),
+        1
+    );
 }

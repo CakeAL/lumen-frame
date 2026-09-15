@@ -210,6 +210,35 @@ fn vertical_text_group_expands_canvas_by_its_rotated_height() {
     );
 }
 
+#[test]
+fn side_padding_moves_text_without_expanding_the_canvas() {
+    let params = WatermarkParams {
+        border_ratio: (0.0, 0.0, 0.0, 0.0),
+        shadow_size: 0.0,
+        solid_background: true,
+        ..Default::default()
+    };
+    for position in [Position::Left, Position::Right] {
+        let plain = simple_group(position, TextAlign::Center, TextDirection::Horizontal);
+        let mut padded = plain.clone();
+        padded.padding = 0.08;
+
+        let without_padding = render_preview(&job_with(params.clone(), vec![plain])).unwrap();
+        let with_padding = render_preview(&job_with(params.clone(), vec![padded])).unwrap();
+
+        assert_eq!(
+            without_padding.size(0),
+            with_padding.size(0),
+            "{position:?} 侧的文字 padding 不应撑大画布"
+        );
+        assert_ne!(
+            without_padding.as_bytes(0),
+            with_padding.as_bytes(0),
+            "{position:?} 侧的 padding 应改变文字的视觉位置"
+        );
+    }
+}
+
 fn simple_group(position: Position, align: TextAlign, direction: TextDirection) -> TextGroup {
     TextGroup {
         text: Text {
@@ -222,6 +251,7 @@ fn simple_group(position: Position, align: TextAlign, direction: TextDirection) 
         position,
         direction,
         align,
+        padding: 0.0,
         time_format: "%Y/%m/%d".to_owned(),
     }
 }

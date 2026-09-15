@@ -116,7 +116,12 @@ impl Photo {
         if let Some(exif) = exif {
             for group in text_groups {
                 if let Some(image) = group.render_text(exif, img_h, params)? {
-                    rendered_text_groups.push((group.position, group.align, image));
+                    let padding = if matches!(group.position, Position::Left | Position::Right) {
+                        (img_h as f64 * group.padding.max(0.0)).round() as i32
+                    } else {
+                        0
+                    };
+                    rendered_text_groups.push((group.position, group.align, padding, image));
                 }
             }
         }
@@ -124,10 +129,10 @@ impl Photo {
         // 计算画布边框尺寸
         let mut margin = canvas::Margin::cal_margin(img_w, img_h, params);
         let mut text_thickness = [0; 4];
-        for (position, _, image) in &rendered_text_groups {
+        for (position, _, padding, image) in &rendered_text_groups {
             let thickness = match position {
                 Position::Up | Position::Bottom => image.get_height(),
-                Position::Left | Position::Right => image.get_width(),
+                Position::Left | Position::Right => image.get_width() - padding,
                 Position::Center => 0,
             };
             let slot = match position {
@@ -185,8 +190,9 @@ impl Photo {
 
         // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
         let mut canvas = canvas;
-        for (position, align, text_layer) in rendered_text_groups {
+        for (position, align, padding, text_layer) in rendered_text_groups {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
+            let content_w = text_w - padding;
             let aligned_x = || match align {
                 text::TextAlign::Left => img_x,
                 text::TextAlign::Center => img_x + (img_w - text_w) / 2,
@@ -203,9 +209,9 @@ impl Photo {
                     aligned_x(),
                     img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
                 ),
-                Position::Left => ((img_x - text_w) / 2, aligned_y()),
+                Position::Left => ((img_x - content_w) / 2, aligned_y()),
                 Position::Right => (
-                    img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
+                    img_x + img_w + (canvas_w - img_x - img_w - content_w) / 2 - padding,
                     aligned_y(),
                 ),
                 Position::Center => (aligned_x(), img_y + (img_h - text_h) / 2),

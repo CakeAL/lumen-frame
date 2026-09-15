@@ -24,7 +24,7 @@ mod text_section;
 /// （给定参数就得到确定的位图），可以脱离窗口独立测试。
 pub use preview_image::{PreviewJob, render_preview, render_thumbnail};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -34,7 +34,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Context, Entity, ExternalPaths, PathPromptOptions, RenderImage, SharedString,
-    Subscription, Window, WindowAppearance,
+    Subscription, Window, WindowAppearance, WindowHandle,
 };
 
 use crate::config::{self, AppearanceMode, WatermarkPreset};
@@ -83,6 +83,10 @@ pub struct AppView {
     params: WatermarkParams,
     /// 每个文字组各自持有组级控件与文字行；稳定 id 不随增删其它组改变。
     text_groups: Vec<TextGroupEditor>,
+    /// 每个文字组最多打开一个独立编辑窗口；已关闭的句柄会在下次打开时清理。
+    text_editor_windows: HashMap<u64, WindowHandle<Root>>,
+    /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
+    opening_text_editor_ids: HashSet<u64>,
     next_text_group_id: u64,
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
@@ -97,6 +101,8 @@ pub struct AppView {
     export: ExportState,
 
     preset_names: Vec<SharedString>,
+    /// 预设卡片使用的轻量视觉快照，避免在每一帧渲染时读取磁盘。
+    preset_previews: HashMap<SharedString, WatermarkPreset>,
     preset_feedback: Option<SharedString>,
     preset_feedback_is_error: bool,
 
@@ -145,6 +151,14 @@ impl AppView {
             .unwrap_or_default()
             .into_iter()
             .map(SharedString::from)
+            .collect::<Vec<_>>();
+        let preset_previews = preset_names
+            .iter()
+            .filter_map(|name| {
+                config::load_preset(name)
+                    .ok()
+                    .map(|preset| (name.clone(), preset))
+            })
             .collect();
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
@@ -168,6 +182,8 @@ impl AppView {
             thumbnails: HashMap::new(),
             params,
             text_groups,
+            text_editor_windows: HashMap::new(),
+            opening_text_editor_ids: HashSet::new(),
             next_text_group_id: 1,
             next_text_line_id,
             font_names,
@@ -177,6 +193,7 @@ impl AppView {
             preview,
             export: ExportState::Idle,
             preset_names,
+            preset_previews,
             preset_feedback: None,
             preset_feedback_is_error: false,
             appearance: settings.appearance,
@@ -358,6 +375,11 @@ impl AppView {
     /// 当前配置里的 EXIF 文字组数量。
     pub fn text_group_count(&self) -> usize {
         self.text_groups.len()
+    }
+
+    /// 已创建的文字组编辑窗口句柄数量。
+    pub fn text_editor_window_count(&self) -> usize {
+        self.text_editor_windows.len()
     }
 
     /// 当前选中的照片路径。
@@ -661,6 +683,16 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let editor_windows = std::mem::take(&mut self.text_editor_windows);
+        self.opening_text_editor_ids.clear();
+        if !editor_windows.is_empty() {
+            cx.defer(move |cx| {
+                for handle in editor_windows.into_values() {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+            });
+        }
+
         // 输出文件夹是这台机器的环境设置，不跟着预设走。
         let output_folder = self.params.output_folder.clone();
         self.params = preset.params;
@@ -817,6 +849,15 @@ impl AppView {
             .unwrap_or_default()
             .into_iter()
             .map(SharedString::from)
+            .collect();
+        self.preset_previews = self
+            .preset_names
+            .iter()
+            .filter_map(|name| {
+                config::load_preset(name)
+                    .ok()
+                    .map(|preset| (name.clone(), preset))
+            })
             .collect();
     }
 

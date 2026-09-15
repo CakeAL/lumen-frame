@@ -18,17 +18,61 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Entity, FontWeight, IntoElement, SharedString, Subscription, Window, div};
+use gpui_kit::{
+    AnyElement, Context, Entity, FontWeight, IntoElement, SharedString, Subscription, Window,
+    black, div, white,
+};
 
 use crate::Position;
 use crate::params::WatermarkParams;
-use crate::process::text::TextGroup;
+use crate::process::text::{TextAlign, TextGroup};
 
 use super::field::{
     Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
     warning,
 };
 use super::{AppView, ExportState};
+
+fn preset_text_marker(group: &TextGroup) -> AnyElement {
+    let horizontal = || div().w_8().h_2().border_1().border_color(black());
+    let vertical = || div().w_2().h_8().border_1().border_color(black());
+
+    match group.position {
+        Position::Up | Position::Bottom | Position::Center => {
+            let lane = h_flex()
+                .absolute()
+                .left_4()
+                .right_4()
+                .when(group.position == Position::Up, |this| this.top_1())
+                .when(group.position == Position::Bottom, |this| this.bottom_1())
+                .when(group.position == Position::Center, |this| {
+                    this.top_0().bottom_0()
+                });
+            match group.align {
+                TextAlign::Left => lane,
+                TextAlign::Center => lane.justify_center(),
+                TextAlign::Right => lane.justify_end(),
+            }
+            .child(horizontal())
+            .into_any_element()
+        }
+        Position::Left | Position::Right => {
+            let lane = v_flex()
+                .absolute()
+                .top_3()
+                .bottom_3()
+                .when(group.position == Position::Left, |this| this.left_1())
+                .when(group.position == Position::Right, |this| this.right_1());
+            match group.align {
+                TextAlign::Left => lane,
+                TextAlign::Center => lane.justify_center(),
+                TextAlign::Right => lane.justify_end(),
+            }
+            .child(vertical())
+            .into_any_element()
+        }
+    }
+}
 
 /// 模糊强度的上限。
 ///
@@ -443,12 +487,17 @@ impl AppView {
                 })
                 .when(!self.preset_names.is_empty(), |this| {
                     this.child(
-                        v_flex().w_full().gap_2().children(
-                            self.preset_names
-                                .iter()
-                                .enumerate()
-                                .map(|(ix, name)| self.render_preset_row(ix, name.clone(), cx)),
-                        ),
+                        h_flex()
+                            .id("preset-cards")
+                            .w_full()
+                            .gap_3()
+                            .pb_2()
+                            .overflow_x_scroll()
+                            .children(
+                                self.preset_names
+                                    .iter()
+                                    .map(|name| self.render_preset_card(name.clone(), cx)),
+                            ),
                     )
                 })
                 .child(
@@ -466,42 +515,51 @@ impl AppView {
         )
     }
 
-    fn render_preset_row(
-        &self,
-        ix: usize,
-        name: SharedString,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
+    fn render_preset_card(&self, name: SharedString, cx: &Context<Self>) -> impl IntoElement {
         let for_load = name.clone();
         let for_delete = name.clone();
+        let preview = self
+            .preset_previews
+            .get(&name)
+            .map(|preset| self.render_preset_preview(preset, cx))
+            .unwrap_or_else(|| hint("预览不可用", cx));
 
-        h_flex()
-            .w_full()
-            .justify_between()
+        v_flex()
+            .id(format!("preset-card-{name}"))
+            .w_48()
+            .flex_shrink_0()
             .gap_2()
+            .p_3()
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().group_box)
+            .child(preview)
             .child(
                 div()
-                    .flex_1()
+                    .w_full()
                     .min_w_0()
                     .truncate()
                     .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
                     .text_color(cx.theme().foreground)
                     .child(name),
             )
             .child(
                 h_flex()
-                    .flex_shrink_0()
+                    .w_full()
                     .gap_2()
                     .child(
-                        Button::new(("preset-load", ix))
+                        Button::new(format!("preset-load-{for_load}"))
                             .label("载入")
                             .small()
+                            .flex_1()
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.load_preset(&for_load, window, cx)
                             })),
                     )
                     .child(
-                        Button::new(("preset-delete", ix))
+                        Button::new(format!("preset-delete-{for_delete}"))
                             .icon(IconName::Delete)
                             .ghost()
                             .small()
@@ -512,6 +570,38 @@ impl AppView {
                             })),
                     ),
             )
+    }
+
+    fn render_preset_preview(
+        &self,
+        preset: &crate::config::WatermarkPreset,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        div()
+            .relative()
+            .w_full()
+            .h_24()
+            .overflow_hidden()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().muted)
+            .child(
+                div()
+                    .absolute()
+                    .top_3()
+                    .right_4()
+                    .bottom_3()
+                    .left_4()
+                    .bg(white())
+                    .border_1()
+                    .border_color(black()),
+            )
+            .children(
+                preset
+                    .text_groups
+                    .iter()
+                    .map(|group| preset_text_marker(group)),
+            )
+            .into_any_element()
     }
 
     // MARK: 画布与边框

@@ -57,6 +57,31 @@ async fn vertical_text_group_rotates_the_complete_group() {
     assert_eq!(vertical.get_height(), horizontal.get_width());
 }
 
+#[tokio::test]
+async fn side_padding_is_transparent_space_inside_the_text_image() {
+    let photo = Photo::new("./test_images/DSC_4587.jpg").await.unwrap();
+    let exif = photo.exif.as_ref().unwrap();
+    let params = WatermarkParams::default();
+    let plain = TextGroup {
+        position: lumen_frame::Position::Left,
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1_000, &params)
+    .unwrap()
+    .unwrap();
+    let padded = TextGroup {
+        position: lumen_frame::Position::Left,
+        padding: 0.05,
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1_000, &params)
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(padded.get_width(), plain.get_width() + 50);
+    assert_eq!(padded.get_height(), plain.get_height());
+}
+
 #[test]
 fn test_render_exif_template_missing_and_dedupe() {
     // 没有镜头型号、型号含有品牌前缀时：
