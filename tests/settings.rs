@@ -69,6 +69,7 @@ fn theme_slots_round_trip() {
         dark_theme: Some("Catppuccin Mocha".to_string()),
         interface_scale: Some(18.0),
         preview_background: [0x24, 0x32, 0x4a],
+        output_folder: Some(PathBuf::from("/tmp/lumen-frame-output")),
     };
     save_settings_at(&path, &settings).unwrap();
     assert_eq!(load_settings_at(&path), settings);

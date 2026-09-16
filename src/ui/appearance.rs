@@ -46,13 +46,14 @@ impl AppView {
         self.persist_settings_inner();
     }
 
-    fn persist_settings_inner(&mut self) {
+    pub(super) fn persist_settings_inner(&mut self) {
         let settings = config::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
             interface_scale: Some(self.interface_scale),
             preview_background: self.preview_background,
+            output_folder: self.params.output_folder.clone(),
         };
         self.settings_feedback = config::save_settings(&settings)
             .err()

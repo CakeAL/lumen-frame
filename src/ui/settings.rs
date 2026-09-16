@@ -149,7 +149,7 @@ impl AppView {
                     .w_full()
                     .flex_shrink_0()
                     .px_4()
-                    .py_2()
+                    .h_12()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(

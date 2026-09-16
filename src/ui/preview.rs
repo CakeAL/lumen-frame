@@ -174,7 +174,7 @@ impl AppView {
             .justify_between()
             .gap_3()
             .px_4()
-            .py_2()
+            .h_12()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(

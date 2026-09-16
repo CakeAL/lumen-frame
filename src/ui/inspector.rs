@@ -4,8 +4,6 @@
 //! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样预览、
 //! 导出、界面读数永远来自同一份数据。
 
-use std::path::PathBuf;
-
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     accordion::Accordion,
@@ -335,11 +333,7 @@ impl ParameterControls {
             cx.subscribe_in(&output_folder, window, |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     let value = state.read(cx).value().to_string();
-                    this.params.output_folder = if value.trim().is_empty() {
-                        None
-                    } else {
-                        Some(PathBuf::from(value))
-                    };
+                    this.set_output_folder(value);
                     cx.notify();
                 }
             }),
@@ -412,7 +406,7 @@ impl AppView {
                     .flex_shrink_0()
                     .gap_2()
                     .px_4()
-                    .py_2()
+                    .h_12()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
@@ -434,8 +428,7 @@ impl AppView {
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))
-                    .child(self.render_text_section(cx))
-                    .child(self.render_output_section(cx)),
+                    .child(self.render_text_section(cx)),
             )
     }
 
@@ -481,7 +474,7 @@ impl AppView {
                     .justify_between()
                     .gap_2()
                     .px_4()
-                    .py_2()
+                    .h_12()
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .child(
@@ -586,14 +579,20 @@ impl AppView {
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(
-                        Button::new("preset-reset")
-                            .icon(IconName::Undo2)
-                            .label("恢复默认参数")
-                            .ghost()
+                        v_flex()
                             .w_full()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.confirm_reset_params(window, cx)
-                            })),
+                            .gap_3()
+                            .child(
+                                Button::new("preset-reset")
+                                    .icon(IconName::Undo2)
+                                    .label("恢复默认参数")
+                                    .ghost()
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.confirm_reset_params(window, cx)
+                                    })),
+                            )
+                            .child(self.render_output_controls(cx)),
                     ),
             )
             .into_any_element()
@@ -827,15 +826,34 @@ impl AppView {
             .child(controls.shadow_density.render("阴影浓度", false, cx))
     }
 
-    // MARK: 输出
-
-    fn render_output_section(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_output_controls(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
 
-        GroupBox::new()
-            .id("output-section")
-            .title("输出")
-            .child(field("输出文件夹", Input::new(&controls.output_folder), cx))
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&controls.output_folder)),
+                    )
+                    .child(
+                        Button::new("output-folder-pick")
+                            .icon(IconName::FolderOpen)
+                            .outline()
+                            .small()
+                            .tooltip("选择输出文件夹")
+                            .accessibility_label("选择输出文件夹")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.pick_output_folder(window, cx)
+                            })),
+                    ),
+            )
             .child(controls.quality.render("JPEG 质量", false, cx))
             .child(self.render_export_footer(cx))
     }

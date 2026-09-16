@@ -128,7 +128,11 @@ pub struct AppView {
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let params = WatermarkParams::default();
+        let settings = config::load_settings();
+        let mut params = WatermarkParams::default();
+        if let Some(folder) = settings.output_folder.clone() {
+            params.output_folder = Some(folder);
+        }
         let text_group = TextGroup::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
@@ -168,7 +172,6 @@ impl AppView {
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
-        let settings = config::load_settings();
         let (settings_controls, settings_subscriptions) =
             SettingsControls::new(settings.preview_background, window, cx);
 
@@ -342,6 +345,41 @@ impl AppView {
             this.update(cx, |this, cx| this.add_photos(paths, cx)).ok();
         })
         .detach();
+    }
+
+    /// 选择并保存本机导出目录；它不属于水印预设。
+    pub(super) fn pick_output_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("选择输出文件夹".into()),
+        });
+        let window_handle = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.set_output_folder(path.to_string_lossy().into_owned());
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    this.controls.output_folder.update(cx, |state, cx| {
+                        state.set_value(path.to_string_lossy().into_owned(), window, cx)
+                    });
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn set_output_folder(&mut self, value: String) {
+        self.params.output_folder = (!value.trim().is_empty()).then(|| PathBuf::from(value));
+        self.persist_settings_inner();
     }
 
     /// 把外部路径加入队列。
