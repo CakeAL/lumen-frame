@@ -278,11 +278,12 @@ impl Photo {
             )
             .context("flatten image failed")?;
 
-            // libuhdr 上限 8192x8192。若水印超限，直接整图等比例缩到 8192，
-            // gain map 会跟随一起缩放，之后仍以 Ultra HDR 保存，不缩放其它内容。
+            // libuhdr 只接受边长不超过 8192 的 Ultra HDR 图像。普通 JPEG 不走这条
+            // 编码器，绝不能因为同一个上限被悄悄缩小；只有确实带 gain map 的输出才缩放。
             let max_dim = flattened.get_width().max(flattened.get_height());
-            if max_dim > 8192 {
-                let scale = 8192.0 / max_dim as f64;
+            if let Some(scale) =
+                ultra_hdr_resize_scale(max_dim, gain_map::get_gainmap(&flattened).is_some())
+            {
                 flattened =
                     ops::resize(&flattened, scale).context("resize for UHDR limit failed")?;
             }
@@ -304,6 +305,25 @@ impl Photo {
         } else {
             Err(anyhow!("no output folder specified"))
         }
+    }
+}
+
+/// libuhdr 的输入上限只适用于带 gain map 的 Ultra HDR 编码路径。
+fn ultra_hdr_resize_scale(max_dim: i32, has_gainmap: bool) -> Option<f64> {
+    const ULTRA_HDR_MAX_EDGE: i32 = 8192;
+    (has_gainmap && max_dim > ULTRA_HDR_MAX_EDGE)
+        .then_some(ULTRA_HDR_MAX_EDGE as f64 / max_dim as f64)
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::ultra_hdr_resize_scale;
+
+    #[test]
+    fn only_ultra_hdr_exports_are_limited_to_8192() {
+        assert_eq!(ultra_hdr_resize_scale(9_000, false), None);
+        assert_eq!(ultra_hdr_resize_scale(8_192, true), None);
+        assert_eq!(ultra_hdr_resize_scale(16_384, true), Some(0.5));
     }
 }
 
