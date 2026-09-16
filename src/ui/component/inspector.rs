@@ -25,11 +25,11 @@ use crate::Position;
 use crate::params::WatermarkParams;
 use crate::process::text::{TextAlign, TextGroup};
 
+use super::super::{AppView, ExportState};
 use super::field::{
     Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
     warning,
 };
-use super::{AppView, ExportState};
 
 fn preset_text_marker(group: &TextGroup) -> AnyElement {
     let horizontal = || div().w_8().h_2().border_1().border_color(black());
@@ -81,7 +81,7 @@ const BLUR_MAX: f64 = 150.0;
 ///
 /// 「不动宽高比」和「指定一个比例」是两件事，所以不强制比例的选项叫「不限制」。
 #[derive(Clone, PartialEq)]
-pub(super) enum AspectRatioChoice {
+pub(in crate::ui::app) enum AspectRatioChoice {
     /// 不限制：画布尺寸只跟照片和边框有关。
     Free,
     Preset(f64, f64),
@@ -89,7 +89,7 @@ pub(super) enum AspectRatioChoice {
     Custom,
 }
 
-pub(super) const ASPECT_RATIOS: &[(&str, AspectRatioChoice)] = &[
+pub(in crate::ui::app) const ASPECT_RATIOS: &[(&str, AspectRatioChoice)] = &[
     ("不限制", AspectRatioChoice::Free),
     ("1:1", AspectRatioChoice::Preset(1.0, 1.0)),
     ("4:5", AspectRatioChoice::Preset(4.0, 5.0)),
@@ -111,11 +111,11 @@ pub(super) const POSITIONS: &[(&str, Position)] = &[
 ];
 
 /// 下拉框状态的具体类型别名，免得这串泛型在签名里反复出现。
-pub(super) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
-pub(super) type PositionSelect = SelectState<Vec<Choice<Position>>>;
+pub(in crate::ui::app) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
+pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Position>>>;
 
 /// 面板里所有需要跨帧保留的控件状态。
-pub(super) struct ParameterControls {
+pub(in crate::ui::app) struct ParameterControls {
     pub border_top: NumberField,
     pub border_bottom: NumberField,
     pub border_left: NumberField,
@@ -138,7 +138,7 @@ pub(super) struct ParameterControls {
 
 impl ParameterControls {
     /// 创建全部控件，并把「控件变化 → 写回参数 → 请求预览」这条链路一次接好。
-    pub(super) fn new(
+    pub(in crate::ui::app) fn new(
         params: &WatermarkParams,
         aspect_choice: &AspectRatioChoice,
         window: &mut Window,
@@ -381,7 +381,7 @@ pub(super) fn format_number(value: f64) -> String {
 }
 
 /// 从当前配置生成一个预设。
-pub(super) fn preset_of(
+pub(in crate::ui::app) fn preset_of(
     params: &WatermarkParams,
     text_groups: &[TextGroup],
 ) -> crate::config::WatermarkPreset {
@@ -392,7 +392,7 @@ pub(super) fn preset_of(
 }
 
 impl AppView {
-    pub(super) fn render_inspector(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_inspector(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .h_full()
             .w_80()
@@ -435,7 +435,7 @@ impl AppView {
     // MARK: 预设
 
     /// 左侧预设面板：两列卡片在独立滚动区内，保存与打开文件夹固定在顶部。
-    pub(super) fn render_preset_panel(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_preset_panel(&self, cx: &Context<Self>) -> impl IntoElement {
         if self.preset_panel_collapsed {
             return v_flex()
                 .id("preset-panel")

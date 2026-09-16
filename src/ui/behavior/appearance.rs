@@ -5,7 +5,7 @@ use gpui_kit::{App, Context, SharedString, Window, WindowAppearance};
 
 use crate::config::{self, AppearanceMode};
 
-use super::{AppView, settings};
+use super::super::{AppView, page::settings};
 
 impl AppView {
     pub fn interface_scale(&self) -> f32 {
@@ -27,14 +27,14 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn set_preview_background(&mut self, rgb: [u8; 3]) {
+    pub(in crate::ui::app) fn set_preview_background(&mut self, rgb: [u8; 3]) {
         if self.preview_background != rgb {
             self.preview_background = rgb;
             self.persist_settings_inner();
         }
     }
 
-    pub(super) fn apply_theme_slots(&self, cx: &mut App) {
+    pub(in crate::ui::app) fn apply_theme_slots(&self, cx: &mut App) {
         for name in [&self.light_theme, &self.dark_theme].into_iter().flatten() {
             if let Some(config) = crate::theme::find(name, cx) {
                 Theme::global_mut(cx).apply_config(&config);
@@ -46,7 +46,7 @@ impl AppView {
         self.persist_settings_inner();
     }
 
-    pub(super) fn persist_settings_inner(&mut self) {
+    pub(in crate::ui::app) fn persist_settings_inner(&mut self) {
         let settings = config::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
@@ -109,7 +109,7 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn apply_appearance(&self, window: &mut Window, cx: &mut App) {
+    pub(in crate::ui::app) fn apply_appearance(&self, window: &mut Window, cx: &mut App) {
         match self.appearance {
             AppearanceMode::System => {
                 cx.set_window_appearance(None);

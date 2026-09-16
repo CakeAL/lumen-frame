@@ -18,14 +18,14 @@ use gpui_kit::{
     AnyElement, App, Context, Entity, Hsla, Rgba, SharedString, Subscription, Window, div,
 };
 
-use super::AppView;
+use super::super::AppView;
 
 /// 给下拉框用的「标签 + 领域值」选项。
 ///
 /// 直接把选项做成字符串的话，选中结果还要再靠文本反解回领域值；这里让下拉框把领域值
 /// 本身带回来。
 #[derive(Clone)]
-pub(super) struct Choice<T: Clone + PartialEq + 'static> {
+pub(in crate::ui::app) struct Choice<T: Clone + PartialEq + 'static> {
     label: SharedString,
     value: T,
 }
@@ -60,7 +60,7 @@ pub(super) fn choices<T: Clone + PartialEq + 'static>(entries: &[(&str, T)]) -> 
 }
 
 /// 选中某个值时对应的下拉位置。
-pub(super) fn index_of<T: Clone + PartialEq + 'static>(
+pub(in crate::ui::app) fn index_of<T: Clone + PartialEq + 'static>(
     entries: &[(&str, T)],
     value: &T,
 ) -> Option<IndexPath> {
@@ -74,7 +74,7 @@ pub(super) fn index_of<T: Clone + PartialEq + 'static>(
 ///
 /// 界面上的读数用「显示单位」（例如百分比），模型里存的是原始比例，两者之间的换算由
 /// `scale` 承担，回调拿到的永远是模型值。
-pub(super) struct NumberField {
+pub(in crate::ui::app) struct NumberField {
     slider: Entity<SliderState>,
     input: Entity<InputState>,
     /// 显示值 = 模型值 × scale。
@@ -180,7 +180,7 @@ impl NumberField {
     }
 
     /// 由外部（载入预设）改写数值，滑块与输入框一起跟上。
-    pub(super) fn sync(&self, value: f64, window: &mut Window, cx: &mut App) {
+    pub(in crate::ui::app) fn sync(&self, value: f64, window: &mut Window, cx: &mut App) {
         let display = value * self.scale;
         self.slider
             .update(cx, |state, cx| state.set_value(display as f32, window, cx));
@@ -233,13 +233,17 @@ impl NumberField {
 ///
 /// 十六进制输入是并列的第二条路径，不是取色器的替代：取色器崩了或者只是懒得点开时，
 /// 直接敲 `#1A2B3C` 一样能改。
-pub(super) struct ColorField {
+pub(in crate::ui::app) struct ColorField {
     picker: Entity<ColorPickerState>,
     hex: Entity<InputState>,
 }
 
 impl ColorField {
-    pub(super) fn new(rgb: [u8; 3], window: &mut Window, cx: &mut Context<AppView>) -> Self {
+    pub(in crate::ui::app) fn new(
+        rgb: [u8; 3],
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> Self {
         let picker = cx.new(|cx| ColorPickerState::new(window, cx).default_value(rgb_to_hsla(rgb)));
         let hex = cx.new(|cx| {
             InputState::new(window, cx)
@@ -253,7 +257,7 @@ impl ColorField {
         self.picker.read(cx).value().map_or([0, 0, 0], hsla_to_rgb)
     }
 
-    pub(super) fn subscribe(
+    pub(in crate::ui::app) fn subscribe(
         &self,
         window: &mut Window,
         cx: &mut Context<AppView>,
@@ -302,14 +306,14 @@ impl ColorField {
         vec![from_picker, from_hex]
     }
 
-    pub(super) fn sync(&self, rgb: [u8; 3], window: &mut Window, cx: &mut App) {
+    pub(in crate::ui::app) fn sync(&self, rgb: [u8; 3], window: &mut Window, cx: &mut App) {
         let color = rgb_to_hsla(rgb);
         self.picker
             .update(cx, |state, cx| state.update_color(color, window, cx));
         write_text(&self.hex, hex_string(rgb), window, cx);
     }
 
-    pub(super) fn render(
+    pub(in crate::ui::app) fn render(
         &self,
         label: impl Into<SharedString>,
         disabled: bool,
@@ -338,7 +342,7 @@ impl ColorField {
 }
 
 /// 一行「标签 + 下拉框」的字段。
-pub(super) fn field(
+pub(in crate::ui::app) fn field(
     label: impl Into<SharedString>,
     control: impl IntoElement,
     cx: &App,

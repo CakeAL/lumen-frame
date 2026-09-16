@@ -129,7 +129,7 @@ Frameworks 里各块的归属：
 | MATLAB / HDF5 / FITS / EXR / PDF / WSI | ❌ | ✅ |
 
 `web` 没有 libheif 和 libraw。如果选 `web`，**要同时把对应扩展名从
-`src/ui/queue.rs` 的 `SUPPORTED_EXTENSIONS` 里去掉**，否则文件选择器会接受打不开的格式。
+`src/ui/component/queue.rs` 的 `SUPPORTED_EXTENSIONS` 里去掉**，否则文件选择器会接受打不开的格式。
 
 ### 构建
 

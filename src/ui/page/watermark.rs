@@ -4,7 +4,7 @@ use gpui_kit::component::{ActiveTheme as _, Root, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, ExternalPaths, Window};
 
-use super::{AppPage, AppView};
+use super::super::{AppPage, AppView};
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

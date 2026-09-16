@@ -13,7 +13,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, KeyDownEvent, ObjectFit, Role, div, img};
 
-use super::{AppView, Thumbnail};
+use super::super::{AppView, Thumbnail};
 use crate::workspace::QueuedPhoto;
 
 /// 队列接受的图片扩展名。
@@ -25,7 +25,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "pef", "srw",
 ];
 
-pub(super) fn is_supported_image(path: &std::path::Path) -> bool {
+pub(in crate::ui::app) fn is_supported_image(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| SUPPORTED_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
@@ -33,7 +33,7 @@ pub(super) fn is_supported_image(path: &std::path::Path) -> bool {
 }
 
 impl AppView {
-    pub(super) fn render_queue_pane(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_queue_pane(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .w_full()
             .flex_shrink_0()

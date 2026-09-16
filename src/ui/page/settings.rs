@@ -20,19 +20,19 @@ use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Win
 
 use crate::config::AppearanceMode;
 
-use super::AppView;
-use super::field::{ColorField, field};
+use super::super::AppView;
+use super::super::component::field::{ColorField, field};
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
 
 /// 默认档位的字号。
-pub(super) const DEFAULT_INTERFACE_SCALE: f32 = 16.0;
+pub(in crate::ui::app) const DEFAULT_INTERFACE_SCALE: f32 = 16.0;
 
 /// 把界面缩放落到全局主题上。
 ///
 /// 基础字号是像素锚点，这一处 `px` 是刻意的例外：它定义其余相对刻度的基准。
-pub(super) fn apply_interface_scale(scale: f32, window: &mut Window, cx: &mut App) {
+pub(in crate::ui::app) fn apply_interface_scale(scale: f32, window: &mut Window, cx: &mut App) {
     Theme::global_mut(cx).font_size = px(scale);
     Theme::sync_base(cx);
     window.refresh();
@@ -42,14 +42,14 @@ pub(super) fn apply_interface_scale(scale: f32, window: &mut Window, cx: &mut Ap
 type ThemeSelect = SelectState<Vec<SharedString>>;
 
 /// 设置页上的控件状态。
-pub(super) struct SettingsControls {
+pub(in crate::ui::app) struct SettingsControls {
     pub light_theme: Entity<ThemeSelect>,
     pub dark_theme: Entity<ThemeSelect>,
     pub preview_background: ColorField,
 }
 
 impl SettingsControls {
-    pub(super) fn new(
+    pub(in crate::ui::app) fn new(
         preview_background_rgb: [u8; 3],
         window: &mut Window,
         cx: &mut Context<AppView>,
@@ -131,7 +131,7 @@ impl AppView {
         field(label, Select::new(state).w_full(), cx)
     }
 
-    pub(super) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
         let appearance_index = APPEARANCES
             .iter()
             .position(|(_, mode)| *mode == self.appearance);

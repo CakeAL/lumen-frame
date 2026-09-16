@@ -9,14 +9,14 @@ use gpui_kit::{Context, prelude::*};
 
 use crate::photo::Photo;
 
-use super::{AppView, ExportState};
+use super::super::{AppView, ExportState};
 
 impl AppView {
     /// 按当前参数把队列里的照片全部导出。
     ///
     /// 逐张串行处理而不是并发：libvips 自己就吃满多核，再叠并发只会让每张都变慢，还会
     /// 让进度读数失去意义。
-    pub(super) fn export_all(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui::app) fn export_all(&mut self, cx: &mut Context<Self>) {
         if self.workspace.is_empty() || matches!(self.export, ExportState::Running { .. }) {
             return;
         }

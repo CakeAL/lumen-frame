@@ -9,11 +9,11 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 
-use super::{AppPage, AppView};
+use super::super::{AppPage, AppView};
 
 impl AppView {
     /// 主窗口的原生标题栏承载应用级导航；内容工作区不再拥有第二套侧栏导航。
-    pub(super) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(self.render_title_bar_navigation(cx))
     }
 

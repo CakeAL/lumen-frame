@@ -13,9 +13,9 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, ObjectFit, RenderImage, SharedString, Task, div, img};
 
-use super::AppView;
+use super::super::AppView;
 use super::field::rgb_to_hsla;
-use super::preview_image::{PreviewJob, render_preview};
+use crate::ui::image::{PreviewJob, render_preview};
 
 /// 参数连续变化时先攒一会儿再算。
 ///
@@ -39,7 +39,7 @@ pub enum PreviewState {
 
 impl PreviewState {
     /// 当前用于显示的位图。重算期间仍然是上一张，所以拖动滑块时画面不会闪空。
-    pub(super) fn image(&self) -> Option<&Arc<RenderImage>> {
+    pub(in crate::ui::app) fn image(&self) -> Option<&Arc<RenderImage>> {
         match self {
             PreviewState::Rendering { previous } => previous.as_ref(),
             PreviewState::Ready(image) => Some(image),
@@ -145,7 +145,7 @@ impl WatermarkPreview {
 }
 
 impl AppView {
-    pub(super) fn render_preview_pane(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::ui::app) fn render_preview_pane(&self, cx: &Context<Self>) -> impl IntoElement {
         let title = self.selected_photo().map(|photo| {
             photo
                 .path()

@@ -17,11 +17,14 @@ libvips、文件系统、GPUI 平台
 ```
 
 - `src/main.rs` 只负责应用启动、窗口和已打包应用的 vips 模块定位。
-- `src/ui/` 是展示层。`AppView` 拥有 GPUI 控件实体、订阅、预览实体、缩略图位图缓存和导出进度；它编排后台任务，但不定义照片队列的选择规则。
+- `src/ui/` 是展示层。`app.rs` 中的 `AppView` 拥有 GPUI 控件实体、订阅、预览实体、缩略图位图缓存和导出进度；它编排后台任务，但不定义照片队列的选择规则。
+- `src/ui/page/` 每个文件对应一个完整页面：`watermark.rs` 只组合水印工作区，`settings.rs` 只组合设置页及其页面级控件。
+- `src/ui/component/` 放页面组合会复用的领域组件（标题栏、队列、预览、检查器、文字编辑和字段控件）。组件不持有第二份业务真值。
+- `src/ui/behavior/` 放不直接渲染页面的应用工作流，例如外观偏好与批量导出；`src/ui/image.rs` 是图像管线与 GPUI 位图的专用适配层。
 - `src/workspace.rs` 是应用状态层。它不依赖 GPUI 或 `RenderImage`，只管理照片顺序、去重、`PhotoId`、选择和删除后的选择策略；可用普通单元测试覆盖。
 - `src/params.rs`、`Position` 与文字水印数据是可序列化的领域输入；`src/config.rs` 是它们的 TOML 持久化适配器。
 - `src/photo.rs` 和 `src/process/` 是 libvips 图像处理边界。所有 libvips 初始化仍经 `photo::ensure_vips()`，预览和导出共享 `Photo::compose_watermark`。
-- `src/ui/preview_image.rs` 是刻意保留的展示适配器：它把缩放后的 vips 图像转换为 GPUI `RenderImage`，不应向队列或图像处理层泄漏该类型。
+- `src/ui/image.rs` 是刻意保留的展示适配器：它把缩放后的 vips 图像转换为 GPUI `RenderImage`，不应向队列或图像处理层泄漏该类型。
 
 ## 状态归属
 

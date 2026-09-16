@@ -31,7 +31,7 @@ use crate::process::text::{
     render_exif_template, time_format_is_valid,
 };
 
-use super::AppView;
+use super::super::AppView;
 use super::field::{
     Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
     warning,
@@ -73,10 +73,10 @@ const TEMPLATE_FIELDS: &[(&str, &str)] = &[
     ("区", "{区}"),
 ];
 
-type FontSelect = ComboboxState<SearchableVec<SharedString>>;
-type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
-type PositionSelect = SelectState<Vec<Choice<Position>>>;
-type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
+pub(in crate::ui::app) type FontSelect = ComboboxState<SearchableVec<SharedString>>;
+pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
+pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Position>>>;
+pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
 pub(super) struct TextGroupWindow {
     group_id: u64,
@@ -128,7 +128,7 @@ impl Render for TextGroupWindow {
     }
 }
 
-pub(super) struct TextLine {
+pub(in crate::ui::app) struct TextLine {
     pub id: u64,
     pub template: Entity<InputState>,
     pub size: NumberField,
@@ -251,7 +251,7 @@ impl TextLine {
     }
 }
 
-pub(super) struct TextGroupEditor {
+pub(in crate::ui::app) struct TextGroupEditor {
     pub id: u64,
     pub position: Entity<PositionSelect>,
     pub align: Entity<AlignSelect>,
@@ -264,7 +264,7 @@ pub(super) struct TextGroupEditor {
 }
 
 impl TextGroupEditor {
-    pub(super) fn new(
+    pub(in crate::ui::app) fn new(
         id: u64,
         group: &TextGroup,
         next_line_id: &mut u64,
@@ -335,7 +335,7 @@ impl TextGroupEditor {
         }
     }
 
-    pub(super) fn to_group(&self, cx: &App) -> TextGroup {
+    pub(in crate::ui::app) fn to_group(&self, cx: &App) -> TextGroup {
         TextGroup {
             text: Text {
                 template: self
