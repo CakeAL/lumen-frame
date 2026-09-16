@@ -22,6 +22,7 @@ fn job(params: WatermarkParams) -> PreviewJob {
         exif: ExifInfo::read(Path::new(PHOTO)).ok(),
         params,
         text_groups: vec![TextGroup::default()],
+        max_edge: 1600,
     }
 }
 
@@ -65,6 +66,21 @@ fn preview_is_downscaled_to_stay_responsive() {
         "预览底图没有被缩小，实时拖动会明显卡顿：{}x{}",
         size.width.0,
         size.height.0
+    );
+}
+
+#[test]
+fn preview_max_edge_is_part_of_the_render_request() {
+    let full = render_preview(&job(WatermarkParams::default())).unwrap();
+    let mut reduced_job = job(WatermarkParams::default());
+    reduced_job.max_edge = 400;
+    let reduced = render_preview(&reduced_job).unwrap();
+
+    let full_size = full.size(0);
+    let reduced_size = reduced.size(0);
+    assert!(
+        reduced_size.width.0 < full_size.width.0 && reduced_size.height.0 < full_size.height.0,
+        "预览请求里的长边上限没有影响实际渲染尺寸：完整 {full_size:?}，缩小 {reduced_size:?}"
     );
 }
 
@@ -266,6 +282,7 @@ fn job_with(params: WatermarkParams, text_groups: Vec<TextGroup>) -> PreviewJob 
         exif: ExifInfo::read(Path::new(PHOTO)).ok(),
         params,
         text_groups,
+        max_edge: 1600,
     }
 }
 

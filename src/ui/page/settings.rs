@@ -19,15 +19,27 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
 
 use crate::config::AppearanceMode;
+use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
 
 use super::super::AppView;
-use super::super::component::field::{ColorField, field};
+use super::super::component::field::{ColorField, NumberField, field};
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
 
+/// 预览底图长边上限的可用范围（px）。
+const PREVIEW_MAX_EDGE_MIN: i32 = 160;
+const PREVIEW_MAX_EDGE_MAX: i32 = 8192;
+
 /// 默认档位的字号。
 pub(in crate::ui::app) const DEFAULT_INTERFACE_SCALE: f32 = 16.0;
+pub(in crate::ui::app) const DEFAULT_PREVIEW_MAX_EDGE: i32 = PREVIEW_DEFAULT_MAX_EDGE;
+
+pub(in crate::ui::app) fn preview_max_edge_from_settings(max_edge: Option<i32>) -> i32 {
+    max_edge
+        .filter(|max_edge| (PREVIEW_MAX_EDGE_MIN..=PREVIEW_MAX_EDGE_MAX).contains(max_edge))
+        .unwrap_or(DEFAULT_PREVIEW_MAX_EDGE)
+}
 
 /// 把界面缩放落到全局主题上。
 ///
@@ -46,17 +58,32 @@ pub(in crate::ui::app) struct SettingsControls {
     pub light_theme: Entity<ThemeSelect>,
     pub dark_theme: Entity<ThemeSelect>,
     pub preview_background: ColorField,
+    pub preview_max_edge: NumberField,
 }
 
 impl SettingsControls {
     pub(in crate::ui::app) fn new(
         preview_background_rgb: [u8; 3],
+        preview_max_edge: i32,
+        saved_light_theme: Option<&str>,
+        saved_dark_theme: Option<&str>,
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> (Self, Vec<Subscription>) {
-        let light_theme = make_theme_select(ThemeMode::Light, window, cx);
-        let dark_theme = make_theme_select(ThemeMode::Dark, window, cx);
+        let light_theme = make_theme_select(ThemeMode::Light, saved_light_theme, window, cx);
+        let dark_theme = make_theme_select(ThemeMode::Dark, saved_dark_theme, window, cx);
         let preview_background = ColorField::new(preview_background_rgb, window, cx);
+        let preview_max_edge = NumberField::new(
+            f64::from(preview_max_edge),
+            f64::from(PREVIEW_MAX_EDGE_MIN),
+            f64::from(PREVIEW_MAX_EDGE_MAX),
+            10.0,
+            0,
+            1.0,
+            "px",
+            window,
+            cx,
+        );
 
         let mut subscriptions = Vec::new();
         subscriptions.push(
@@ -78,12 +105,16 @@ impl SettingsControls {
         subscriptions.extend(preview_background.subscribe(window, cx, |this, rgb| {
             this.set_preview_background(rgb);
         }));
+        subscriptions.extend(preview_max_edge.subscribe(window, cx, |this, max_edge| {
+            this.set_preview_max_edge(max_edge.round() as i32);
+        }));
 
         (
             Self {
                 light_theme,
                 dark_theme,
                 preview_background,
+                preview_max_edge,
             },
             subscriptions,
         )
@@ -92,16 +123,26 @@ impl SettingsControls {
 
 fn make_theme_select(
     mode: ThemeMode,
+    saved_name: Option<&str>,
     window: &mut Window,
     cx: &mut Context<AppView>,
 ) -> Entity<ThemeSelect> {
     let names = crate::theme::themes_for(mode, cx);
-    let selected = default_theme_index(&names, mode);
+    let selected = theme_index(&names, mode, saved_name);
     cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
 }
 
 /// 默认选中哪一项：优先默认的那套配色，列表非空时退回第一项。
-fn default_theme_index(names: &[SharedString], mode: ThemeMode) -> Option<IndexPath> {
+fn theme_index(
+    names: &[SharedString],
+    mode: ThemeMode,
+    saved_name: Option<&str>,
+) -> Option<IndexPath> {
+    if let Some(saved_name) = saved_name {
+        if let Some(index) = names.iter().position(|name| name.as_ref() == saved_name) {
+            return Some(IndexPath::new(index));
+        }
+    }
     let fallback = if mode == ThemeMode::Dark {
         "Default Dark"
     } else {
@@ -161,17 +202,56 @@ impl AppView {
                     ),
             )
             .child(
-                v_flex()
-                    .id("settings-scroll")
+                h_flex()
+                    .items_stretch()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .child(
                         v_flex()
-                            .w_full()
-                            .mx_auto()
+                            .id("settings-preferences")
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_y_scroll()
                             .gap_6()
                             .p_6()
+                            .child(
+                                GroupBox::new()
+                                    .id("settings-preview")
+                                    .title("预览")
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .child(
+                                                        self.settings.preview_max_edge.render(
+                                                            "预览底图长边上限",
+                                                            false,
+                                                            cx,
+                                                        ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .child(
+                                                                "该值会影响预览渲染速度；数值越小越快，且不影响导出图片。",
+                                                            ),
+                                                    ),
+                                            )
+                                            .child(self.settings.preview_background.render(
+                                                "照片展示背景",
+                                                false,
+                                                cx,
+                                            ))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "只影响照片展示区域，不影响预览生成结果或导出。",
+                                                    ),
+                                            ),
+                            )
                             .child(
                                 GroupBox::new()
                                     .id("settings-appearance")
@@ -216,27 +296,18 @@ impl AppView {
                                                         "跟随系统时会随操作系统的浅色/深色自动切换。",
                                                     ),
                                             )
-                                            .child(self.render_theme_slot(ThemeMode::Light, cx))
-                                            .child(self.render_theme_slot(ThemeMode::Dark, cx))
+                                            .child(
+                                                h_flex()
+                                                    .child(self.render_theme_slot(ThemeMode::Light, cx))
+                                                    .gap_2()
+                                                    .child(self.render_theme_slot(ThemeMode::Dark, cx))
+                                            )
                                             .child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(
                                                         "浅色与深色各选一套配色；切换明暗时用对应的那一套。",
-                                                    ),
-                                            )
-                                            .child(self.settings.preview_background.render(
-                                                "照片展示背景",
-                                                false,
-                                                cx,
-                                            ))
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "只影响照片展示区域，不影响预览生成结果或导出。",
                                                     ),
                                             )
                                             .child(
@@ -262,7 +333,7 @@ impl AppView {
                                                             cx.theme().muted_foreground,
                                                         )
                                                         .child(
-                                                            "恢复为跟随系统、默认配色与标准缩放；不影响水印参数和预设。",
+                                                            "恢复为跟随系统、默认配色、标准缩放与默认预览分辨率；不影响水印参数和预设。",
                                                         ),
                                                     ),
                                             )
@@ -314,24 +385,60 @@ impl AppView {
                                                     .child("缩放会同时改变字号、间距与控件尺寸。"),
                                             ),
                                     ),
-                            )
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .w_1_3()
+                            .flex_shrink_0()
+                            .border_l_1()
+                            .border_color(cx.theme().border)
+                            .p_6()
                             .child(
-                                GroupBox::new()
-                                    .id("settings-about")
-                                    .title("关于")
-                                    .child(div().text_sm().text_color(cx.theme().foreground).child(
-                                        format!("Lumen Frame {}", env!("CARGO_PKG_VERSION")),
-                                    ))
+                                v_flex()
+                                    .w_full()
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
+                                        GroupBox::new()
+                                            .id("settings-about")
+                                            .title("关于")
                                             .child(
-                                                "用 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(cx.theme().foreground)
+                                                    .child(format!(
+                                                        "Lumen Frame {}",
+                                                        env!("CARGO_PKG_VERSION")
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(
+                                                        "用 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
+                                                    ),
                                             ),
-                                    ),
+                            ),
                             ),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_theme_is_selected_before_the_default() {
+        let names = vec![
+            SharedString::from("Default Light"),
+            SharedString::from("Catppuccin Latte"),
+        ];
+
+        assert_eq!(
+            theme_index(&names, ThemeMode::Light, Some("Catppuccin Latte")),
+            Some(IndexPath::new(1))
+        );
     }
 }

@@ -12,6 +12,10 @@ impl AppView {
         self.interface_scale
     }
 
+    pub fn preview_max_edge(&self) -> i32 {
+        self.preview_max_edge
+    }
+
     pub fn light_theme_name(&self) -> Option<String> {
         self.light_theme.as_ref().map(|name| name.to_string())
     }
@@ -25,6 +29,14 @@ impl AppView {
         settings::apply_interface_scale(scale, window, cx);
         self.persist_settings(cx);
         cx.notify();
+    }
+
+    pub(in crate::ui::app) fn set_preview_max_edge(&mut self, max_edge: i32) {
+        if self.preview_max_edge == max_edge {
+            return;
+        }
+        self.preview_max_edge = max_edge;
+        self.persist_settings_inner();
     }
 
     pub(in crate::ui::app) fn set_preview_background(&mut self, rgb: [u8; 3]) {
@@ -52,6 +64,7 @@ impl AppView {
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
             interface_scale: Some(self.interface_scale),
+            preview_max_edge: Some(self.preview_max_edge),
             preview_background: self.preview_background,
             output_folder: self.params.output_folder.clone(),
         };
@@ -65,6 +78,7 @@ impl AppView {
         self.light_theme = None;
         self.dark_theme = None;
         self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
+        self.preview_max_edge = settings::DEFAULT_PREVIEW_MAX_EDGE;
         self.preview_background = config::DEFAULT_PREVIEW_BACKGROUND;
         let (light, dark) = {
             let registry = ThemeRegistry::global(cx);
@@ -85,6 +99,9 @@ impl AppView {
         self.settings
             .preview_background
             .sync(self.preview_background, window, cx);
+        self.settings
+            .preview_max_edge
+            .sync(f64::from(self.preview_max_edge), window, cx);
         settings::apply_interface_scale(self.interface_scale, window, cx);
         self.apply_appearance(window, cx);
         self.persist_settings(cx);

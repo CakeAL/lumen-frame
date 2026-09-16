@@ -68,6 +68,7 @@ fn theme_slots_round_trip() {
         light_theme: Some("Catppuccin Latte".to_string()),
         dark_theme: Some("Catppuccin Mocha".to_string()),
         interface_scale: Some(18.0),
+        preview_max_edge: Some(800),
         preview_background: [0x24, 0x32, 0x4a],
         output_folder: Some(PathBuf::from("/tmp/lumen-frame-output")),
     };
@@ -84,6 +85,7 @@ fn theme_slots_round_trip() {
         "没调过缩放时应为 None，而不是某个数值"
     );
     assert_eq!(loaded.preview_background, [0x9a, 0xa7, 0xb1]);
+    assert_eq!(loaded.preview_max_edge, None);
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

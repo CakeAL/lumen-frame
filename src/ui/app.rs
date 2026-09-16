@@ -107,6 +107,8 @@ pub struct AppView {
     dark_theme: Option<SharedString>,
     /// 界面缩放的基础字号。
     interface_scale: f32,
+    /// 预览底图的长边上限；它只影响预览速度和清晰度。
+    preview_max_edge: i32,
     /// 照片展示区域的背景色；属于本机界面偏好，不属于导出参数。
     preview_background: [u8; 3],
     settings: SettingsControls,
@@ -162,8 +164,14 @@ impl AppView {
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
-        let (settings_controls, settings_subscriptions) =
-            SettingsControls::new(settings.preview_background, window, cx);
+        let (settings_controls, settings_subscriptions) = SettingsControls::new(
+            settings.preview_background,
+            settings::preview_max_edge_from_settings(settings.preview_max_edge),
+            settings.light_theme.as_deref(),
+            settings.dark_theme.as_deref(),
+            window,
+            cx,
+        );
 
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
@@ -202,6 +210,7 @@ impl AppView {
             interface_scale: settings
                 .interface_scale
                 .unwrap_or(settings::DEFAULT_INTERFACE_SCALE),
+            preview_max_edge: settings::preview_max_edge_from_settings(settings.preview_max_edge),
             preview_background: settings.preview_background,
             settings: settings_controls,
             settings_feedback: None,
@@ -295,6 +304,7 @@ impl AppView {
                 exif: photo.exif().cloned(),
                 params: self.params.clone(),
                 text_groups: self.build_text_groups(cx),
+                max_edge: self.preview_max_edge,
             },
             None => {
                 self.preview.update(cx, |preview, cx| preview.clear(cx));

@@ -108,6 +108,10 @@ pub struct AppSettings {
     /// 它落在 GPUI 全局主题的 `font_size` 上，而那个值不跨进程保留，所以必须在这里
     /// 单独记一份，否则「设置里选了宽松、重启又变回标准」。
     pub interface_scale: Option<f32>,
+    /// 预览底图的长边上限（px）。`None` 表示使用默认值。
+    ///
+    /// 这只影响界面预览的渲染成本，不改变导出的图片。
+    pub preview_max_edge: Option<i32>,
     /// 导出目录是本机应用偏好，不属于任何一份水印预设。
     pub output_folder: Option<PathBuf>,
     /// 照片展示区域的背景色。它只影响预览，不参与导出。
@@ -129,6 +133,7 @@ impl Default for AppSettings {
             light_theme: None,
             dark_theme: None,
             interface_scale: None,
+            preview_max_edge: None,
             output_folder: None,
             preview_background: DEFAULT_PREVIEW_BACKGROUND,
         }

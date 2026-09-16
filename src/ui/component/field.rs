@@ -87,7 +87,7 @@ pub(in crate::ui::app) struct NumberField {
 
 impl NumberField {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn new(
+    pub(in crate::ui::app) fn new(
         value: f64,
         min: f64,
         max: f64,
@@ -101,8 +101,10 @@ impl NumberField {
         let display = value * scale + 0.0;
         let slider = cx.new(|_| {
             SliderState::new()
-                .min(min as f32)
                 .max(max as f32)
+                // `SliderState::min` immediately recomputes the thumb with its current max
+                // (100 by default), so ranges above 100 must install max first.
+                .min(min as f32)
                 .step(step as f32)
                 .default_value(display as f32)
         });
@@ -126,7 +128,7 @@ impl NumberField {
     }
 
     /// 把两条输入路径接到同一个写回动作上。
-    pub(super) fn subscribe(
+    pub(in crate::ui::app) fn subscribe(
         &self,
         window: &mut Window,
         cx: &mut Context<AppView>,
@@ -187,7 +189,7 @@ impl NumberField {
         write_input(&self.input, display, self.decimals, window, cx);
     }
 
-    pub(super) fn render(
+    pub(in crate::ui::app) fn render(
         &self,
         label: impl Into<SharedString>,
         disabled: bool,

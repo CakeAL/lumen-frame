@@ -21,11 +21,11 @@ use crate::{
     process::text::TextGroup,
 };
 
-/// 预览底图的长边上限（px）。
+/// 100% 预览底图的长边上限（px）。
 ///
 /// 预览要的是看清效果，不是像素级还原：底图缩到这个尺寸后，合成耗时基本与原图大小
 /// 无关，拖动滑块才跟得上手。
-pub const PREVIEW_MAX_EDGE: i32 = 1600;
+pub const PREVIEW_DEFAULT_MAX_EDGE: i32 = 1600;
 
 /// 队列缩略图的长边上限（px）。
 pub const THUMBNAIL_MAX_EDGE: i32 = 320;
@@ -40,12 +40,14 @@ pub struct PreviewJob {
     pub exif: Option<ExifInfo>,
     pub params: WatermarkParams,
     pub text_groups: Vec<TextGroup>,
+    /// 本次渲染的预览底图长边上限；由设置页在请求时固定下来。
+    pub max_edge: i32,
 }
 
 /// 按预览分辨率渲染水印照片。会阻塞，请在后台线程调用。
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
     ensure_vips();
-    let base = load_scaled(&job.path, PREVIEW_MAX_EDGE).context("读取预览底图")?;
+    let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;
     let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text_groups)
         .context("合成预览")?;
     to_render_image(&composed).context("转换预览位图")
