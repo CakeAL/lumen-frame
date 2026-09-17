@@ -27,6 +27,7 @@ impl AppView {
         match self.page {
             AppPage::Watermark => self.render_watermark_workspace(cx).into_any_element(),
             AppPage::GainMap => self.render_gainmap_page(cx).into_any_element(),
+            AppPage::ColourGainMap => self.render_colour_gainmap_page(cx).into_any_element(),
             AppPage::Settings => self.render_settings_page(cx).into_any_element(),
         }
     }

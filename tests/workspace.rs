@@ -211,6 +211,19 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
 }
 
+/// 彩色恢复 Gain Map 是独立工作流；切换到空页面时也必须能渲染其引导状态。
+#[gpui_kit::test]
+fn colour_gainmap_page_renders_and_returns(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+
+    view.update_in(cx, |view, _, cx| view.go_to(AppPage::ColourGainMap, cx));
+    cx.run_until_parked();
+
+    view.update_in(cx, |view, _, cx| view.go_to(AppPage::Watermark, cx));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
+}
+
 /// 文字参数入口保持在检查器里，详细设置另开窗口，不能遮挡主窗口的照片。
 #[gpui_kit::test]
 fn text_group_editor_opens_in_a_separate_window(cx: &mut TestAppContext) {

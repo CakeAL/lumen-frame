@@ -34,6 +34,9 @@ impl AppView {
                         this.selected_index(0)
                     })
                     .when(self.page == AppPage::GainMap, |this| this.selected_index(1))
+                    .when(self.page == AppPage::ColourGainMap, |this| {
+                        this.selected_index(2)
+                    })
                     .child(
                         Tab::new()
                             .prefix(Icon::new(IconName::Frame).left_2())
@@ -42,12 +45,18 @@ impl AppView {
                     .child(
                         Tab::new()
                             .prefix(Icon::new(IconName::Images).left_2())
-                            .label("HDR Gain Map"),
+                            .label("预览Gainmap"),
+                    )
+                    .child(
+                        Tab::new()
+                            .prefix(Icon::new(IconName::Palette).left_2())
+                            .label("生成黑白+彩色Gainmap"),
                     )
                     .on_click(cx.listener(|this, index: &usize, _, cx| {
                         let page = match index {
                             0 => AppPage::Watermark,
                             1 => AppPage::GainMap,
+                            2 => AppPage::ColourGainMap,
                             _ => return,
                         };
                         this.go_to(page, cx);

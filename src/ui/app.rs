@@ -33,13 +33,14 @@ use crate::photo::ExifInfo;
 use crate::process::text::TextGroup;
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
-use super::image::{PreviewJob, export_gainmap, render_thumbnail};
+use super::image::{PreviewJob, export_colour_gainmap, export_gainmap, render_thumbnail};
 use component::field::index_of;
 use component::inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
 use page::{
+    colour_gainmap::ColourGainMapPageState,
     gainmap::GainMapPageState,
     settings::{self, SettingsControls},
 };
@@ -58,6 +59,7 @@ pub enum Thumbnail {
 pub enum AppPage {
     Watermark,
     GainMap,
+    ColourGainMap,
     Settings,
 }
 
@@ -97,6 +99,8 @@ pub struct AppView {
     preview: Entity<WatermarkPreview>,
     /// 与水印工作区完全隔离的 HDR 解析页状态。
     gainmap: GainMapPageState,
+    /// 黑白底图 + 彩色恢复 gain map 的独立生成页状态。
+    colour_gainmap: ColourGainMapPageState,
     export: ExportState,
 
     preset_names: Vec<SharedString>,
@@ -135,6 +139,7 @@ impl AppView {
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let gainmap = GainMapPageState::new(cx);
+        let colour_gainmap = ColourGainMapPageState::new(cx);
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -207,6 +212,7 @@ impl AppView {
             controls,
             preview,
             gainmap,
+            colour_gainmap,
             export: ExportState::Idle,
             preset_names,
             preset_previews,
@@ -380,6 +386,60 @@ impl AppView {
         .detach();
     }
 
+    pub(super) fn export_colour_gainmap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.colour_gainmap.path().map(PathBuf::from) else {
+            return;
+        };
+        if self.colour_gainmap.is_exporting() {
+            return;
+        }
+        let window_handle = window.window_handle();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("选择彩色恢复 Gain Map 保存文件夹".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let output = folder.join(format!(
+                "{}_color_gainmap.jpg",
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("image")
+            ));
+            this.update(cx, |this, cx| this.colour_gainmap.set_exporting(true, cx))
+                .ok();
+            let result = cx
+                .background_spawn(
+                    async move { export_colour_gainmap(&path, &output).map(|_| output) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.colour_gainmap.set_exporting(false, cx);
+                let notification = match result {
+                    Ok(output) => Notification::success(format!(
+                        "彩色恢复 Gain Map 已导出到 {}",
+                        output.display()
+                    )),
+                    Err(error) => {
+                        Notification::error(format!("生成彩色恢复 Gain Map 失败：{error:#}"))
+                    }
+                };
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    window.push_notification(notification, cx)
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     // MARK: 页面与照片
 
     pub fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
@@ -430,6 +490,24 @@ impl AppView {
         .detach();
     }
 
+    /// 通过系统选择器选择一张照片来生成彩色恢复 Gain Map。
+    pub(super) fn pick_colour_gainmap_photo(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择要生成彩色恢复 Gain Map 的照片".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            this.update(cx, |this, cx| this.add_colour_gainmap_photo(paths, cx))
+                .ok();
+        })
+        .detach();
+    }
+
     /// Gain Map 页面一次只解析一张图；拖入多张时明确使用第一张支持的图片。
     pub(super) fn add_gainmap_photo(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let Some(path) = paths.into_iter().find(|path| is_supported_image(path)) else {
@@ -437,6 +515,15 @@ impl AppView {
             return;
         };
         self.gainmap.select(path, cx);
+        cx.notify();
+    }
+
+    pub(super) fn add_colour_gainmap_photo(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(path) = paths.into_iter().find(|path| is_supported_image(path)) else {
+            cx.notify();
+            return;
+        };
+        self.colour_gainmap.select(path, cx);
         cx.notify();
     }
 

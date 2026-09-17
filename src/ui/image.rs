@@ -15,7 +15,7 @@ use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Rgba};
 use libvips::{VipsImage, ops};
 
-use crate::process::gain_map;
+use crate::process::{colour_gainmap, gain_map};
 use crate::{
     params::WatermarkParams,
     photo::{ExifInfo, Photo, ensure_vips},
@@ -88,6 +88,33 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
         .context("转换 gain map 预览")
 }
 
+/// 生成彩色恢复 gain map 的黑白底图预览。会阻塞，请在后台线程调用。
+pub fn render_colour_gainmap_preview(path: &Path) -> Result<Arc<RenderImage>> {
+    ensure_vips();
+    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)
+        .context("生成彩色恢复 Gain Map")?;
+    let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
+    to_render_image(&image).context("转换彩色恢复 Gain Map 预览")
+}
+
+/// 把任意照片写成黑白底图 + 彩色恢复 gain map 的 JPEG。
+pub fn export_colour_gainmap(path: &Path, output: &Path) -> Result<()> {
+    ensure_vips();
+    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)?;
+    ops::jpegsave_with_opts(
+        &image,
+        &output.to_string_lossy(),
+        &ops::JpegsaveOptions {
+            q: 95,
+            keep: ops::ForeignKeep::All,
+            profile: None,
+            ..Default::default()
+        },
+    )?;
+    gain_map::mark_jpeg_gainmap(output)?;
+    Ok(())
+}
+
 /// 导出输入图片中保存的原始 gain map。无 gain map 时返回 `Ok(false)`。
 pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
     ensure_vips();
@@ -114,6 +141,14 @@ fn load_scaled(path: &Path, max_edge: i32) -> Result<VipsImage> {
         },
     )
     .map_err(anyhow::Error::from)
+}
+
+fn shrink_to_edge(image: &VipsImage, max_edge: i32) -> Result<VipsImage> {
+    let edge = image.get_width().max(image.get_height());
+    if edge <= max_edge {
+        return ops::copy(image).map_err(anyhow::Error::from);
+    }
+    ops::resize(image, max_edge as f64 / edge as f64).map_err(anyhow::Error::from)
 }
 
 /// vips 图像 → GPUI 位图。

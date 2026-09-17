@@ -11,5 +11,6 @@ pub mod image;
 pub use app::{AppPage, AppView, ExportState, Thumbnail};
 /// 保持预览任务的公共入口稳定，内部实现归入图像适配层。
 pub use image::{
-    PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail,
+    PreviewJob, export_colour_gainmap, export_gainmap, render_colour_gainmap_preview,
+    render_gainmap_preview, render_preview, render_thumbnail,
 };
