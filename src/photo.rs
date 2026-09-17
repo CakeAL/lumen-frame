@@ -301,7 +301,11 @@ impl Photo {
                     ..Default::default()
                 },
             )
-            .context("save jpg failed")
+            .context("save jpg failed")?;
+            if gain_map::get_gainmap(&flattened).is_some() {
+                gain_map::mark_jpeg_gainmap(&output_path)?;
+            }
+            Ok(())
         } else {
             Err(anyhow!("no output folder specified"))
         }

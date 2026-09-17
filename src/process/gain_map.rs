@@ -1,4 +1,5 @@
 use libvips::{Result, VipsImage, ops};
+use std::path::Path;
 
 /// 取得 VipsImage 的底层指针。
 ///
@@ -34,6 +35,28 @@ pub fn set_gainmap(img: &mut VipsImage, gainmap: &VipsImage) {
         let gm = image_raw(gainmap);
         let name = std::ffi::CString::new("gainmap").unwrap();
         libvips::bindings::vips_image_set_image(raw, name.as_ptr(), gm);
+
+        // jpegsave 以 gainmap-data 的存在来切换到 uhdrsave。新建的普通 JPEG 没有这项，
+        // 即使已有 "gainmap" 图像也会被当作普通 JPEG 保存。uhdrsave 会优先使用上面的
+        // 未压缩 gainmap，因此这里的单字节 blob 只作为保存路径标记，不会写入输出。
+        let marker = 0u8;
+        let name = std::ffi::CString::new("gainmap-data").unwrap();
+        libvips::bindings::vips_image_set_blob_copy(
+            raw,
+            name.as_ptr(),
+            (&marker as *const u8).cast(),
+            1,
+        );
+    }
+}
+
+/// gain map 是否仍携带 ICC profile，用于导出前的回归测试。
+pub fn has_icc_profile(img: &VipsImage) -> bool {
+    unsafe {
+        libvips::bindings::vips_image_get_typeof(
+            image_raw(img),
+            libvips::bindings::VIPS_META_ICC_NAME.as_ptr().cast(),
+        ) != 0
     }
 }
 
@@ -44,6 +67,149 @@ pub fn set_scale_factor(img: &mut VipsImage, scale: f64) {
         let name = std::ffi::CString::new("gainmap-scale-factor").unwrap();
         libvips::bindings::vips_image_set_double(raw, name.as_ptr(), scale);
     }
+}
+
+/// 为三通道 gain map 写入与像素编码匹配的 Ultra HDR 元数据。
+pub fn set_rgb_gainmap_metadata(
+    img: &mut VipsImage,
+    min_content_boost: [f64; 3],
+    max_content_boost: [f64; 3],
+) {
+    // 新的彩色恢复图不应让极暗像素的异常大 gain 抬高显示门槛。将完整应用 gain map
+    // 的门槛定为 2× SDR 白点，能在常见 HDR 显示器（含 macOS Preview）完整恢复彩色。
+    const TARGET_DISPLAY_BOOST: f64 = 2.0;
+    unsafe {
+        let raw = image_raw(img);
+        let set_array = |name: &str, values: &[f64; 3]| {
+            let name = std::ffi::CString::new(name).unwrap();
+            libvips::bindings::vips_image_set_array_double(raw, name.as_ptr(), values.as_ptr(), 3);
+        };
+        let set_double = |name: &str, value: f64| {
+            let name = std::ffi::CString::new(name).unwrap();
+            libvips::bindings::vips_image_set_double(raw, name.as_ptr(), value);
+        };
+        let set_int = |name: &str, value: i32| {
+            let name = std::ffi::CString::new(name).unwrap();
+            libvips::bindings::vips_image_set_int(raw, name.as_ptr(), value);
+        };
+
+        set_array("gainmap-min-content-boost", &min_content_boost);
+        set_array("gainmap-max-content-boost", &max_content_boost);
+        set_array("gainmap-gamma", &[1.0; 3]);
+        set_array("gainmap-offset-sdr", &[1.0 / 64.0; 3]);
+        set_array("gainmap-offset-hdr", &[1.0 / 64.0; 3]);
+        set_double("gainmap-hdr-capacity-min", 1.0);
+        set_double(
+            "gainmap-hdr-capacity-max",
+            max_content_boost
+                .into_iter()
+                .fold(1.0, f64::max)
+                .min(TARGET_DISPLAY_BOOST),
+        );
+        set_int("gainmap-use-base-cg", 1);
+    }
+}
+
+/// 为 libultrahdr 写出的 MPF 辅助 JPEG 补充 GContainer XMP 语义。
+///
+/// libultrahdr 的 MPF 条目只标记第二张 JPEG；部分查看器（包括 MediaInfo）还需要
+/// `Item:Semantic="GainMap"` 才会把它显示为 Gain map。
+pub fn mark_jpeg_gainmap(path: &Path) -> anyhow::Result<()> {
+    let mut jpeg = std::fs::read(path)?;
+    if jpeg
+        .windows(b"Item:Semantic=\"GainMap\"".len())
+        .any(|v| v == b"Item:Semantic=\"GainMap\"")
+    {
+        return Ok(());
+    }
+    let (mpf, entries) = find_mpf_entries(&jpeg)?;
+    let primary_size = read_be_u32(&jpeg, entries + 4)?;
+    let secondary_size = read_be_u32(&jpeg, entries + 20)?;
+    let xmp = format!(
+        concat!(
+            "http://ns.adobe.com/xap/1.0/\0",
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">",
+            "<rdf:Description xmlns:Container=\"http://ns.google.com/photos/1.0/container/\" xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\">",
+            "<Container:Directory><rdf:Seq><rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Semantic=\"Primary\" Item:Mime=\"image/jpeg\"/></rdf:li>",
+            "<rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Semantic=\"GainMap\" Item:Mime=\"image/jpeg\" Item:Length=\"{}\"/></rdf:li>",
+            "</rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>"
+        ),
+        secondary_size
+    );
+    let payload = xmp.as_bytes();
+    let length = payload.len() + 2;
+    anyhow::ensure!(length <= u16::MAX as usize, "GContainer XMP 过长");
+    let segment_len = length + 2;
+    write_be_u32(&mut jpeg, entries + 4, primary_size + segment_len as u32)?;
+
+    let mut segment = Vec::with_capacity(segment_len);
+    segment.extend_from_slice(&[0xff, 0xe1]);
+    segment.extend_from_slice(&(length as u16).to_be_bytes());
+    segment.extend_from_slice(payload);
+    jpeg.splice(2..2, segment);
+    std::fs::write(path, jpeg)?;
+    let _ = mpf;
+    Ok(())
+}
+
+fn find_mpf_entries(jpeg: &[u8]) -> anyhow::Result<(usize, usize)> {
+    anyhow::ensure!(jpeg.starts_with(&[0xff, 0xd8]), "不是 JPEG 文件");
+    let mut offset = 2;
+    while offset + 4 <= jpeg.len() {
+        anyhow::ensure!(jpeg[offset] == 0xff, "JPEG 标记损坏");
+        let marker = jpeg[offset + 1];
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let length = read_be_u16(jpeg, offset + 2)? as usize;
+        anyhow::ensure!(
+            length >= 2 && offset + 2 + length <= jpeg.len(),
+            "JPEG 段长度损坏"
+        );
+        let payload = offset + 4;
+        if marker == 0xe2 && jpeg.get(payload..payload + 4) == Some(b"MPF\0") {
+            let tiff = payload + 4;
+            anyhow::ensure!(
+                jpeg.get(tiff..tiff + 8) == Some(b"MM\0*\0\0\0\x08"),
+                "不支持的 MPF 字节序"
+            );
+            let ifd = tiff + 8;
+            let tags = read_be_u16(jpeg, ifd)? as usize;
+            for tag in 0..tags {
+                let entry = ifd + 2 + tag * 12;
+                if read_be_u16(jpeg, entry)? == 0xb002 {
+                    let mp_offset = read_be_u32(jpeg, entry + 8)? as usize;
+                    return Ok((offset, tiff + mp_offset));
+                }
+            }
+        }
+        offset += 2 + length;
+    }
+    anyhow::bail!("JPEG 中未找到 MPF 条目")
+}
+
+fn read_be_u16(data: &[u8], at: usize) -> anyhow::Result<u16> {
+    Ok(u16::from_be_bytes(
+        data.get(at..at + 2)
+            .ok_or_else(|| anyhow::anyhow!("MPF 越界"))?
+            .try_into()?,
+    ))
+}
+
+fn read_be_u32(data: &[u8], at: usize) -> anyhow::Result<u32> {
+    Ok(u32::from_be_bytes(
+        data.get(at..at + 4)
+            .ok_or_else(|| anyhow::anyhow!("MPF 越界"))?
+            .try_into()?,
+    ))
+}
+
+fn write_be_u32(data: &mut [u8], at: usize, value: u32) -> anyhow::Result<()> {
+    let target = data
+        .get_mut(at..at + 4)
+        .ok_or_else(|| anyhow::anyhow!("MPF 越界"))?;
+    target.copy_from_slice(&value.to_be_bytes());
+    Ok(())
 }
 
 /// 构造一个覆盖整个水印画布、但只在中间照片区域保留原始 gain map 的新 gain map。
