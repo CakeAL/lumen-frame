@@ -33,8 +33,9 @@ use crate::photo::ExifInfo;
 use crate::process::text::TextGroup;
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
-use super::image::{PreviewJob, render_thumbnail};
+use super::image::{PreviewJob, export_gainmap, render_thumbnail};
 use component::field::index_of;
+use component::gainmap_preview::GainMapPreview;
 use component::inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
@@ -54,6 +55,7 @@ pub enum Thumbnail {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AppPage {
     Watermark,
+    GainMap,
     Settings,
 }
 
@@ -91,6 +93,9 @@ pub struct AppView {
 
     controls: ParameterControls,
     preview: Entity<WatermarkPreview>,
+    gainmap_preview: Entity<GainMapPreview>,
+    gainmap_show_map: bool,
+    gainmap_feedback: Option<SharedString>,
     export: ExportState,
 
     preset_names: Vec<SharedString>,
@@ -128,6 +133,7 @@ impl AppView {
         let text_group = TextGroup::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
+        let gainmap_preview = cx.new(|_| GainMapPreview::new());
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -199,6 +205,9 @@ impl AppView {
             aspect_choice,
             controls,
             preview,
+            gainmap_preview,
+            gainmap_show_map: true,
+            gainmap_feedback: None,
             export: ExportState::Idle,
             preset_names,
             preset_previews,
@@ -315,11 +324,77 @@ impl AppView {
             .update(cx, |preview, cx| preview.request(job, cx));
     }
 
+    pub(super) fn refresh_gainmap_preview(&self, cx: &mut Context<Self>) {
+        if self.page != AppPage::GainMap {
+            return;
+        }
+        let Some(photo) = self.selected_photo() else {
+            self.gainmap_preview
+                .update(cx, |preview, cx| preview.clear(cx));
+            return;
+        };
+        self.gainmap_preview.update(cx, |preview, cx| {
+            preview.request(photo.path().to_path_buf(), self.gainmap_show_map, cx)
+        });
+    }
+
+    pub(super) fn set_gainmap_view(&mut self, show_map: bool, cx: &mut Context<Self>) {
+        if self.gainmap_show_map != show_map {
+            self.gainmap_show_map = show_map;
+            self.refresh_gainmap_preview(cx);
+            cx.notify();
+        }
+    }
+
+    pub(super) fn export_selected_gainmap(&mut self, cx: &mut Context<Self>) {
+        let Some(photo) = self.selected_photo() else {
+            return;
+        };
+        let path = photo.path().to_path_buf();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("选择 Gain Map 保存文件夹".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let output = folder.join(format!(
+                "{}_gainmap.png",
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("image")
+            ));
+            let result = cx
+                .background_spawn(async move {
+                    export_gainmap(&path, &output).map(|found| (found, output))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.gainmap_feedback = Some(match result {
+                    Ok((true, output)) => format!("已导出到 {}", output.display()).into(),
+                    Ok((false, _)) => "这张图片没有 Gain Map，无法导出。".into(),
+                    Err(error) => format!("导出 Gain Map 失败：{error:#}").into(),
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     // MARK: 页面与照片
 
     pub fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
         if self.page != page {
             self.page = page;
+            if page == AppPage::GainMap {
+                self.refresh_gainmap_preview(cx);
+            }
             cx.notify();
         }
     }
@@ -345,6 +420,54 @@ impl AppView {
             this.update(cx, |this, cx| this.add_photos(paths, cx)).ok();
         })
         .detach();
+    }
+
+    /// 通过系统选择器选择一张图片来解析 gain map。
+    pub(super) fn pick_gainmap_photo(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择要解析的 HDR 照片".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            this.update(cx, |this, cx| this.add_gainmap_photo(paths, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Gain Map 页面一次只解析一张图；拖入多张时明确使用第一张支持的图片。
+    pub(super) fn add_gainmap_photo(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(path) = paths.into_iter().find(|path| is_supported_image(path)) else {
+            self.gainmap_feedback = Some("请选择受支持的图片文件。".into());
+            cx.notify();
+            return;
+        };
+
+        let id = match self.workspace.add(path.clone()) {
+            Some(id) => {
+                self.thumbnails.insert(id, Thumbnail::Pending);
+                self.load_thumbnail(id, path.clone(), cx);
+                self.load_exif(id, path, cx);
+                id
+            }
+            None => self
+                .workspace
+                .photos()
+                .iter()
+                .find(|photo| photo.path() == path)
+                .map(QueuedPhoto::id)
+                .expect("已存在的照片必须仍在工作区中"),
+        };
+        self.workspace.select(id);
+        self.gainmap_feedback = None;
+        self.refresh_preview(cx);
+        self.refresh_gainmap_preview(cx);
+        cx.notify();
     }
 
     /// 选择并保存本机导出目录；它不属于水印预设。
@@ -411,6 +534,7 @@ impl AppView {
         if self.workspace.selected_id().is_none() {
             self.workspace.select(first);
             self.refresh_preview(cx);
+            self.refresh_gainmap_preview(cx);
         }
         cx.notify();
     }
@@ -420,6 +544,7 @@ impl AppView {
             return;
         }
         self.refresh_preview(cx);
+        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -431,6 +556,7 @@ impl AppView {
             return;
         }
         self.refresh_preview(cx);
+        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -440,6 +566,7 @@ impl AppView {
         };
         self.thumbnails.remove(&id);
         self.refresh_preview(cx);
+        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -450,6 +577,7 @@ impl AppView {
         self.thumbnails.clear();
         self.export = ExportState::Idle;
         self.refresh_preview(cx);
+        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 

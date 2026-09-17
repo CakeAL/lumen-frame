@@ -15,6 +15,7 @@ use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Rgba};
 use libvips::{VipsImage, ops};
 
+use crate::process::gain_map;
 use crate::{
     params::WatermarkParams,
     photo::{ExifInfo, Photo, ensure_vips},
@@ -59,6 +60,43 @@ pub fn render_thumbnail(path: &Path) -> Result<Arc<RenderImage>> {
     ensure_vips();
     let base = load_scaled(path, THUMBNAIL_MAX_EDGE).context("读取缩略图")?;
     to_render_image(&base).context("转换缩略图")
+}
+
+/// 按预览尺寸读取原图，或读取并可视化其中的 gain map。
+///
+/// `None` 表示输入图没有 gain map，不是解析失败。
+pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<Arc<RenderImage>>> {
+    ensure_vips();
+    let image = load_scaled(path, PREVIEW_DEFAULT_MAX_EDGE).context("读取 HDR 解析图片")?;
+    if !show_gainmap {
+        return to_render_image(&image).map(Some).context("转换原图预览");
+    }
+    let Some(gainmap) = gain_map::get_gainmap(&image) else {
+        return Ok(None);
+    };
+    let gainmap = if gainmap.get_bands() == 1 {
+        // `VipsImage::clone` 只会复制底层句柄；把同一个所有权句柄交给 bandjoin 后会在
+        // 释放时发生重复释放。单通道 gain map 要明确创建三份独立的 vips 图像。
+        let green = ops::copy(&gainmap)?;
+        let blue = ops::copy(&gainmap)?;
+        ops::bandjoin(&mut [gainmap, green, blue])?
+    } else {
+        gainmap
+    };
+    to_render_image(&gainmap)
+        .map(Some)
+        .context("转换 gain map 预览")
+}
+
+/// 导出输入图片中保存的原始 gain map。无 gain map 时返回 `Ok(false)`。
+pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
+    ensure_vips();
+    let image = Photo::load_base_image(path)?;
+    let Some(gainmap) = gain_map::get_gainmap(&image) else {
+        return Ok(false);
+    };
+    ops::pngsave(&gainmap, &output.to_string_lossy()).context("保存 gain map")?;
+    Ok(true)
 }
 
 /// 读取图片并等比缩小到 `max_edge` 的方框内。

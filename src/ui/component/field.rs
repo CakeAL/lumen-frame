@@ -451,7 +451,7 @@ pub(super) fn hsla_to_rgb(color: Hsla) -> [u8; 3] {
     ]
 }
 
-pub(super) fn rgb_to_hsla(rgb: [u8; 3]) -> Hsla {
+pub(in crate::ui::app) fn rgb_to_hsla(rgb: [u8; 3]) -> Hsla {
     Rgba {
         r: rgb[0] as f32 / 255.0,
         g: rgb[1] as f32 / 255.0,

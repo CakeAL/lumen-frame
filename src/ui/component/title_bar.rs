@@ -1,8 +1,9 @@
 //! 主窗口标题栏与页面导航。
 
 use gpui_kit::Context;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, IconName, Sizable as _, TitleBar,
+    Icon, Sizable as _, TitleBar,
     button::Button,
     h_flex,
     tab::{Tab, TabBar},
@@ -32,12 +33,25 @@ impl AppView {
                     .when(self.page == AppPage::Watermark, |this| {
                         this.selected_index(0)
                     })
+                    .when(self.page == AppPage::GainMap, |this| this.selected_index(1))
                     .child(
                         Tab::new()
                             .prefix(Icon::new(IconName::Frame).left_2())
                             .label("边框水印"),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| this.go_to(AppPage::Watermark, cx))),
+                    .child(
+                        Tab::new()
+                            .prefix(Icon::new(IconName::Images).left_2())
+                            .label("HDR Gain Map"),
+                    )
+                    .on_click(cx.listener(|this, index: &usize, _, cx| {
+                        let page = match index {
+                            0 => AppPage::Watermark,
+                            1 => AppPage::GainMap,
+                            _ => return,
+                        };
+                        this.go_to(page, cx);
+                    })),
             )
             .child(
                 Button::new("app-settings")

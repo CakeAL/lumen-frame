@@ -25,6 +25,7 @@ swash = "0.2"
 peniko = "0.6"
 # ui
 gpui-kit = "0.6.1"
+gpui-kit-assets = "0.6.1"
 
 [dev-dependencies]
 # GPUI 的测试上下文（TestAppContext / VisualTestContext）由这个 feature 提供。

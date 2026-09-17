@@ -3951,6 +3951,7 @@ dependencies = [
  "chrono",
  "dirs 7.0.0",
  "gpui-kit",
+ "gpui-kit-assets",
  "image",
  "libvips",
  "nom-exif",

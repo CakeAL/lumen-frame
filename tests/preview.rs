@@ -10,7 +10,7 @@ use lumen_frame::{
     params::WatermarkParams,
     photo::ExifInfo,
     process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
-    ui::{PreviewJob, render_preview, render_thumbnail},
+    ui::{PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail},
 };
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
@@ -130,6 +130,40 @@ fn thumbnail_stays_within_its_box() {
 
     assert!(size.width.0 <= 320 && size.height.0 <= 320);
     assert!(size.width.0 > 0 && size.height.0 > 0);
+}
+
+#[test]
+fn gainmap_preview_reads_the_embedded_map_and_base_image() {
+    assert!(
+        render_gainmap_preview(Path::new(PHOTO), true)
+            .unwrap()
+            .is_some(),
+        "HDR 测试图片应能解析出 gain map"
+    );
+    assert!(
+        render_gainmap_preview(Path::new(PHOTO), false)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn single_channel_gainmap_can_be_previewed_and_exported() {
+    let source = Path::new("./test_images/ultra_hdr.jpg");
+    assert!(
+        render_gainmap_preview(source, true).unwrap().is_some(),
+        "单通道 HDR gain map 应可转换为预览位图"
+    );
+
+    let output = std::env::temp_dir().join(format!(
+        "lumen-frame-gainmap-{}-{}.png",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("preview-test")
+    ));
+    let _ = std::fs::remove_file(&output);
+    assert!(export_gainmap(source, &output).unwrap());
+    assert!(output.is_file(), "gain map 导出文件不存在");
+    std::fs::remove_file(output).unwrap();
 }
 
 #[test]
