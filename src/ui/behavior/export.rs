@@ -5,7 +5,8 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::{Context, prelude::*};
+use gpui_kit::component::{WindowExt as _, notification::Notification};
+use gpui_kit::{Context, Window, prelude::*};
 
 use crate::photo::Photo;
 
@@ -16,7 +17,7 @@ impl AppView {
     ///
     /// 逐张串行处理而不是并发：libvips 自己就吃满多核，再叠并发只会让每张都变慢，还会
     /// 让进度读数失去意义。
-    pub(in crate::ui::app) fn export_all(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui::app) fn export_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.is_empty() || matches!(self.export, ExportState::Running { .. }) {
             return;
         }
@@ -33,6 +34,7 @@ impl AppView {
             .map(|photo| photo.path().to_path_buf())
             .collect();
         let total = paths.len();
+        let window_handle = window.window_handle();
 
         self.export = ExportState::Running {
             completed: 0,
@@ -74,6 +76,12 @@ impl AppView {
                     succeeded,
                     failed: total - succeeded,
                 };
+                if succeeded > 0 {
+                    let message = format!("已成功导出 {succeeded} 张照片");
+                    let _ = window_handle.update(cx, |_, window, cx| {
+                        window.push_notification(Notification::success(message), cx);
+                    });
+                }
                 cx.notify();
             })
             .ok();

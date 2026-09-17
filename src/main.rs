@@ -50,7 +50,7 @@ fn main() {
     point_vips_at_bundled_modules();
 
     let app = gpui_kit::application()
-        .with_assets(gpui::assets::AllAssets)
+        .with_assets(gpui_kit::assets::AllAssets)
         // GPUI 的默认退出策略是 `QuitMode::Default`，它的定义就是
         // `cfg!(not(target_os = "macos"))` —— 也就是说 macOS 上关掉窗口后进程会留在
         // Dock 里，这是框架刻意的平台默认值。一个单窗口的照片工具没有「关掉窗口还继续

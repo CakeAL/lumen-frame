@@ -1,16 +1,75 @@
 //! HDR gain map 解析页面。
 
+use std::path::{Path, PathBuf};
+
 use gpui_kit::component::StyledExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, button::Button, h_flex,
     radio::RadioGroup, v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, ExternalPaths, FontWeight, ObjectFit, div, img};
+use gpui_kit::{Context, Entity, ExternalPaths, FontWeight, ObjectFit, div, img};
 
 use super::super::AppView;
 use super::super::component::field::rgb_to_hsla;
 use super::super::component::gainmap_preview::GainMapPreviewState;
+
+/// HDR 解析页自己的短生命周期状态。它不属于水印工作区，也不会进入照片队列。
+pub(in crate::ui::app) struct GainMapPageState {
+    path: Option<PathBuf>,
+    preview: Entity<super::super::component::gainmap_preview::GainMapPreview>,
+    show_gainmap: bool,
+}
+
+impl GainMapPageState {
+    pub(in crate::ui::app) fn new(cx: &mut Context<AppView>) -> Self {
+        Self {
+            path: None,
+            preview: cx.new(|_| super::super::component::gainmap_preview::GainMapPreview::new()),
+            show_gainmap: true,
+        }
+    }
+
+    pub(in crate::ui::app) fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub(in crate::ui::app) fn preview(
+        &self,
+    ) -> &Entity<super::super::component::gainmap_preview::GainMapPreview> {
+        &self.preview
+    }
+
+    pub(in crate::ui::app) fn show_gainmap(&self) -> bool {
+        self.show_gainmap
+    }
+
+    pub(in crate::ui::app) fn select(&mut self, path: PathBuf, cx: &mut Context<AppView>) {
+        self.path = Some(path);
+        self.request_preview(cx);
+    }
+
+    pub(in crate::ui::app) fn set_show_gainmap(
+        &mut self,
+        show_gainmap: bool,
+        cx: &mut Context<AppView>,
+    ) {
+        if self.show_gainmap != show_gainmap {
+            self.show_gainmap = show_gainmap;
+            self.request_preview(cx);
+        }
+    }
+
+    fn request_preview(&self, cx: &mut Context<AppView>) {
+        let Some(path) = self.path.clone() else {
+            self.preview.update(cx, |preview, cx| preview.clear(cx));
+            return;
+        };
+        self.preview.update(cx, |preview, cx| {
+            preview.request(path, self.show_gainmap, cx);
+        });
+    }
+}
 
 impl AppView {
     pub(in crate::ui::app) fn render_gainmap_page(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -53,7 +112,7 @@ impl AppView {
                     .child(
                         RadioGroup::horizontal("gainmap-view")
                             .children(vec!["原图", "Gain Map"])
-                            .selected_index(Some(if self.gainmap_show_map { 1 } else { 0 }))
+                            .selected_index(Some(if self.gainmap.show_gainmap() { 1 } else { 0 }))
                             .on_click(cx.listener(|this, index: &usize, _, cx| {
                                 this.set_gainmap_view(*index == 1, cx);
                             })),
@@ -62,16 +121,16 @@ impl AppView {
                         Button::new("gainmap-export")
                             .label("导出 Gain Map…")
                             .small()
-                            .disabled(self.selected_photo_id().is_none())
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.export_selected_gainmap(cx)),
-                            ),
+                            .disabled(self.gainmap.path().is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.export_selected_gainmap(window, cx)
+                            })),
                     ),
             )
     }
 
     fn render_gainmap_canvas(&self, cx: &Context<Self>) -> impl IntoElement {
-        let content = match self.gainmap_preview.read(cx).state() {
+        let content = match self.gainmap.preview().read(cx).state() {
             GainMapPreviewState::Empty => div()
                 .text_color(cx.theme().muted_foreground)
                 .child("添加或选择一张照片以解析 HDR Gain Map")
@@ -105,15 +164,5 @@ impl AppView {
             .bg(rgb_to_hsla(self.preview_background))
             .p_6()
             .child(content)
-            .when_some(self.gainmap_feedback.clone(), |this, feedback| {
-                this.child(
-                    div()
-                        .absolute()
-                        .bottom_4()
-                        .text_sm()
-                        .text_color(cx.theme().foreground)
-                        .child(feedback),
-                )
-            })
     }
 }

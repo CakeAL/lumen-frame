@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::{Root, Theme, WindowExt as _};
+use gpui_kit::component::{Root, Theme, WindowExt as _, notification::Notification};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, Context, Entity, PathPromptOptions, RenderImage, SharedString, Subscription, Window,
@@ -35,12 +35,14 @@ use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use super::image::{PreviewJob, export_gainmap, render_thumbnail};
 use component::field::index_of;
-use component::gainmap_preview::GainMapPreview;
 use component::inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
-use page::settings::{self, SettingsControls};
+use page::{
+    gainmap::GainMapPageState,
+    settings::{self, SettingsControls},
+};
 
 /// 队列卡片的缩略图状态。
 ///
@@ -93,9 +95,8 @@ pub struct AppView {
 
     controls: ParameterControls,
     preview: Entity<WatermarkPreview>,
-    gainmap_preview: Entity<GainMapPreview>,
-    gainmap_show_map: bool,
-    gainmap_feedback: Option<SharedString>,
+    /// 与水印工作区完全隔离的 HDR 解析页状态。
+    gainmap: GainMapPageState,
     export: ExportState,
 
     preset_names: Vec<SharedString>,
@@ -133,7 +134,7 @@ impl AppView {
         let text_group = TextGroup::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
-        let gainmap_preview = cx.new(|_| GainMapPreview::new());
+        let gainmap = GainMapPageState::new(cx);
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -205,9 +206,7 @@ impl AppView {
             aspect_choice,
             controls,
             preview,
-            gainmap_preview,
-            gainmap_show_map: true,
-            gainmap_feedback: None,
+            gainmap,
             export: ExportState::Idle,
             preset_names,
             preset_previews,
@@ -324,33 +323,16 @@ impl AppView {
             .update(cx, |preview, cx| preview.request(job, cx));
     }
 
-    pub(super) fn refresh_gainmap_preview(&self, cx: &mut Context<Self>) {
-        if self.page != AppPage::GainMap {
-            return;
-        }
-        let Some(photo) = self.selected_photo() else {
-            self.gainmap_preview
-                .update(cx, |preview, cx| preview.clear(cx));
-            return;
-        };
-        self.gainmap_preview.update(cx, |preview, cx| {
-            preview.request(photo.path().to_path_buf(), self.gainmap_show_map, cx)
-        });
-    }
-
     pub(super) fn set_gainmap_view(&mut self, show_map: bool, cx: &mut Context<Self>) {
-        if self.gainmap_show_map != show_map {
-            self.gainmap_show_map = show_map;
-            self.refresh_gainmap_preview(cx);
-            cx.notify();
-        }
+        self.gainmap.set_show_gainmap(show_map, cx);
+        cx.notify();
     }
 
-    pub(super) fn export_selected_gainmap(&mut self, cx: &mut Context<Self>) {
-        let Some(photo) = self.selected_photo() else {
+    pub(super) fn export_selected_gainmap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.gainmap.path().map(PathBuf::from) else {
             return;
         };
-        let path = photo.path().to_path_buf();
+        let window_handle = window.window_handle();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -375,12 +357,23 @@ impl AppView {
                     export_gainmap(&path, &output).map(|found| (found, output))
                 })
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                this.gainmap_feedback = Some(match result {
-                    Ok((true, output)) => format!("已导出到 {}", output.display()).into(),
-                    Ok((false, _)) => "这张图片没有 Gain Map，无法导出。".into(),
-                    Err(error) => format!("导出 Gain Map 失败：{error:#}").into(),
-                });
+            let _ = this.update(cx, |_this, cx| {
+                let message = match result {
+                    Ok((true, output)) => {
+                        let message = format!("Gain Map 已导出到 {}", output.display());
+                        let _ = window_handle.update(cx, |_, window, cx| {
+                            window.push_notification(Notification::success(message), cx);
+                        });
+                        None
+                    }
+                    Ok((false, _)) => Some("这张图片没有 Gain Map，无法导出。".to_string()),
+                    Err(error) => Some(format!("导出 Gain Map 失败：{error:#}")),
+                };
+                if let Some(message) = message {
+                    let _ = window_handle.update(cx, |_, window, cx| {
+                        window.push_notification(Notification::error(message), cx);
+                    });
+                }
                 cx.notify();
             });
         })
@@ -392,9 +385,6 @@ impl AppView {
     pub fn go_to(&mut self, page: AppPage, cx: &mut Context<Self>) {
         if self.page != page {
             self.page = page;
-            if page == AppPage::GainMap {
-                self.refresh_gainmap_preview(cx);
-            }
             cx.notify();
         }
     }
@@ -443,30 +433,10 @@ impl AppView {
     /// Gain Map 页面一次只解析一张图；拖入多张时明确使用第一张支持的图片。
     pub(super) fn add_gainmap_photo(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let Some(path) = paths.into_iter().find(|path| is_supported_image(path)) else {
-            self.gainmap_feedback = Some("请选择受支持的图片文件。".into());
             cx.notify();
             return;
         };
-
-        let id = match self.workspace.add(path.clone()) {
-            Some(id) => {
-                self.thumbnails.insert(id, Thumbnail::Pending);
-                self.load_thumbnail(id, path.clone(), cx);
-                self.load_exif(id, path, cx);
-                id
-            }
-            None => self
-                .workspace
-                .photos()
-                .iter()
-                .find(|photo| photo.path() == path)
-                .map(QueuedPhoto::id)
-                .expect("已存在的照片必须仍在工作区中"),
-        };
-        self.workspace.select(id);
-        self.gainmap_feedback = None;
-        self.refresh_preview(cx);
-        self.refresh_gainmap_preview(cx);
+        self.gainmap.select(path, cx);
         cx.notify();
     }
 
@@ -534,7 +504,6 @@ impl AppView {
         if self.workspace.selected_id().is_none() {
             self.workspace.select(first);
             self.refresh_preview(cx);
-            self.refresh_gainmap_preview(cx);
         }
         cx.notify();
     }
@@ -544,7 +513,6 @@ impl AppView {
             return;
         }
         self.refresh_preview(cx);
-        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -556,7 +524,6 @@ impl AppView {
             return;
         }
         self.refresh_preview(cx);
-        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -566,7 +533,6 @@ impl AppView {
         };
         self.thumbnails.remove(&id);
         self.refresh_preview(cx);
-        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 
@@ -577,7 +543,6 @@ impl AppView {
         self.thumbnails.clear();
         self.export = ExportState::Idle;
         self.refresh_preview(cx);
-        self.refresh_gainmap_preview(cx);
         cx.notify();
     }
 

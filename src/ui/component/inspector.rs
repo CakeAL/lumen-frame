@@ -883,7 +883,7 @@ impl AppView {
                     .primary()
                     .w_full()
                     .disabled(total == 0 || matches!(self.export, ExportState::Running { .. }))
-                    .on_click(cx.listener(|this, _, _, cx| this.export_all(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.export_all(window, cx))),
             )
             .when(!status.is_empty(), |this| this.child(hint(status, cx)))
             .child(hint(
