@@ -6,6 +6,7 @@ pub(super) mod colour_gainmap_preview;
 pub(super) mod field;
 pub(super) mod gainmap_preview;
 pub(super) mod inspector;
+pub(super) mod motion_photo_preview;
 pub(super) mod preview;
 pub(super) mod queue;
 pub(super) mod text_section;

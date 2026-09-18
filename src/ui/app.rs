@@ -30,6 +30,7 @@ use gpui_kit::{
 use crate::config::{self, AppearanceMode, WatermarkPreset};
 use crate::params::WatermarkParams;
 use crate::photo::ExifInfo;
+use crate::process::motion_photo::{MotionPhotoOptions, export_motion_photo};
 use crate::process::text::TextGroup;
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
@@ -40,7 +41,7 @@ use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
 use page::{
-    colour_gainmap::ColourGainMapPageState,
+    other_tools::ColourGainMapPageState,
     gainmap::GainMapPageState,
     settings::{self, SettingsControls},
 };
@@ -398,7 +399,7 @@ impl AppView {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("选择彩色恢复 Gain Map 保存文件夹".into()),
+            prompt: Some("选择保存文件夹".into()),
         });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = prompt.await else {
@@ -424,12 +425,78 @@ impl AppView {
                 this.colour_gainmap.set_exporting(false, cx);
                 let notification = match result {
                     Ok(output) => Notification::success(format!(
-                        "彩色恢复 Gain Map 已导出到 {}",
+                        "黑白+彩色 Gain Map 已导出到 {}",
                         output.display()
                     )),
                     Err(error) => {
-                        Notification::error(format!("生成彩色恢复 Gain Map 失败：{error:#}"))
+                        Notification::error(format!("生成黑白+彩色 Gain Map 失败：{error:#}"))
                     }
+                };
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    window.push_notification(notification, cx)
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn export_motion_photo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.colour_gainmap.video_path().map(PathBuf::from) else {
+            return;
+        };
+        if self.colour_gainmap.is_motion_exporting() {
+            return;
+        }
+        let (start, end, cover) = (
+            self.colour_gainmap.motion_start(),
+            self.colour_gainmap.motion_end(),
+            self.colour_gainmap.motion_cover(),
+        );
+        let window_handle = window.window_handle();
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("选择 Motion Photo 保存文件夹".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let output = folder.join(format!(
+                "{}_motion_photo.jpg",
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("video")
+            ));
+            this.update(cx, |this, cx| {
+                this.colour_gainmap.set_motion_exporting(true, cx)
+            })
+            .ok();
+            let result = cx
+                .background_spawn(async move {
+                    let options = MotionPhotoOptions {
+                        video_path: &path,
+                        output_path: &output,
+                        start,
+                        end,
+                        cover_time: cover,
+                        jpeg_quality: 92,
+                    };
+                    export_motion_photo(&options).map(|_| output)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.colour_gainmap.set_motion_exporting(false, cx);
+                let notification = match result {
+                    Ok(output) => {
+                        Notification::success(format!("Motion Photo 已导出到 {}", output.display()))
+                    }
+                    Err(error) => Notification::error(format!("生成 Motion Photo 失败：{error:#}")),
                 };
                 let _ = window_handle.update(cx, |_, window, cx| {
                     window.push_notification(notification, cx)
@@ -508,6 +575,24 @@ impl AppView {
         .detach();
     }
 
+    /// Motion Photo 只接收 MP4 容器，实际 AVC/H.264 校验由选择后的解析步骤完成。
+    pub(super) fn pick_motion_photo_video(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择 MP4（H.264/AVC）视频".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            this.update(cx, |this, cx| this.add_motion_photo_video(paths, cx))
+                .ok();
+        })
+        .detach();
+    }
+
     /// Gain Map 页面一次只解析一张图；拖入多张时明确使用第一张支持的图片。
     pub(super) fn add_gainmap_photo(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let Some(path) = paths.into_iter().find(|path| is_supported_image(path)) else {
@@ -525,6 +610,22 @@ impl AppView {
         };
         self.colour_gainmap.select(path, cx);
         cx.notify();
+    }
+
+    pub(super) fn add_motion_photo_video(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(path) = paths.into_iter().find(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+        }) else {
+            cx.notify();
+            return;
+        };
+        if let Err(error) = self.colour_gainmap.select_motion_video(path, cx) {
+            // 此页没有常驻错误栏；保留一次重绘，由封面预览区域明确显示后续解码错误。
+            eprintln!("无法使用 Motion Photo 视频：{error:#}");
+            cx.notify();
+        }
     }
 
     /// 选择并保存本机导出目录；它不属于水印预设。

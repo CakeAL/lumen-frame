@@ -17,9 +17,95 @@ use mp4::{
     AvcConfig, MediaConfig, MediaType, Mp4Config, Mp4Reader, Mp4Sample, Mp4Writer, TrackConfig,
     TrackType,
 };
-use openh264::{decoder::Decoder, formats::YUVSource};
+use yscv_video::Mp4VideoReader;
 
 const MAX_DURATION: Duration = Duration::from_secs(10);
+
+/// 供界面展示的输入视频信息。当前导出器只接受 AVC/H.264 视频轨。
+#[derive(Debug, Clone, Copy)]
+pub struct MotionPhotoVideoInfo {
+    pub duration: Duration,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// 读取并验证可用于 Motion Photo 的 MP4 输入。
+pub fn inspect_motion_photo_video(video_path: &Path) -> Result<MotionPhotoVideoInfo> {
+    let source = File::open(video_path)
+        .with_context(|| format!("无法打开视频：{}", video_path.display()))?;
+    let source_size = source.metadata()?.len();
+    let reader = Mp4Reader::read_header(std::io::BufReader::new(source), source_size)
+        .context("无法解析 MP4 容器")?;
+    let video_track = find_h264_video_track(&reader)?;
+    let track = reader
+        .tracks()
+        .get(&video_track)
+        .expect("视频轨道来自同一个 reader");
+    Ok(MotionPhotoVideoInfo {
+        duration: reader.duration(),
+        width: track.width(),
+        height: track.height(),
+    })
+}
+
+/// 解出指定时间点的 JPEG 封面；用于界面预览，也和最终导出共用同一解码路径。
+pub fn render_motion_photo_cover(
+    video_path: &Path,
+    start: Duration,
+    end: Duration,
+    cover_time: Duration,
+) -> Result<Vec<u8>> {
+    ensure!(start < end, "结束时间必须晚于起始时间");
+    ensure!(
+        end - start <= MAX_DURATION,
+        "Motion Photo 视频最长只能为 10 秒"
+    );
+    ensure!(
+        (start..end).contains(&cover_time),
+        "封面帧必须落在所选的视频区间内"
+    );
+    decode_cover_with_yscv(video_path, start, end, cover_time, 88)
+}
+
+/// 用 yscv-video 统一解码 AVC、HEVC 与 AV1 的 RGB 帧。
+///
+/// `yscv-video` 的 MP4 读取器尚未公开每帧 PTS，因此这里在所选区间内按样本比例选择
+/// 封面帧；最终导出所使用的精确时间戳仍由 MP4 封装层写入 XMP。
+fn decode_cover_with_yscv(
+    video_path: &Path,
+    start: Duration,
+    end: Duration,
+    cover_time: Duration,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    let mut reader = Mp4VideoReader::open(video_path)
+        .map_err(|error| anyhow!("无法用 yscv-video 解码 MP4：{error}"))?;
+    let count = reader.nal_count();
+    ensure!(count > 0, "MP4 不含视频帧");
+    let fraction =
+        ((cover_time - start).as_secs_f64() / (end - start).as_secs_f64()).clamp(0.0, 1.0);
+    let target = ((count - 1) as f64 * fraction).round() as usize;
+    let mut latest = None;
+    for index in 0..=target {
+        if let Some(frame) = reader
+            .next_frame()
+            .map_err(|error| anyhow!("yscv-video 解码失败：{error}"))?
+        {
+            latest = Some(frame);
+        }
+        if latest.is_some() && index >= target {
+            break;
+        }
+    }
+    let frame = latest.ok_or_else(|| anyhow!("无法解出所选封面帧"))?;
+    let image = RgbImage::from_raw(frame.width as u32, frame.height as u32, frame.rgb8_data)
+        .ok_or_else(|| anyhow!("无法构造封面 RGB 图像"))?;
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, quality)
+        .encode_image(&image)
+        .context("无法编码封面 JPEG")?;
+    Ok(jpeg)
+}
 
 /// 从输入视频裁出一段并导出为单文件 JPEG Motion Photo。
 #[derive(Debug, Clone)]
@@ -79,7 +165,7 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
         .get(&video_track)
         .expect("视频轨道来自同一个 reader")
         .timescale();
-    let (sps, pps, nal_length_size, width, height) = {
+    let (sps, pps, _nal_length_size, width, height) = {
         let track = reader
             .tracks()
             .get(&video_track)
@@ -105,15 +191,11 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     )?;
     ensure!(!samples.is_empty(), "所选时间范围内没有可用的视频帧");
     let first_time = samples[0].start_time;
-    let cover = decode_cover(
-        &samples,
-        &sps,
-        &pps,
-        nal_length_size,
-        timescale,
+    let cover = decode_cover_with_yscv(
+        options.video_path,
+        options.start,
+        options.end,
         options.cover_time,
-        width,
-        height,
         options.jpeg_quality,
     )?;
     // 不裁切时保留相机原始 MP4。除了避免无谓的复制，这对手机图库尤其重要：
@@ -188,56 +270,6 @@ fn selected_samples(
         samples.push(sample);
     }
     Ok(samples)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_cover(
-    samples: &[Mp4Sample],
-    sps: &[u8],
-    pps: &[u8],
-    nal_length_size: usize,
-    timescale: u32,
-    requested_time: Duration,
-    width: u16,
-    height: u16,
-    quality: u8,
-) -> Result<Vec<u8>> {
-    let requested_time = to_track_time(requested_time, timescale);
-    let mut decoder = Decoder::new().context("无法初始化 H.264 解码器")?;
-    let mut latest = None;
-
-    for (index, sample) in samples.iter().enumerate() {
-        let mut bitstream = Vec::new();
-        if index == 0 {
-            append_annex_b_nal(&mut bitstream, sps);
-            append_annex_b_nal(&mut bitstream, pps);
-        }
-        avcc_sample_to_annex_b(&sample.bytes, nal_length_size, &mut bitstream)?;
-        // OpenH264 对个别带 B 帧或恢复点的 access unit 可能报错；其文档建议继续
-        // 喂后续 NAL，让解码器在下一个可恢复帧重新同步，而不是中断整段导出。
-        if let Ok(Some(frame)) = decoder.decode(&bitstream) {
-            let (frame_width, frame_height) = frame.dimensions();
-            let mut rgb = vec![0; frame.rgb8_len()];
-            frame.write_rgb8(&mut rgb);
-            latest = Some((frame_width, frame_height, rgb));
-        }
-        if sample.start_time >= requested_time && latest.is_some() {
-            break;
-        }
-    }
-
-    let (frame_width, frame_height, rgb) = latest.ok_or_else(|| anyhow!("无法解出所选封面帧"))?;
-    ensure!(
-        frame_width == width as usize && frame_height == height as usize,
-        "解码出的封面尺寸与 MP4 轨道不一致"
-    );
-    let image = RgbImage::from_raw(width.into(), height.into(), rgb)
-        .ok_or_else(|| anyhow!("无法构造封面 RGB 图像"))?;
-    let mut jpeg = Vec::new();
-    JpegEncoder::new_with_quality(&mut jpeg, quality)
-        .encode_image(&image)
-        .context("无法编码封面 JPEG")?;
-    Ok(jpeg)
 }
 
 fn write_trimmed_mp4(
@@ -349,6 +381,7 @@ fn app1_segment(payload: &[u8]) -> Result<Vec<u8>> {
     Ok(segment)
 }
 
+#[allow(dead_code)]
 fn avcc_sample_to_annex_b(
     sample: &[u8],
     nal_length_size: usize,
@@ -376,6 +409,7 @@ fn avcc_sample_to_annex_b(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn append_annex_b_nal(output: &mut Vec<u8>, nal: &[u8]) {
     output.extend_from_slice(&[0, 0, 0, 1]);
     output.extend_from_slice(nal);

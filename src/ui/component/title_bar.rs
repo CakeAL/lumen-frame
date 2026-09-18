@@ -50,7 +50,7 @@ impl AppView {
                     .child(
                         Tab::new()
                             .prefix(Icon::new(IconName::Palette).left_2())
-                            .label("生成黑白+彩色Gainmap"),
+                            .label("小工具"),
                     )
                     .on_click(cx.listener(|this, index: &usize, _, cx| {
                         let page = match index {

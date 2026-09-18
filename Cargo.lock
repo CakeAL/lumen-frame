@@ -3960,7 +3960,6 @@ dependencies = [
  "mp4",
  "nom-exif",
  "num-integer",
- "openh264",
  "parley",
  "peniko",
  "regex",
@@ -3969,6 +3968,7 @@ dependencies = [
  "swash",
  "tokio",
  "toml 1.1.5+spec-1.1.0",
+ "yscv-video",
 ]
 
 [[package]]
@@ -4285,15 +4285,6 @@ dependencies = [
  "spirv",
  "thiserror 2.0.20",
  "unicode-ident",
-]
-
-[[package]]
-name = "nasm-rs"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "706bf8a5e8c8ddb99128c3291d31bd21f4bcde17f0f4c20ec678d85c74faa149"
-dependencies = [
- "log",
 ]
 
 [[package]]
@@ -4946,27 +4937,6 @@ checksum = "aa576c76302b7b808eecc68061e67336c47833ef9d22caa74dda10fa9675eebc"
 dependencies = [
  "is-wsl",
  "libc",
-]
-
-[[package]]
-name = "openh264"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fef0655e143954965073374f5390411131590d0bc793208aabf7c6785430fa00"
-dependencies = [
- "openh264-sys2",
- "wide",
-]
-
-[[package]]
-name = "openh264-sys2"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad97e73d98000c46623ec4719e4fd2d7f79076a75350af8ae3878abf682c071d"
-dependencies = [
- "cc",
- "nasm-rs",
- "walkdir",
 ]
 
 [[package]]
@@ -6239,15 +6209,6 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
-
-[[package]]
-name = "safe_arch"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "same-file"
@@ -8210,16 +8171,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wide"
-version = "0.7.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
-dependencies = [
- "bytemuck",
- "safe_arch",
-]
-
-[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9051,6 +9002,38 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
+]
+
+[[package]]
+name = "yscv-cpu"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc9d97b3eba3e2942b439c7271b102e178c2084986663fb99bd70eb2966c5770"
+
+[[package]]
+name = "yscv-tensor"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6d3a830f8cbc31035577654864bf6e9dc50e12ffe53a86fdbd15277a3066784"
+dependencies = [
+ "rayon",
+ "thiserror 2.0.20",
+ "yscv-cpu",
+]
+
+[[package]]
+name = "yscv-video"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aff8e51e345cae2f58da2005f1320d4a86cb71e7acbc7a3dbda13928bff4c9ed"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "rayon",
+ "rustc-hash 2.1.3",
+ "thiserror 2.0.20",
+ "yscv-cpu",
+ "yscv-tensor",
 ]
 
 [[package]]

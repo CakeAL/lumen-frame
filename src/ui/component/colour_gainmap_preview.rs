@@ -9,7 +9,10 @@ use crate::ui::image::render_colour_gainmap_preview;
 pub enum ColourGainMapPreviewState {
     Empty,
     Loading,
-    Ready(Arc<RenderImage>),
+    Ready {
+        black_and_white: Arc<RenderImage>,
+        gainmap: Arc<RenderImage>,
+    },
     Failed(SharedString),
 }
 
@@ -44,7 +47,10 @@ impl ColourGainMapPreview {
             let _ = this.update(cx, |this, cx| {
                 if this.generation == generation {
                     this.state = match rendered {
-                        Ok(image) => ColourGainMapPreviewState::Ready(image),
+                        Ok((black_and_white, gainmap)) => ColourGainMapPreviewState::Ready {
+                            black_and_white,
+                            gainmap,
+                        },
                         Err(error) => {
                             ColourGainMapPreviewState::Failed(format!("{error:#}").into())
                         }

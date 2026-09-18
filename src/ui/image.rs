@@ -89,12 +89,33 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
 }
 
 /// 生成彩色恢复 gain map 的黑白底图预览。会阻塞，请在后台线程调用。
-pub fn render_colour_gainmap_preview(path: &Path) -> Result<Arc<RenderImage>> {
+pub fn render_colour_gainmap_preview(
+    path: &Path,
+) -> Result<(Arc<RenderImage>, Arc<RenderImage>)> {
     ensure_vips();
     let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)
         .context("生成彩色恢复 Gain Map")?;
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
-    to_render_image(&image).context("转换彩色恢复 Gain Map 预览")
+    let gainmap = gain_map::get_gainmap(&image).context("读取生成的彩色 Gain Map")?;
+    Ok((
+        to_render_image(&image).context("转换黑白底图预览")?,
+        to_render_image(&gainmap).context("转换彩色 Gain Map 预览")?,
+    ))
+}
+
+/// 解码视频中选作 Motion Photo 封面的帧，并转换成界面位图。
+pub fn render_motion_photo_cover(
+    path: &Path,
+    start: std::time::Duration,
+    end: std::time::Duration,
+    cover_time: std::time::Duration,
+) -> Result<Arc<RenderImage>> {
+    ensure_vips();
+    let jpeg =
+        crate::process::motion_photo::render_motion_photo_cover(path, start, end, cover_time)?;
+    let image = VipsImage::new_from_buffer(&jpeg, "").context("读取视频封面 JPEG")?;
+    let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
+    to_render_image(&image).context("转换视频封面预览")
 }
 
 /// 把任意照片写成黑白底图 + 彩色恢复 gain map 的 JPEG。
