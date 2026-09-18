@@ -27,6 +27,8 @@ peniko = "0.6"
 # PR #3028 修复了重复调色板色块触发的 macOS accessibility 崩溃，但尚未包含在
 # crates.io 的 0.6.1 中。固定到合入该修复的上游提交，避免随 main 漂移。
 gpui-kit = { git = "https://github.com/longbridge/gpui-kit.git", rev = "142e4016b6b34e03978b532f3b2fc9f1a99bed30" }
+mp4 = "0.14"
+openh264 = "0.8"
 
 [dev-dependencies]
 # GPUI 的测试上下文（TestAppContext / VisualTestContext）由这个 feature 提供。
