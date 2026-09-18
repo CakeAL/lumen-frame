@@ -126,7 +126,8 @@ impl ColourGainMapPageState {
         self.video_duration = Some(info.duration);
         self.motion_start = Duration::ZERO;
         self.motion_end = end;
-        self.motion_cover = end / 2;
+        // yscv-video 只能从首帧顺序解码；默认首帧可快速显示，确认封面位置后再解码。
+        self.motion_cover = Duration::ZERO;
         self.request_motion_preview(cx);
         cx.notify();
         Ok(())
@@ -170,7 +171,9 @@ impl ColourGainMapPageState {
             self.motion_start,
             self.motion_end - Duration::from_micros(1),
         );
-        self.request_motion_preview(cx);
+        if matches!(control, MotionTimeControl::Cover) {
+            self.request_motion_preview(cx);
+        }
         cx.notify();
     }
 
@@ -370,10 +373,22 @@ impl AppView {
 
     fn render_black_and_white_preview(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         match self.colour_gainmap.preview().read(cx).state() {
-            ColourGainMapPreviewState::Empty => placeholder(IconName::Palette, "选择或拖入一张照片", cx),
-            ColourGainMapPreviewState::Loading => placeholder(IconName::Loader, "正在生成预览…", cx),
-            ColourGainMapPreviewState::Failed(message) => div().text_color(cx.theme().danger).child(message.clone()).into_any_element(),
-            ColourGainMapPreviewState::Ready { black_and_white, .. } => img(black_and_white.clone()).size_full().object_fit(ObjectFit::Contain).into_any_element(),
+            ColourGainMapPreviewState::Empty => {
+                placeholder(IconName::Palette, "选择或拖入一张照片", cx)
+            }
+            ColourGainMapPreviewState::Loading => {
+                placeholder(IconName::Loader, "正在生成预览…", cx)
+            }
+            ColourGainMapPreviewState::Failed(message) => div()
+                .text_color(cx.theme().danger)
+                .child(message.clone())
+                .into_any_element(),
+            ColourGainMapPreviewState::Ready {
+                black_and_white, ..
+            } => img(black_and_white.clone())
+                .size_full()
+                .object_fit(ObjectFit::Contain)
+                .into_any_element(),
         }
     }
 
@@ -462,7 +477,7 @@ impl AppView {
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("仅支持 MP4 容器、H.264/AVC 视频；导出的动态片段最长 10 秒。"),
+                            .child("支持 MP4 容器中的 H.264/AVC 或 HEVC/H.265；导出的动态片段最长 10 秒。"),
                     )
                     .child(self.render_motion_time_control(
                         "入点",

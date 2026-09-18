@@ -62,13 +62,7 @@ pub fn add_round_corner(img: VipsImage, border_radius: f64) -> Result<VipsImage>
 
     // 原图转成 RGBA，然后把 mask 作为 alpha。
     let img = if img.get_bands() == 4 {
-        let img_rgb = ops::extract_band_with_opts(
-            &img,
-            0,
-            &ops::ExtractBandOptions {
-                n: 3,
-            },
-        )?;
+        let img_rgb = ops::extract_band_with_opts(&img, 0, &ops::ExtractBandOptions { n: 3 })?;
         ops::bandjoin(&mut [img_rgb, mask])?
     } else {
         ops::bandjoin(&mut [img, mask])?

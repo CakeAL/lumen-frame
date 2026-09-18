@@ -1,8 +1,8 @@
 //! Google Motion Photo 导出。
 //!
 //! 这里不依赖 FFmpeg 或平台媒体框架：`mp4` 负责读取和重封装 ISO MP4，
-//! `openh264` 负责把 H.264 的指定帧解成封面 JPEG。当前只接受 AVC/H.264
-//! 视频；输出不复制音轨，以保持这条纯 Rust 管线小而确定。
+//! `openh264` 与 `rust_h265` 分别负责把 AVC / HEVC 的指定帧解成封面 JPEG。
+//! 输出不复制音轨，以保持这条纯 Rust 管线小而确定。
 
 use std::{
     fs::{self, File},
@@ -17,11 +17,12 @@ use mp4::{
     AvcConfig, MediaConfig, MediaType, Mp4Config, Mp4Reader, Mp4Sample, Mp4Writer, TrackConfig,
     TrackType,
 };
-use yscv_video::Mp4VideoReader;
+use openh264::{decoder::Decoder, formats::YUVSource};
+use rust_h265::{Decoder as HevcDecoder, Frame as HevcFrame, parse_hvcc};
 
 const MAX_DURATION: Duration = Duration::from_secs(10);
 
-/// 供界面展示的输入视频信息。当前导出器只接受 AVC/H.264 视频轨。
+/// 供界面展示的输入视频信息。
 #[derive(Debug, Clone, Copy)]
 pub struct MotionPhotoVideoInfo {
     pub duration: Duration,
@@ -31,16 +32,11 @@ pub struct MotionPhotoVideoInfo {
 
 /// 读取并验证可用于 Motion Photo 的 MP4 输入。
 pub fn inspect_motion_photo_video(video_path: &Path) -> Result<MotionPhotoVideoInfo> {
-    let source = File::open(video_path)
-        .with_context(|| format!("无法打开视频：{}", video_path.display()))?;
+    let source = File::open(video_path)?;
     let source_size = source.metadata()?.len();
-    let reader = Mp4Reader::read_header(std::io::BufReader::new(source), source_size)
-        .context("无法解析 MP4 容器")?;
-    let video_track = find_h264_video_track(&reader)?;
-    let track = reader
-        .tracks()
-        .get(&video_track)
-        .expect("视频轨道来自同一个 reader");
+    let reader = Mp4Reader::read_header(std::io::BufReader::new(source), source_size)?;
+    let video_track = find_video_track(&reader, video_path)?;
+    let track = reader.tracks().get(&video_track).unwrap();
     Ok(MotionPhotoVideoInfo {
         duration: reader.duration(),
         width: track.width(),
@@ -64,47 +60,50 @@ pub fn render_motion_photo_cover(
         (start..end).contains(&cover_time),
         "封面帧必须落在所选的视频区间内"
     );
-    decode_cover_with_yscv(video_path, start, end, cover_time, 88)
-}
-
-/// 用 yscv-video 统一解码 AVC、HEVC 与 AV1 的 RGB 帧。
-///
-/// `yscv-video` 的 MP4 读取器尚未公开每帧 PTS，因此这里在所选区间内按样本比例选择
-/// 封面帧；最终导出所使用的精确时间戳仍由 MP4 封装层写入 XMP。
-fn decode_cover_with_yscv(
-    video_path: &Path,
-    start: Duration,
-    end: Duration,
-    cover_time: Duration,
-    quality: u8,
-) -> Result<Vec<u8>> {
-    let mut reader = Mp4VideoReader::open(video_path)
-        .map_err(|error| anyhow!("无法用 yscv-video 解码 MP4：{error}"))?;
-    let count = reader.nal_count();
-    ensure!(count > 0, "MP4 不含视频帧");
-    let fraction =
-        ((cover_time - start).as_secs_f64() / (end - start).as_secs_f64()).clamp(0.0, 1.0);
-    let target = ((count - 1) as f64 * fraction).round() as usize;
-    let mut latest = None;
-    for index in 0..=target {
-        if let Some(frame) = reader
-            .next_frame()
-            .map_err(|error| anyhow!("yscv-video 解码失败：{error}"))?
-        {
-            latest = Some(frame);
+    let source = File::open(video_path)?;
+    let size = source.metadata()?.len();
+    let mut reader = Mp4Reader::read_header(std::io::BufReader::new(source), size)?;
+    let id = find_video_track(&reader, video_path)?;
+    let codec = codec_for_track(&reader, id, video_path)?;
+    let (scale, width, height, h264_config) = {
+        let track = reader.tracks().get(&id).expect("视频轨道来自同一个 reader");
+        let h264_config = if matches!(codec, MediaType::H264) {
+            let avcc = &track.trak.mdia.minf.stbl.stsd.avc1.as_ref().unwrap().avcc;
+            Some((
+                track.sequence_parameter_set()?.to_vec(),
+                track.picture_parameter_set()?.to_vec(),
+                avcc.length_size_minus_one as usize + 1,
+            ))
+        } else {
+            None
+        };
+        (
+            track.timescale(),
+            track.width(),
+            track.height(),
+            h264_config,
+        )
+    };
+    let samples = selected_samples(&mut reader, id, scale, start, end)?;
+    ensure!(!samples.is_empty(), "所选时间范围内没有可用的视频帧");
+    match codec {
+        MediaType::H264 => {
+            let (sps, pps, nal_length_size) = h264_config.expect("H.264 轨道应包含 avcC");
+            decode_h264_cover(
+                &samples,
+                &sps,
+                &pps,
+                nal_length_size,
+                scale,
+                cover_time,
+                width,
+                height,
+                88,
+            )
         }
-        if latest.is_some() && index >= target {
-            break;
-        }
+        MediaType::H265 => decode_hevc_cover(video_path, &samples, scale, cover_time, 88),
+        _ => unreachable!("已由 find_supported_video_track 验证"),
     }
-    let frame = latest.ok_or_else(|| anyhow!("无法解出所选封面帧"))?;
-    let image = RgbImage::from_raw(frame.width as u32, frame.height as u32, frame.rgb8_data)
-        .ok_or_else(|| anyhow!("无法构造封面 RGB 图像"))?;
-    let mut jpeg = Vec::new();
-    JpegEncoder::new_with_quality(&mut jpeg, quality)
-        .encode_image(&image)
-        .context("无法编码封面 JPEG")?;
-    Ok(jpeg)
 }
 
 /// 从输入视频裁出一段并导出为单文件 JPEG Motion Photo。
@@ -158,26 +157,28 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     let source_size = source.metadata()?.len();
     let mut reader = Mp4Reader::read_header(std::io::BufReader::new(source), source_size)
         .context("无法解析 MP4 容器")?;
-    let video_track = find_h264_video_track(&reader)?;
+    let video_track = find_video_track(&reader, options.video_path)?;
+    let codec = codec_for_track(&reader, video_track, options.video_path)?;
 
     let timescale = reader
         .tracks()
         .get(&video_track)
         .expect("视频轨道来自同一个 reader")
         .timescale();
-    let (sps, pps, _nal_length_size, width, height) = {
+    let (sps_pps, width, height) = {
         let track = reader
             .tracks()
             .get(&video_track)
             .expect("视频轨道来自同一个 reader");
-        let avcc = &track.trak.mdia.minf.stbl.stsd.avc1.as_ref().unwrap().avcc;
-        (
-            track.sequence_parameter_set()?.to_vec(),
-            track.picture_parameter_set()?.to_vec(),
-            avcc.length_size_minus_one as usize + 1,
-            track.width(),
-            track.height(),
-        )
+        let sps_pps = if matches!(codec, MediaType::H264) {
+            Some((
+                track.sequence_parameter_set()?.to_vec(),
+                track.picture_parameter_set()?.to_vec(),
+            ))
+        } else {
+            None
+        };
+        (sps_pps, track.width(), track.height())
     };
     let source_duration = reader.duration();
     ensure!(options.end <= source_duration, "所选结束时间超出视频时长");
@@ -191,19 +192,56 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     )?;
     ensure!(!samples.is_empty(), "所选时间范围内没有可用的视频帧");
     let first_time = samples[0].start_time;
-    let cover = decode_cover_with_yscv(
-        options.video_path,
-        options.start,
-        options.end,
-        options.cover_time,
-        options.jpeg_quality,
-    )?;
+    let cover = match codec {
+        MediaType::H264 => {
+            let (sps, pps) = sps_pps.as_ref().expect("H.264 轨道应包含 avcC");
+            let nal_length_size = reader
+                .tracks()
+                .get(&video_track)
+                .unwrap()
+                .trak
+                .mdia
+                .minf
+                .stbl
+                .stsd
+                .avc1
+                .as_ref()
+                .unwrap()
+                .avcc
+                .length_size_minus_one as usize
+                + 1;
+            decode_h264_cover(
+                &samples,
+                &sps,
+                &pps,
+                nal_length_size,
+                timescale,
+                options.cover_time,
+                width,
+                height,
+                options.jpeg_quality,
+            )?
+        }
+        MediaType::H265 => decode_hevc_cover(
+            options.video_path,
+            &samples,
+            timescale,
+            options.cover_time,
+            options.jpeg_quality,
+        )?,
+        _ => unreachable!("已由 find_supported_video_track 验证"),
+    };
     // 不裁切时保留相机原始 MP4。除了避免无谓的复制，这对手机图库尤其重要：
     // 原视频的色彩描述、edit list、音轨及厂商私有 box 都不会在重封装时丢失。
     let video = if options.start.is_zero() && options.end == source_duration {
         fs::read(options.video_path)
             .with_context(|| format!("无法读取视频：{}", options.video_path.display()))?
     } else {
+        ensure!(
+            matches!(codec, MediaType::H264),
+            "HEVC/H.265 暂不支持裁切重封装；请选择完整视频后导出"
+        );
+        let (sps, pps) = sps_pps.as_ref().expect("H.264 轨道应包含 avcC");
         write_trimmed_mp4(
             &reader, timescale, width, height, &sps, &pps, first_time, samples,
         )?
@@ -229,16 +267,242 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-fn find_h264_video_track(reader: &Mp4Reader<std::io::BufReader<File>>) -> Result<u32> {
+fn find_supported_video_track(reader: &Mp4Reader<std::io::BufReader<File>>) -> Result<u32> {
     reader
         .tracks()
         .values()
         .find(|track| {
             matches!(track.track_type(), Ok(TrackType::Video))
-                && matches!(track.media_type(), Ok(MediaType::H264))
+                && matches!(track.media_type(), Ok(MediaType::H264 | MediaType::H265))
         })
         .map(|track| track.track_id())
-        .ok_or_else(|| anyhow!("只支持包含 H.264/AVC 视频轨的 MP4 文件"))
+        .ok_or_else(|| anyhow!("只支持包含 H.264/AVC 或 HEVC/H.265 视频轨的 MP4 文件"))
+}
+
+/// `mp4` 0.14 尚未把常见的 `hvc1` sample entry 映射为 `MediaType::H265`，
+/// 但它仍能读取同一轨道的 sample table，因此在此做一个受限容器回退。
+fn find_video_track(
+    reader: &Mp4Reader<std::io::BufReader<File>>,
+    video_path: &Path,
+) -> Result<u32> {
+    find_supported_video_track(reader).or_else(|_| {
+        if is_hvc1_mp4(video_path)? {
+            reader
+                .tracks()
+                .values()
+                .find(|track| matches!(track.track_type(), Ok(TrackType::Video)))
+                .map(|track| track.track_id())
+                .ok_or_else(|| anyhow!("MP4 不含视频轨"))
+        } else {
+            Err(anyhow!(
+                "只支持包含 H.264/AVC 或 HEVC/H.265 视频轨的 MP4 文件"
+            ))
+        }
+    })
+}
+
+fn codec_for_track(
+    reader: &Mp4Reader<std::io::BufReader<File>>,
+    track_id: u32,
+    _video_path: &Path,
+) -> Result<MediaType> {
+    match reader.tracks().get(&track_id).unwrap().media_type() {
+        Ok(MediaType::H264) => Ok(MediaType::H264),
+        Ok(MediaType::H265) => Ok(MediaType::H265),
+        // `find_video_track` 仅会为已确认 `hvc1` 的轨道走到这里。
+        _ => Ok(MediaType::H265),
+    }
+}
+
+fn is_hvc1_mp4(video_path: &Path) -> Result<bool> {
+    Ok(fs::read(video_path)
+        .with_context(|| format!("无法读取视频：{}", video_path.display()))?
+        .windows(4)
+        .any(|window| window == b"hvc1"))
+}
+
+fn decode_h264_cover(
+    samples: &[Mp4Sample],
+    sps: &[u8],
+    pps: &[u8],
+    nal_length_size: usize,
+    timescale: u32,
+    cover_time: Duration,
+    _width: u16,
+    _height: u16,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    let mut decoder = Decoder::new().context("无法初始化 H.264 解码器")?;
+    let mut parameter_sets = Vec::with_capacity(sps.len() + pps.len() + 8);
+    append_annex_b_nal(&mut parameter_sets, sps);
+    append_annex_b_nal(&mut parameter_sets, pps);
+    let _ = decoder
+        .decode(&parameter_sets)
+        .context("无法读取 H.264 参数集")?;
+
+    let requested = to_track_time(cover_time, timescale);
+    let mut latest = None;
+    for sample in samples {
+        let mut annex_b = Vec::with_capacity(sample.bytes.len() + 16);
+        avcc_sample_to_annex_b(&sample.bytes, nal_length_size, &mut annex_b)?;
+        if let Some(frame) = decoder.decode(&annex_b).context("H.264 封面帧解码失败")? {
+            let (width, height) = frame.dimensions();
+            let mut rgb = vec![0; frame.rgb8_len()];
+            frame.write_rgb8(&mut rgb);
+            latest = Some((width, height, rgb));
+        }
+        if sample.start_time >= requested {
+            if let Some((width, height, rgb)) = latest.take() {
+                return encode_rgb_jpeg(width as u32, height as u32, rgb, quality);
+            }
+        }
+    }
+    let (width, height, rgb) = latest.ok_or_else(|| anyhow!("无法解出所选 H.264 封面帧"))?;
+    encode_rgb_jpeg(width as u32, height as u32, rgb, quality)
+}
+
+fn decode_hevc_cover(
+    video_path: &Path,
+    samples: &[Mp4Sample],
+    timescale: u32,
+    cover_time: Duration,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    let bytes = fs::read(video_path)
+        .with_context(|| format!("无法读取 HEVC 视频：{}", video_path.display()))?;
+    let (nal_length_size, parameter_sets) = hevc_configuration(&bytes)?;
+    let mut decoder = HevcDecoder::new();
+    for nal in parameter_sets {
+        decode_hevc_packet(&mut decoder, &nal, 4)?;
+    }
+
+    let requested = to_track_time(cover_time, timescale);
+    let mut latest = None;
+    for sample in samples {
+        if let Some(frame) = decode_hevc_packet(&mut decoder, &sample.bytes, nal_length_size)? {
+            latest = Some(frame);
+        }
+        if sample.start_time >= requested {
+            if let Some(frame) = latest.take() {
+                return encode_hevc_frame(frame, quality);
+            }
+        }
+    }
+    if let Some(frame) = decoder.flush() {
+        latest = Some(frame);
+    }
+    encode_hevc_frame(
+        latest.ok_or_else(|| anyhow!("无法解出所选 HEVC 封面帧"))?,
+        quality,
+    )
+}
+
+fn decode_hevc_packet(
+    decoder: &mut HevcDecoder,
+    packet: &[u8],
+    nal_length_size: u8,
+) -> Result<Option<HevcFrame>> {
+    let mut result = None;
+    for nal in parse_hvcc(packet, nal_length_size) {
+        if let Some(frame) = decoder
+            .decode_nal(&nal)
+            .map_err(|error| anyhow!("HEVC 封面帧解码失败：{error}"))?
+        {
+            result = Some(frame);
+        }
+    }
+    Ok(result)
+}
+
+/// 读取 `hvcC` 中的 VPS/SPS/PPS。mp4 0.14 只保留了 hvcC 的版本字段，
+/// 因此这里直接解析这个标准化、长度受检的 ISO box，不依赖任何系统媒体框架。
+fn hevc_configuration(file: &[u8]) -> Result<(u8, Vec<Vec<u8>>)> {
+    let index = file
+        .windows(4)
+        .position(|window| window == b"hvcC")
+        .ok_or_else(|| anyhow!("MP4 缺少 HEVC hvcC 配置"))?;
+    ensure!(index >= 4, "HEVC hvcC box 损坏");
+    let size = u32::from_be_bytes(file[index - 4..index].try_into().unwrap()) as usize;
+    ensure!(
+        size >= 30 && index - 4 + size <= file.len(),
+        "HEVC hvcC box 长度损坏"
+    );
+    let data = &file[index + 4..index - 4 + size];
+    ensure!(data.len() >= 23 && data[0] == 1, "不支持的 HEVC hvcC 配置");
+    let nal_length_size = (data[21] & 0x03) + 1;
+    let arrays = data[22] as usize;
+    let mut offset = 23;
+    let mut parameter_sets = Vec::new();
+    for _ in 0..arrays {
+        ensure!(offset + 3 <= data.len(), "HEVC hvcC 参数集损坏");
+        let nal_type = data[offset] & 0x3f;
+        let count = u16::from_be_bytes(data[offset + 1..offset + 3].try_into().unwrap()) as usize;
+        offset += 3;
+        for _ in 0..count {
+            ensure!(offset + 2 <= data.len(), "HEVC hvcC 参数集损坏");
+            let length = u16::from_be_bytes(data[offset..offset + 2].try_into().unwrap()) as usize;
+            offset += 2;
+            ensure!(offset + length <= data.len(), "HEVC hvcC 参数集长度损坏");
+            if matches!(nal_type, 32..=34) {
+                let mut packet = Vec::with_capacity(length + 4);
+                packet.extend_from_slice(&(length as u32).to_be_bytes());
+                packet.extend_from_slice(&data[offset..offset + length]);
+                parameter_sets.push(packet);
+            }
+            offset += length;
+        }
+    }
+    ensure!(
+        !parameter_sets.is_empty(),
+        "HEVC hvcC 不含 VPS/SPS/PPS 参数集"
+    );
+    Ok((nal_length_size, parameter_sets))
+}
+
+fn encode_hevc_frame(frame: HevcFrame, quality: u8) -> Result<Vec<u8>> {
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    ensure!(
+        width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0,
+        "HEVC 帧尺寸无效"
+    );
+    let y_len = width * height;
+    let uv_len = y_len / 4;
+    ensure!(
+        frame.y.len() == y_len && frame.u.len() == uv_len && frame.v.len() == uv_len,
+        "HEVC 帧平面尺寸无效"
+    );
+    let shift = frame.bit_depth.saturating_sub(8);
+    let sample = |plane: &rust_h265::PixelData, index: usize| -> Result<i32> {
+        match (plane.as_u8(), plane.as_u16()) {
+            (Some(values), None) => Ok(values[index] as i32),
+            (None, Some(values)) => Ok((values[index] >> shift) as i32),
+            _ => Err(anyhow!("HEVC 像素位深无效")),
+        }
+    };
+    let mut rgb = vec![0; y_len * 3];
+    for row in 0..height {
+        for column in 0..width {
+            let y = sample(&frame.y, row * width + column)? - 16;
+            let u = sample(&frame.u, (row / 2) * (width / 2) + column / 2)? - 128;
+            let v = sample(&frame.v, (row / 2) * (width / 2) + column / 2)? - 128;
+            let destination = (row * width + column) * 3;
+            rgb[destination] = ((298 * y + 409 * v + 128) >> 8).clamp(0, 255) as u8;
+            rgb[destination + 1] = ((298 * y - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8;
+            rgb[destination + 2] = ((298 * y + 516 * u + 128) >> 8).clamp(0, 255) as u8;
+        }
+    }
+    encode_rgb_jpeg(frame.width, frame.height, rgb, quality)
+}
+
+fn encode_rgb_jpeg(width: u32, height: u32, rgb: Vec<u8>, quality: u8) -> Result<Vec<u8>> {
+    let image =
+        RgbImage::from_raw(width, height, rgb).ok_or_else(|| anyhow!("无法构造封面 RGB 图像"))?;
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, quality)
+        .encode_image(&image)
+        .context("无法编码封面 JPEG")?;
+    Ok(jpeg)
 }
 
 fn selected_samples(
@@ -439,5 +703,30 @@ mod tests {
         let mut output = Vec::new();
         avcc_sample_to_annex_b(&[0, 0, 0, 2, 0x65, 0x88], 4, &mut output).unwrap();
         assert_eq!(output, [0, 0, 0, 1, 0x65, 0x88]);
+    }
+
+    #[test]
+    fn reads_hevc_parameter_sets_from_hvcc() {
+        let mut payload = vec![1; 23];
+        payload[21] = 3; // four-byte MP4 NAL lengths
+        payload[22] = 1;
+        payload.extend_from_slice(&[0x80 | 32, 0, 1, 0, 2, 0x40, 0x01]);
+        let mut file = Vec::new();
+        file.extend_from_slice(&((payload.len() + 8) as u32).to_be_bytes());
+        file.extend_from_slice(b"hvcC");
+        file.extend_from_slice(&payload);
+        let (length_size, parameter_sets) = hevc_configuration(&file).unwrap();
+        assert_eq!(length_size, 4);
+        assert_eq!(parameter_sets, vec![vec![0, 0, 0, 2, 0x40, 0x01]]);
+    }
+
+    #[test]
+    #[ignore = "requires the developer's local HEVC fixture"]
+    fn decodes_local_hevc_motion_photo_cover() {
+        let path = Path::new("/Users/cakeal/Movies/20260906广东深圳石岩气象梯度观测塔晚霞延时.mp4");
+        let info = inspect_motion_photo_video(path).unwrap();
+        let end = info.duration.min(MAX_DURATION);
+        let jpeg = render_motion_photo_cover(path, Duration::ZERO, end, Duration::ZERO).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8]));
     }
 }

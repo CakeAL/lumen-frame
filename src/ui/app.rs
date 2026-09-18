@@ -41,8 +41,8 @@ use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
 use page::{
-    other_tools::ColourGainMapPageState,
     gainmap::GainMapPageState,
+    other_tools::ColourGainMapPageState,
     settings::{self, SettingsControls},
 };
 
@@ -575,13 +575,13 @@ impl AppView {
         .detach();
     }
 
-    /// Motion Photo 只接收 MP4 容器，实际 AVC/H.264 校验由选择后的解析步骤完成。
+    /// Motion Photo 只接收 MP4 容器，实际 AVC / HEVC 校验由选择后的解析步骤完成。
     pub(super) fn pick_motion_photo_video(&mut self, cx: &mut Context<Self>) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择 MP4（H.264/AVC）视频".into()),
+            prompt: Some("选择 MP4（H.264/AVC 或 HEVC/H.265）视频".into()),
         });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = prompt.await else {

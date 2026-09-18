@@ -89,9 +89,7 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
 }
 
 /// 生成彩色恢复 gain map 的黑白底图预览。会阻塞，请在后台线程调用。
-pub fn render_colour_gainmap_preview(
-    path: &Path,
-) -> Result<(Arc<RenderImage>, Arc<RenderImage>)> {
+pub fn render_colour_gainmap_preview(path: &Path) -> Result<(Arc<RenderImage>, Arc<RenderImage>)> {
     ensure_vips();
     let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)
         .context("生成彩色恢复 Gain Map")?;
