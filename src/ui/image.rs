@@ -103,14 +103,16 @@ pub fn render_colour_gainmap_preview(path: &Path) -> Result<(Arc<RenderImage>, A
 
 /// 解码视频中选作 Motion Photo 封面的帧，并转换成界面位图。
 pub fn render_motion_photo_cover(
+    ffmpeg: &Path,
     path: &Path,
     start: std::time::Duration,
     end: std::time::Duration,
     cover_time: std::time::Duration,
 ) -> Result<Arc<RenderImage>> {
     ensure_vips();
-    let jpeg =
-        crate::process::motion_photo::render_motion_photo_cover(path, start, end, cover_time)?;
+    let jpeg = crate::process::motion_photo::render_motion_photo_cover(
+        ffmpeg, path, start, end, cover_time,
+    )?;
     let image = VipsImage::new_from_buffer(&jpeg, "").context("读取视频封面 JPEG")?;
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
     to_render_image(&image).context("转换视频封面预览")

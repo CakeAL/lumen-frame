@@ -9,7 +9,9 @@ use gpui_kit::component::StyledExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
+    input::{Input, InputState},
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Entity, ExternalPaths, FontWeight, ObjectFit, div, img};
@@ -20,7 +22,7 @@ use super::super::component::colour_gainmap_preview::{
 };
 use super::super::component::field::rgb_to_hsla;
 use super::super::component::motion_photo_preview::{MotionPhotoPreview, MotionPhotoPreviewState};
-use crate::process::motion_photo::inspect_motion_photo_video;
+use crate::process::motion_photo::{detect_ffmpeg, inspect_motion_photo_video, validate_ffmpeg};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::app) enum UtilityMode {
@@ -47,10 +49,26 @@ pub(in crate::ui::app) struct ColourGainMapPageState {
     motion_cover: Duration,
     motion_preview: Entity<MotionPhotoPreview>,
     motion_exporting: bool,
+    ffmpeg_path: Option<PathBuf>,
+    ffmpeg_input: Entity<InputState>,
 }
 
 impl ColourGainMapPageState {
-    pub(in crate::ui::app) fn new(cx: &mut Context<AppView>) -> Self {
+    pub(in crate::ui::app) fn new(
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<AppView>,
+    ) -> Self {
+        let ffmpeg_path = detect_ffmpeg().ok();
+        let ffmpeg_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(
+                    ffmpeg_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                )
+                .placeholder("FFmpeg 可执行文件路径")
+        });
         Self {
             mode: UtilityMode::ColourGainMap,
             path: None,
@@ -63,6 +81,8 @@ impl ColourGainMapPageState {
             motion_cover: Duration::from_secs(5),
             motion_preview: cx.new(|_| MotionPhotoPreview::new()),
             motion_exporting: false,
+            ffmpeg_path,
+            ffmpeg_input,
         }
     }
 
@@ -105,6 +125,38 @@ impl ColourGainMapPageState {
     pub(in crate::ui::app) fn is_motion_exporting(&self) -> bool {
         self.motion_exporting
     }
+    pub(in crate::ui::app) fn ffmpeg_path(&self) -> Option<&Path> {
+        self.ffmpeg_path.as_deref()
+    }
+    pub(in crate::ui::app) fn ffmpeg_input(&self) -> &Entity<InputState> {
+        &self.ffmpeg_input
+    }
+    pub(in crate::ui::app) fn detect_ffmpeg(
+        &mut self,
+        cx: &mut Context<AppView>,
+    ) -> anyhow::Result<()> {
+        self.ffmpeg_path = Some(detect_ffmpeg()?);
+        cx.notify();
+        Ok(())
+    }
+    pub(in crate::ui::app) fn set_ffmpeg_path(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<AppView>,
+    ) -> anyhow::Result<()> {
+        validate_ffmpeg(&path)?;
+        self.ffmpeg_path = Some(path);
+        cx.notify();
+        Ok(())
+    }
+    pub(in crate::ui::app) fn apply_ffmpeg_input(
+        &mut self,
+        cx: &mut Context<AppView>,
+    ) -> anyhow::Result<()> {
+        let value = self.ffmpeg_input.read(cx).value().trim().to_owned();
+        anyhow::ensure!(!value.is_empty(), "请填写 FFmpeg 可执行文件路径");
+        self.set_ffmpeg_path(PathBuf::from(value), cx)
+    }
 
     pub(in crate::ui::app) fn select(&mut self, path: PathBuf, cx: &mut Context<AppView>) {
         self.path = Some(path.clone());
@@ -117,7 +169,10 @@ impl ColourGainMapPageState {
         path: PathBuf,
         cx: &mut Context<AppView>,
     ) -> anyhow::Result<()> {
-        let info = inspect_motion_photo_video(&path)?;
+        let ffmpeg = self.ffmpeg_path.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("未找到 FFmpeg。请自动检测或手动选择 FFmpeg 可执行文件")
+        })?;
+        let info = inspect_motion_photo_video(ffmpeg, &path)?;
         let end = info.duration.min(Duration::from_secs(10));
         if end.is_zero() {
             anyhow::bail!("视频时长为 0，无法生成实况照片");
@@ -200,6 +255,7 @@ impl ColourGainMapPageState {
         };
         self.motion_preview.update(cx, |preview, cx| {
             preview.request(
+                self.ffmpeg_path.clone(),
                 path,
                 self.motion_start,
                 self.motion_end,
@@ -278,6 +334,40 @@ impl AppView {
                 h_flex()
                     .gap_2()
                     .child(
+                        Input::new(self.colour_gainmap.ffmpeg_input())
+                            .small()
+                            .w_64(),
+                    )
+                    .child(
+                        Button::new("motion-photo-apply-ffmpeg")
+                            .label("应用路径")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Err(error) = this.colour_gainmap.apply_ffmpeg_input(cx) {
+                                    eprintln!("无法使用 FFmpeg：{error:#}");
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("motion-photo-detect-ffmpeg")
+                            .label("检测 FFmpeg")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Err(error) = this.colour_gainmap.detect_ffmpeg(cx) {
+                                    eprintln!("无法检测 FFmpeg：{error:#}");
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("motion-photo-select-ffmpeg")
+                            .label("选择 FFmpeg…")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_ffmpeg(cx))),
+                    )
+                    .child(
                         Button::new("motion-photo-open")
                             .label("选择视频…")
                             .small()
@@ -295,6 +385,7 @@ impl AppView {
                             .small()
                             .disabled(
                                 self.colour_gainmap.video_path().is_none()
+                                    || self.colour_gainmap.ffmpeg_path().is_none()
                                     || self.colour_gainmap.is_motion_exporting(),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -473,11 +564,14 @@ impl AppView {
                             .text_color(cx.theme().muted_foreground)
                             .child(self.motion_video_summary()),
                     )
+                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
+                        self.colour_gainmap.ffmpeg_path().map(|path| format!("FFmpeg：{}", path.display())).unwrap_or_else(|| "未检测到 FFmpeg；请在工具栏自动检测或手动选择".into()),
+                    ))
                     .child(
                         div()
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("支持 MP4 容器中的 H.264/AVC 或 HEVC/H.265；导出的动态片段最长 10 秒。"),
+                            .child("依赖 FFmpeg（含 ffprobe 与 libx264）。支持常见视频格式；导出的动态片段最长 10 秒。"),
                     )
                     .child(self.render_motion_time_control(
                         "入点",

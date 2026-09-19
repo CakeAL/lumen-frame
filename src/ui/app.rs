@@ -140,7 +140,7 @@ impl AppView {
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let gainmap = GainMapPageState::new(cx);
-        let colour_gainmap = ColourGainMapPageState::new(cx);
+        let colour_gainmap = ColourGainMapPageState::new(window, cx);
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -453,6 +453,9 @@ impl AppView {
             self.colour_gainmap.motion_end(),
             self.colour_gainmap.motion_cover(),
         );
+        let Some(ffmpeg_path) = self.colour_gainmap.ffmpeg_path().map(PathBuf::from) else {
+            return;
+        };
         let window_handle = window.window_handle();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -480,6 +483,7 @@ impl AppView {
             let result = cx
                 .background_spawn(async move {
                     let options = MotionPhotoOptions {
+                        ffmpeg_path: &ffmpeg_path,
                         video_path: &path,
                         output_path: &output,
                         start,
@@ -575,7 +579,7 @@ impl AppView {
         .detach();
     }
 
-    /// Motion Photo 只接收 MP4 容器，实际 AVC / HEVC 校验由选择后的解析步骤完成。
+    /// Motion Photo 依赖 FFmpeg，可读取其支持的视频格式。
     pub(super) fn pick_motion_photo_video(&mut self, cx: &mut Context<Self>) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -589,6 +593,30 @@ impl AppView {
             };
             this.update(cx, |this, cx| this.add_motion_photo_video(paths, cx))
                 .ok();
+        })
+        .detach();
+    }
+
+    pub(super) fn pick_ffmpeg(&mut self, cx: &mut Context<Self>) {
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("选择 FFmpeg 可执行文件".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |this, cx| {
+                if let Err(error) = this.colour_gainmap.set_ffmpeg_path(path, cx) {
+                    eprintln!("无法使用 FFmpeg：{error:#}");
+                }
+            })
+            .ok();
         })
         .detach();
     }

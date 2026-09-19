@@ -34,6 +34,7 @@ impl MotionPhotoPreview {
 
     pub fn request(
         &mut self,
+        ffmpeg_path: Option<PathBuf>,
         path: PathBuf,
         start: Duration,
         end: Duration,
@@ -47,7 +48,9 @@ impl MotionPhotoPreview {
         self.worker = Some(cx.spawn(async move |this, cx| {
             let rendered = cx
                 .background_spawn(async move {
-                    render_motion_photo_cover(&path, start, end, cover_time)
+                    let ffmpeg_path =
+                        ffmpeg_path.ok_or_else(|| anyhow::anyhow!("未找到 FFmpeg"))?;
+                    render_motion_photo_cover(&ffmpeg_path, &path, start, end, cover_time)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
