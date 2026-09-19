@@ -10,6 +10,7 @@ use std::{
 };
 
 const MAX_DURATION: Duration = Duration::from_secs(10);
+pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MotionPhotoVideoInfo {
@@ -121,6 +122,8 @@ pub struct MotionPhotoOptions<'a> {
     pub end: Duration,
     pub cover_time: Duration,
     pub jpeg_quality: u8,
+    /// 最终 JPEG Motion Photo 文件的最大字节数，包含封面与内嵌 MP4。
+    pub max_output_size: u64,
 }
 /// 以 H.264 重编码选中片段，因此任意入点、出点均可独立播放。
 pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
@@ -128,6 +131,10 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     ensure!(
         (1..=100).contains(&options.jpeg_quality),
         "JPEG 质量必须在 1 到 100 之间"
+    );
+    ensure!(
+        options.max_output_size > 0,
+        "Motion Photo 最大文件大小必须大于 0"
     );
     let info = inspect_motion_photo_video(options.ffmpeg_path, options.video_path)?;
     ensure!(options.end <= info.duration, "所选结束时间超出视频时长");
@@ -140,6 +147,21 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
     )?;
     let temporary = temporary_video_path(options.output_path);
     let duration = options.end - options.start;
+    ensure!(
+        cover.len() < options.max_output_size as usize,
+        "封面图片已为 {:.1} MB，超过 {:.1} MB 上限",
+        cover.len() as f64 / 1024.0 / 1024.0,
+        options.max_output_size as f64 / 1024.0 / 1024.0,
+    );
+    // 预留足够空间给 MP4 容器、XMP 与 x264 的码率波动；视频编码前就把剩余预算转为目标码率。
+    let video_budget = options.max_output_size as usize - cover.len();
+    let video_bitrate = ((video_budget as f64 * 8.0 / duration.as_secs_f64()) * 0.45) as u64;
+    ensure!(
+        video_bitrate >= 100_000,
+        "可用于视频的大小预算过小，请提高最大文件大小"
+    );
+    let video_bitrate = video_bitrate.to_string();
+    let video_budget = video_budget.to_string();
     let mut command = FfmpegCommand::new_with_path(options.ffmpeg_path);
     command
         .hide_banner()
@@ -150,19 +172,26 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
         .arg("-t")
         .arg(seconds(duration))
         .args([
-            "-map",
-            "0:v:0",
-            "-an",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "18",
+            "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "medium",
+        ])
+        .args([
+            "-b:v",
+            &video_bitrate,
+            "-maxrate",
+            &video_bitrate,
+            "-bufsize",
+        ])
+        .arg(format!(
+            "{}k",
+            video_bitrate.parse::<u64>().unwrap_or_default() * 2 / 1000
+        ))
+        .args([
             "-pix_fmt",
             "yuv420p",
             "-movflags",
             "+faststart",
+            "-fs",
+            &video_budget,
             "-y",
         ])
         .arg(&temporary);
@@ -184,6 +213,12 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
         .try_into()
         .context("封面时间戳超出元数据范围")?;
     let jpeg = insert_motion_photo_xmp(cover, video.len(), timestamp)?;
+    ensure!(
+        jpeg.len() + video.len() <= options.max_output_size as usize,
+        "生成的 Motion Photo 为 {:.1} MB，超过 {:.1} MB 上限；请缩短片段、降低画质或提高上限",
+        (jpeg.len() + video.len()) as f64 / 1024.0 / 1024.0,
+        options.max_output_size as f64 / 1024.0 / 1024.0,
+    );
     let mut output = BufWriter::new(
         File::create(options.output_path)
             .with_context(|| format!("无法创建输出文件：{}", options.output_path.display()))?,
@@ -296,6 +331,7 @@ mod tests {
             end: Duration::from_secs(2),
             cover_time: Duration::from_secs(1),
             jpeg_quality: 92,
+            max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
         });
         let _ = fs::remove_file(&output);
         result.unwrap();

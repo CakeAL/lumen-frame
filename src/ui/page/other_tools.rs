@@ -22,7 +22,9 @@ use super::super::component::colour_gainmap_preview::{
 };
 use super::super::component::field::rgb_to_hsla;
 use super::super::component::motion_photo_preview::{MotionPhotoPreview, MotionPhotoPreviewState};
-use crate::process::motion_photo::{detect_ffmpeg, inspect_motion_photo_video, validate_ffmpeg};
+use crate::process::motion_photo::{
+    DEFAULT_MAX_OUTPUT_SIZE, detect_ffmpeg, inspect_motion_photo_video, validate_ffmpeg,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::app) enum UtilityMode {
@@ -49,6 +51,7 @@ pub(in crate::ui::app) struct ColourGainMapPageState {
     motion_cover: Duration,
     motion_preview: Entity<MotionPhotoPreview>,
     motion_exporting: bool,
+    motion_max_size_mb: u32,
     ffmpeg_path: Option<PathBuf>,
     ffmpeg_input: Entity<InputState>,
 }
@@ -81,6 +84,7 @@ impl ColourGainMapPageState {
             motion_cover: Duration::from_secs(5),
             motion_preview: cx.new(|_| MotionPhotoPreview::new()),
             motion_exporting: false,
+            motion_max_size_mb: (DEFAULT_MAX_OUTPUT_SIZE / 1024 / 1024) as u32,
             ffmpeg_path,
             ffmpeg_input,
         }
@@ -124,6 +128,20 @@ impl ColourGainMapPageState {
     }
     pub(in crate::ui::app) fn is_motion_exporting(&self) -> bool {
         self.motion_exporting
+    }
+    pub(in crate::ui::app) fn motion_max_size_bytes(&self) -> u64 {
+        self.motion_max_size_mb as u64 * 1024 * 1024
+    }
+    pub(in crate::ui::app) fn motion_max_size_mb(&self) -> u32 {
+        self.motion_max_size_mb
+    }
+    pub(in crate::ui::app) fn adjust_motion_max_size(
+        &mut self,
+        delta: i32,
+        cx: &mut Context<AppView>,
+    ) {
+        self.motion_max_size_mb = (self.motion_max_size_mb as i32 + delta).clamp(1, 1024) as u32;
+        cx.notify();
     }
     pub(in crate::ui::app) fn ffmpeg_path(&self) -> Option<&Path> {
         self.ffmpeg_path.as_deref()
@@ -590,7 +608,8 @@ impl AppView {
                         MotionTimeControl::Cover,
                         self.colour_gainmap.motion_cover(),
                         cx,
-                    )),
+                    ))
+                    .child(self.render_motion_size_control(cx)),
             )
     }
 
@@ -640,6 +659,44 @@ impl AppView {
                             .disabled(self.colour_gainmap.video_path().is_none())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.colour_gainmap.adjust_motion_time(control, 0.25, cx)
+                            })),
+                    ),
+            )
+    }
+
+    fn render_motion_size_control(&self, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .justify_between()
+            .items_center()
+            .child(div().text_sm().child("最大文件"))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new("motion-size-minus")
+                            .label("−")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.colour_gainmap.adjust_motion_max_size(-1, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .w_16()
+                            .text_center()
+                            .text_sm()
+                            .child(format!("{} MB", self.colour_gainmap.motion_max_size_mb())),
+                    )
+                    .child(
+                        Button::new("motion-size-plus")
+                            .label("+")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.colour_gainmap.adjust_motion_max_size(1, cx)
                             })),
                     ),
             )

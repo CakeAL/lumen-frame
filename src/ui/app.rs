@@ -453,6 +453,7 @@ impl AppView {
             self.colour_gainmap.motion_end(),
             self.colour_gainmap.motion_cover(),
         );
+        let max_output_size = self.colour_gainmap.motion_max_size_bytes();
         let Some(ffmpeg_path) = self.colour_gainmap.ffmpeg_path().map(PathBuf::from) else {
             return;
         };
@@ -490,6 +491,7 @@ impl AppView {
                         end,
                         cover_time: cover,
                         jpeg_quality: 92,
+                        max_output_size,
                     };
                     export_motion_photo(&options).map(|_| output)
                 })
