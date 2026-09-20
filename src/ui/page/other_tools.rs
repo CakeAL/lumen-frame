@@ -523,12 +523,10 @@ impl AppView {
     }
 
     fn render_colour_gainmap_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let motion = self.colour_gainmap.mode() == UtilityMode::MotionPhoto;
         h_flex()
             .w_full()
             .h_12()
             .flex_shrink_0()
-            .justify_between()
             .px_4()
             .border_b_1()
             .border_color(cx.theme().border)
@@ -561,18 +559,103 @@ impl AppView {
                             })),
                     ),
             )
-            .child(if motion {
-                div().into_any_element()
-            } else {
+    }
+
+    fn render_colour_gainmap_canvas(&self, cx: &Context<Self>) -> impl IntoElement {
+        h_flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .items_stretch()
+            .overflow_hidden()
+            .child(
                 h_flex()
-                    .gap_2()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .items_stretch()
+                    .overflow_hidden()
+                    .p_5()
+                    .gap_4()
+                    .bg(rgb_to_hsla(self.preview_background))
+                    .child(self.render_image_panel(
+                        "黑白底图",
+                        self.render_black_and_white_preview(cx),
+                        cx,
+                    ))
+                    .child(self.render_image_panel(
+                        "彩色 Gain Map",
+                        self.render_colour_preview(cx),
+                        cx,
+                    )),
+            )
+            .child(self.render_colour_gainmap_inspector(cx))
+    }
+
+    fn render_colour_gainmap_inspector(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w_96()
+            .h_full()
+            .min_h_0()
+            .flex_shrink_0()
+            .gap_6()
+            .p_5()
+            .overflow_y_scrollbar()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("生成黑白 + 彩色 Gain Map"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("预览黑白底图和对应的彩色恢复 Gain Map。"),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(section_title("照片"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(self.colour_gainmap_photo_summary()),
+                    )
                     .child(
                         Button::new("colour-gainmap-open")
                             .label("选择照片…")
                             .small()
+                            .w_full()
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.pick_colour_gainmap_photo(cx)),
                             ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("也可以把一张照片直接拖入页面。"),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(section_title("输出"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("导出包含黑白底图与彩色 Gain Map 的 JPEG。"),
                     )
                     .child(
                         Button::new("colour-gainmap-export")
@@ -582,6 +665,8 @@ impl AppView {
                                 "导出 JPEG…"
                             })
                             .small()
+                            .primary()
+                            .w_full()
                             .disabled(
                                 self.colour_gainmap.path().is_none()
                                     || self.colour_gainmap.is_exporting(),
@@ -589,20 +674,8 @@ impl AppView {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.export_colour_gainmap(window, cx)
                             })),
-                    )
-                    .into_any_element()
-            })
-    }
-
-    fn render_colour_gainmap_canvas(&self, cx: &Context<Self>) -> impl IntoElement {
-        h_flex()
-            .flex_1()
-            .min_h_0()
-            .p_5()
-            .gap_4()
-            .bg(rgb_to_hsla(self.preview_background))
-            .child(self.render_image_panel("黑白底图", self.render_black_and_white_preview(cx), cx))
-            .child(self.render_image_panel("彩色 Gain Map", self.render_colour_preview(cx), cx))
+                    ),
+            )
     }
 
     fn render_image_panel(
@@ -613,8 +686,10 @@ impl AppView {
     ) -> impl IntoElement {
         v_flex()
             .flex_1()
+            .h_full()
             .min_w_0()
             .min_h_0()
+            .overflow_hidden()
             .gap_2()
             .p_3()
             .bg(cx.theme().background)
@@ -625,7 +700,10 @@ impl AppView {
             .child(
                 div()
                     .flex_1()
+                    .w_full()
+                    .min_w_0()
                     .min_h_0()
+                    .overflow_hidden()
                     .items_center()
                     .justify_center()
                     .child(content),
@@ -711,7 +789,10 @@ impl AppView {
                     .child(
                         div()
                             .flex_1()
+                            .w_full()
+                            .min_w_0()
                             .min_h_0()
+                            .overflow_hidden()
                             .items_center()
                             .justify_center()
                             .child(preview),
@@ -943,6 +1024,14 @@ impl AppView {
                             })),
                     ),
             )
+    }
+
+    fn colour_gainmap_photo_summary(&self) -> String {
+        self.colour_gainmap
+            .path()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "尚未选择照片".into())
     }
 
     fn motion_video_summary(&self) -> String {
