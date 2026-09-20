@@ -582,24 +582,30 @@ impl AppView {
     }
 
     /// Motion Photo 依赖 FFmpeg，可读取其支持的视频格式。
-    pub(super) fn pick_motion_photo_video(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn pick_motion_photo_video(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let window_handle = window.window_handle();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("选择 MP4（H.264/AVC 或 HEVC/H.265）视频".into()),
+            prompt: Some("选择 MP4（H.264、HEVC 或 AV1）视频".into()),
         });
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(paths))) = prompt.await else {
                 return;
             };
-            this.update(cx, |this, cx| this.add_motion_photo_video(paths, cx))
+            let _ = window_handle.update(cx, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    this.add_motion_photo_video(paths, window, cx)
+                })
                 .ok();
+            });
         })
         .detach();
     }
 
-    pub(super) fn pick_ffmpeg(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn pick_ffmpeg(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let window_handle = window.window_handle();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -613,12 +619,17 @@ impl AppView {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            this.update(cx, |this, cx| {
-                if let Err(error) = this.colour_gainmap.set_ffmpeg_path(path, cx) {
-                    eprintln!("无法使用 FFmpeg：{error:#}");
-                }
-            })
-            .ok();
+            let _ = window_handle.update(cx, |_, window, cx| {
+                this.update(cx, |this, cx| {
+                    if let Err(error) = this.colour_gainmap.set_ffmpeg_path(path, window, cx) {
+                        window.push_notification(
+                            Notification::error(format!("无法使用 FFmpeg：{error:#}")),
+                            cx,
+                        );
+                    }
+                })
+                .ok();
+            });
         })
         .detach();
     }
@@ -642,7 +653,12 @@ impl AppView {
         cx.notify();
     }
 
-    pub(super) fn add_motion_photo_video(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    pub(super) fn add_motion_photo_video(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(path) = paths.into_iter().find(|path| {
             path.extension()
                 .and_then(|extension| extension.to_str())
@@ -651,9 +667,11 @@ impl AppView {
             cx.notify();
             return;
         };
-        if let Err(error) = self.colour_gainmap.select_motion_video(path, cx) {
-            // 此页没有常驻错误栏；保留一次重绘，由封面预览区域明确显示后续解码错误。
-            eprintln!("无法使用 Motion Photo 视频：{error:#}");
+        if let Err(error) = self.colour_gainmap.select_motion_video(path, window, cx) {
+            window.push_notification(
+                Notification::error(format!("无法使用 Motion Photo 视频：{error:#}")),
+                cx,
+            );
             cx.notify();
         }
     }

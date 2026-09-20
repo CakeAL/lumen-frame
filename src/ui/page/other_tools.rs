@@ -7,14 +7,20 @@ use std::{
 
 use gpui_kit::component::StyledExt as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
+    notification::Notification,
+    scroll::ScrollableElement as _,
+    slider::{Slider, SliderEvent, SliderState},
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, Entity, ExternalPaths, FontWeight, ObjectFit, div, img};
+use gpui_kit::{
+    AnyElement, App, Context, Entity, ExternalPaths, FontWeight, ObjectFit, Subscription, Window,
+    div, img,
+};
 
 use super::super::AppView;
 use super::super::component::colour_gainmap_preview::{
@@ -32,11 +38,161 @@ pub(in crate::ui::app) enum UtilityMode {
     MotionPhoto,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::app) enum MotionTimeControl {
     Start,
     End,
     Cover,
+}
+
+const MAX_MOTION_DURATION: Duration = Duration::from_secs(10);
+const MIN_MOTION_DURATION: Duration = Duration::from_millis(100);
+
+/// 时间参数的两条输入路径：滑块快速定位，输入框精确填写秒数。
+///
+/// 滑块内部保存 0..=1 的归一化位置，因此载入任意时长的视频后都无需重建控件状态。
+struct MotionTimeField {
+    slider: Entity<SliderState>,
+    input: Entity<InputState>,
+}
+
+impl MotionTimeField {
+    fn new(
+        initial_seconds: f64,
+        initial_timeline: f64,
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> Self {
+        let normalized = if initial_timeline > 0.0 {
+            initial_seconds / initial_timeline
+        } else {
+            0.0
+        };
+        Self {
+            slider: cx.new(|_| {
+                SliderState::new()
+                    .max(1.0)
+                    .min(0.0)
+                    .step(0.000_1)
+                    .default_value(normalized.clamp(0.0, 1.0) as f32)
+            }),
+            input: cx.new(|cx| {
+                InputState::new(window, cx).default_value(format!("{initial_seconds:.2}"))
+            }),
+        }
+    }
+
+    fn subscribe(
+        &self,
+        control: MotionTimeControl,
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> Vec<Subscription> {
+        let slider_subscription = cx.subscribe_in(
+            &self.slider,
+            window,
+            move |this, _, event, window, cx| match event {
+                SliderEvent::Change(value) => {
+                    let timeline = this
+                        .colour_gainmap
+                        .video_duration()
+                        .unwrap_or(MAX_MOTION_DURATION)
+                        .as_secs_f64();
+                    this.colour_gainmap.set_motion_time(
+                        control,
+                        f64::from(value.end()) * timeline,
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+                // 拖动过程中只更新数值；松手后才解码一次封面，避免连续启动 FFmpeg。
+                SliderEvent::Release(_) => this.colour_gainmap.request_motion_preview(cx),
+            },
+        );
+
+        let input_subscription = cx.subscribe_in(
+            &self.input,
+            window,
+            move |this, state, event, window, cx| match event {
+                InputEvent::Change => {
+                    let Some(seconds) = parse_seconds(&state.read(cx).value()) else {
+                        return;
+                    };
+                    this.colour_gainmap.set_motion_time(
+                        control,
+                        seconds,
+                        Some(control),
+                        window,
+                        cx,
+                    );
+                }
+                InputEvent::PressEnter { .. } | InputEvent::Blur => {
+                    if let Some(seconds) = parse_seconds(&state.read(cx).value()) {
+                        this.colour_gainmap
+                            .set_motion_time(control, seconds, None, window, cx);
+                    } else {
+                        this.colour_gainmap
+                            .sync_motion_time_fields(None, window, cx);
+                    }
+                    this.colour_gainmap.request_motion_preview(cx);
+                }
+                InputEvent::Focus => {}
+            },
+        );
+
+        vec![slider_subscription, input_subscription]
+    }
+
+    fn sync(
+        &self,
+        seconds: f64,
+        timeline: f64,
+        sync_input: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let normalized = if timeline > 0.0 {
+            (seconds / timeline).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if (f64::from(self.slider.read(cx).value().end()) - normalized).abs() > 1e-6 {
+            self.slider.update(cx, |state, cx| {
+                state.set_value(normalized as f32, window, cx)
+            });
+        }
+        if sync_input {
+            write_input_seconds(&self.input, seconds, window, cx);
+        }
+    }
+
+    fn render(&self, label: &'static str, disabled: bool, cx: &App) -> AnyElement {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_3()
+                    .child(div().text_sm().child(label))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Input::new(&self.input).small().w_20().disabled(disabled))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("秒"),
+                            ),
+                    ),
+            )
+            .child(Slider::new(&self.slider).disabled(disabled).w_full())
+            .into_any_element()
+    }
 }
 
 pub(in crate::ui::app) struct ColourGainMapPageState {
@@ -54,6 +210,10 @@ pub(in crate::ui::app) struct ColourGainMapPageState {
     motion_max_size_mb: u32,
     ffmpeg_path: Option<PathBuf>,
     ffmpeg_input: Entity<InputState>,
+    motion_start_field: MotionTimeField,
+    motion_end_field: MotionTimeField,
+    motion_cover_field: MotionTimeField,
+    _motion_time_subscriptions: Vec<Subscription>,
 }
 
 impl ColourGainMapPageState {
@@ -72,6 +232,25 @@ impl ColourGainMapPageState {
                 )
                 .placeholder("FFmpeg 可执行文件路径")
         });
+        let motion_start_field = MotionTimeField::new(0.0, 10.0, window, cx);
+        let motion_end_field = MotionTimeField::new(10.0, 10.0, window, cx);
+        let motion_cover_field = MotionTimeField::new(5.0, 10.0, window, cx);
+        let mut motion_time_subscriptions = Vec::new();
+        motion_time_subscriptions.extend(motion_start_field.subscribe(
+            MotionTimeControl::Start,
+            window,
+            cx,
+        ));
+        motion_time_subscriptions.extend(motion_end_field.subscribe(
+            MotionTimeControl::End,
+            window,
+            cx,
+        ));
+        motion_time_subscriptions.extend(motion_cover_field.subscribe(
+            MotionTimeControl::Cover,
+            window,
+            cx,
+        ));
         Self {
             mode: UtilityMode::ColourGainMap,
             path: None,
@@ -87,6 +266,10 @@ impl ColourGainMapPageState {
             motion_max_size_mb: (DEFAULT_MAX_OUTPUT_SIZE / 1024 / 1024) as u32,
             ffmpeg_path,
             ffmpeg_input,
+            motion_start_field,
+            motion_end_field,
+            motion_cover_field,
+            _motion_time_subscriptions: motion_time_subscriptions,
         }
     }
 
@@ -151,29 +334,45 @@ impl ColourGainMapPageState {
     }
     pub(in crate::ui::app) fn detect_ffmpeg(
         &mut self,
+        window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> anyhow::Result<()> {
         self.ffmpeg_path = Some(detect_ffmpeg()?);
+        self.sync_ffmpeg_input(window, cx);
         cx.notify();
         Ok(())
     }
     pub(in crate::ui::app) fn set_ffmpeg_path(
         &mut self,
         path: PathBuf,
+        window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> anyhow::Result<()> {
         validate_ffmpeg(&path)?;
         self.ffmpeg_path = Some(path);
+        self.sync_ffmpeg_input(window, cx);
         cx.notify();
         Ok(())
     }
     pub(in crate::ui::app) fn apply_ffmpeg_input(
         &mut self,
+        window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> anyhow::Result<()> {
         let value = self.ffmpeg_input.read(cx).value().trim().to_owned();
         anyhow::ensure!(!value.is_empty(), "请填写 FFmpeg 可执行文件路径");
-        self.set_ffmpeg_path(PathBuf::from(value), cx)
+        self.set_ffmpeg_path(PathBuf::from(value), window, cx)
+    }
+
+    fn sync_ffmpeg_input(&self, window: &mut Window, cx: &mut App) {
+        let Some(path) = self.ffmpeg_path.as_ref() else {
+            return;
+        };
+        let value = path.display().to_string();
+        if self.ffmpeg_input.read(cx).value().as_ref() != value {
+            self.ffmpeg_input
+                .update(cx, |state, cx| state.set_value(value, window, cx));
+        }
     }
 
     pub(in crate::ui::app) fn select(&mut self, path: PathBuf, cx: &mut Context<AppView>) {
@@ -185,13 +384,14 @@ impl ColourGainMapPageState {
     pub(in crate::ui::app) fn select_motion_video(
         &mut self,
         path: PathBuf,
+        window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> anyhow::Result<()> {
         let ffmpeg = self.ffmpeg_path.as_deref().ok_or_else(|| {
             anyhow::anyhow!("未找到 FFmpeg。请自动检测或手动选择 FFmpeg 可执行文件")
         })?;
         let info = inspect_motion_photo_video(ffmpeg, &path)?;
-        let end = info.duration.min(Duration::from_secs(10));
+        let end = info.duration.min(MAX_MOTION_DURATION);
         if end.is_zero() {
             anyhow::bail!("视频时长为 0，无法生成实况照片");
         }
@@ -199,55 +399,68 @@ impl ColourGainMapPageState {
         self.video_duration = Some(info.duration);
         self.motion_start = Duration::ZERO;
         self.motion_end = end;
-        // yscv-video 只能从首帧顺序解码；默认首帧可快速显示，确认封面位置后再解码。
-        self.motion_cover = Duration::ZERO;
+        self.motion_cover = end / 2;
+        self.sync_motion_time_fields(None, window, cx);
         self.request_motion_preview(cx);
         cx.notify();
         Ok(())
     }
 
-    pub(in crate::ui::app) fn adjust_motion_time(
+    fn set_motion_time(
         &mut self,
         control: MotionTimeControl,
-        delta: f64,
+        seconds: f64,
+        source_input: Option<MotionTimeControl>,
+        window: &mut Window,
         cx: &mut Context<AppView>,
     ) {
-        let max = self
-            .video_duration
-            .unwrap_or(Duration::from_secs(10))
-            .min(Duration::from_secs(10));
-        if max <= Duration::from_millis(100) {
+        let timeline = self.video_duration.unwrap_or(MAX_MOTION_DURATION);
+        if timeline.is_zero() {
             return;
         }
-        let value = |time: Duration| (time.as_secs_f64() + delta).clamp(0.0, max.as_secs_f64());
-        match control {
-            MotionTimeControl::Start => {
-                self.motion_start = Duration::from_secs_f64(
-                    value(self.motion_start)
-                        .min((self.motion_end - Duration::from_millis(100)).as_secs_f64()),
-                );
-            }
-            MotionTimeControl::End => {
-                self.motion_end = Duration::from_secs_f64(
-                    value(self.motion_end)
-                        .max((self.motion_start + Duration::from_millis(100)).as_secs_f64()),
-                );
-            }
-            MotionTimeControl::Cover => {
-                self.motion_cover = Duration::from_secs_f64(value(self.motion_cover).clamp(
-                    self.motion_start.as_secs_f64(),
-                    (self.motion_end - Duration::from_micros(1)).as_secs_f64(),
-                ));
-            }
-        }
-        self.motion_cover = self.motion_cover.clamp(
+        (self.motion_start, self.motion_end, self.motion_cover) = updated_motion_times(
+            control,
+            seconds,
+            timeline,
             self.motion_start,
-            self.motion_end - Duration::from_micros(1),
+            self.motion_end,
+            self.motion_cover,
         );
-        if matches!(control, MotionTimeControl::Cover) {
-            self.request_motion_preview(cx);
-        }
+        self.sync_motion_time_fields(source_input, window, cx);
         cx.notify();
+    }
+
+    fn sync_motion_time_fields(
+        &self,
+        source_input: Option<MotionTimeControl>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let timeline = self
+            .video_duration
+            .unwrap_or(MAX_MOTION_DURATION)
+            .as_secs_f64();
+        self.motion_start_field.sync(
+            self.motion_start.as_secs_f64(),
+            timeline,
+            source_input != Some(MotionTimeControl::Start),
+            window,
+            cx,
+        );
+        self.motion_end_field.sync(
+            self.motion_end.as_secs_f64(),
+            timeline,
+            source_input != Some(MotionTimeControl::End),
+            window,
+            cx,
+        );
+        self.motion_cover_field.sync(
+            self.motion_cover.as_secs_f64(),
+            timeline,
+            source_input != Some(MotionTimeControl::Cover),
+            window,
+            cx,
+        );
     }
 
     pub(in crate::ui::app) fn set_exporting(&mut self, exporting: bool, cx: &mut Context<AppView>) {
@@ -300,11 +513,11 @@ impl AppView {
                 }
                 UtilityMode::MotionPhoto => self.render_motion_photo_canvas(cx).into_any_element(),
             })
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
                 if this.colour_gainmap.mode() == UtilityMode::ColourGainMap {
                     this.add_colour_gainmap_photo(paths.paths().to_vec(), cx);
                 } else {
-                    this.add_motion_photo_video(paths.paths().to_vec(), cx);
+                    this.add_motion_photo_video(paths.paths().to_vec(), window, cx);
                 }
             }))
     }
@@ -349,68 +562,7 @@ impl AppView {
                     ),
             )
             .child(if motion {
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Input::new(self.colour_gainmap.ffmpeg_input())
-                            .small()
-                            .w_64(),
-                    )
-                    .child(
-                        Button::new("motion-photo-apply-ffmpeg")
-                            .label("应用路径")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Err(error) = this.colour_gainmap.apply_ffmpeg_input(cx) {
-                                    eprintln!("无法使用 FFmpeg：{error:#}");
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("motion-photo-detect-ffmpeg")
-                            .label("检测 FFmpeg")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Err(error) = this.colour_gainmap.detect_ffmpeg(cx) {
-                                    eprintln!("无法检测 FFmpeg：{error:#}");
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("motion-photo-select-ffmpeg")
-                            .label("选择 FFmpeg…")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _, cx| this.pick_ffmpeg(cx))),
-                    )
-                    .child(
-                        Button::new("motion-photo-open")
-                            .label("选择视频…")
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.pick_motion_photo_video(cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("motion-photo-export")
-                            .label(if self.colour_gainmap.is_motion_exporting() {
-                                "正在导出…"
-                            } else {
-                                "导出 Motion Photo…"
-                            })
-                            .small()
-                            .disabled(
-                                self.colour_gainmap.video_path().is_none()
-                                    || self.colour_gainmap.ffmpeg_path().is_none()
-                                    || self.colour_gainmap.is_motion_exporting(),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.export_motion_photo(window, cx)
-                            })),
-                    )
-                    .into_any_element()
+                div().into_any_element()
             } else {
                 h_flex()
                     .gap_2()
@@ -539,18 +691,17 @@ impl AppView {
         };
         h_flex()
             .flex_1()
+            .min_w_0()
             .min_h_0()
-            .gap_5()
-            .p_5()
+            .items_stretch()
             .child(
                 v_flex()
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .p_3()
-                    .gap_2()
+                    .p_5()
+                    .gap_3()
                     .bg(rgb_to_hsla(self.preview_background))
-                    .rounded_md()
                     .child(
                         div()
                             .text_sm()
@@ -568,99 +719,191 @@ impl AppView {
             )
             .child(
                 v_flex()
-                    .w_72()
+                    .w_96()
+                    .h_full()
+                    .min_h_0()
                     .flex_shrink_0()
-                    .gap_4()
-                    .p_4()
-                    .border_1()
+                    .gap_6()
+                    .p_5()
+                    .overflow_y_scrollbar()
+                    .border_l_1()
                     .border_color(cx.theme().border)
-                    .rounded_md()
-                    .child(div().font_weight(FontWeight::MEDIUM).child("视频片段"))
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(self.motion_video_summary()),
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("生成 Motion Photo"),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("选择视频片段与封面帧，然后导出为实况照片。"),
+                            ),
                     )
-                    .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
-                        self.colour_gainmap.ffmpeg_path().map(|path| format!("FFmpeg：{}", path.display())).unwrap_or_else(|| "未检测到 FFmpeg；请在工具栏自动检测或手动选择".into()),
-                    ))
+                    .child(self.render_motion_ffmpeg_section(cx))
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("依赖 FFmpeg（含 ffprobe 与 libx264）。支持常见视频格式；导出的动态片段最长 10 秒。"),
+                        v_flex()
+                            .w_full()
+                            .gap_3()
+                            .child(section_title("视频"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(self.motion_video_summary()),
+                            )
+                            .child(
+                                Button::new("motion-photo-open")
+                                    .label("选择视频…")
+                                    .small()
+                                    .w_full()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pick_motion_photo_video(window, cx)
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("支持 MP4 容器中的 H.264、HEVC 或 AV1 视频。"),
+                            ),
                     )
-                    .child(self.render_motion_time_control(
-                        "入点",
-                        MotionTimeControl::Start,
-                        self.colour_gainmap.motion_start(),
-                        cx,
-                    ))
-                    .child(self.render_motion_time_control(
-                        "出点",
-                        MotionTimeControl::End,
-                        self.colour_gainmap.motion_end(),
-                        cx,
-                    ))
-                    .child(self.render_motion_time_control(
-                        "封面",
-                        MotionTimeControl::Cover,
-                        self.colour_gainmap.motion_cover(),
-                        cx,
-                    ))
-                    .child(self.render_motion_size_control(cx)),
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_4()
+                            .child(section_title("时间范围"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(
+                                        "滑块覆盖整段视频，输入框可精确填写秒数；片段最长 10 秒。",
+                                    ),
+                            )
+                            .child(self.colour_gainmap.motion_start_field.render(
+                                "入点",
+                                self.colour_gainmap.video_path().is_none(),
+                                cx,
+                            ))
+                            .child(self.colour_gainmap.motion_end_field.render(
+                                "出点",
+                                self.colour_gainmap.video_path().is_none(),
+                                cx,
+                            ))
+                            .child(self.colour_gainmap.motion_cover_field.render(
+                                "封面",
+                                self.colour_gainmap.video_path().is_none(),
+                                cx,
+                            )),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_3()
+                            .child(section_title("输出"))
+                            .child(self.render_motion_size_control(cx))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("FFmpeg 会在编码前按封面与视频的总大小控制码率。"),
+                            )
+                            .child(
+                                Button::new("motion-photo-export")
+                                    .label(if self.colour_gainmap.is_motion_exporting() {
+                                        "正在导出…"
+                                    } else {
+                                        "导出 Motion Photo…"
+                                    })
+                                    .small()
+                                    .primary()
+                                    .w_full()
+                                    .disabled(
+                                        self.colour_gainmap.video_path().is_none()
+                                            || self.colour_gainmap.ffmpeg_path().is_none()
+                                            || self.colour_gainmap.is_motion_exporting(),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.export_motion_photo(window, cx)
+                                    })),
+                            ),
+                    ),
             )
     }
 
-    fn render_motion_time_control(
-        &self,
-        label: &'static str,
-        control: MotionTimeControl,
-        value: Duration,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let index = match control {
-            MotionTimeControl::Start => 0_u64,
-            MotionTimeControl::End => 1_u64,
-            MotionTimeControl::Cover => 2_u64,
-        };
-        h_flex()
+    fn render_motion_ffmpeg_section(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
             .w_full()
-            .justify_between()
-            .items_center()
-            .child(div().text_sm().child(label))
+            .gap_3()
+            .child(section_title("FFmpeg"))
+            .child(Input::new(self.colour_gainmap.ffmpeg_input()).small().w_full())
             .child(
                 h_flex()
+                    .w_full()
                     .gap_2()
-                    .items_center()
                     .child(
-                        Button::new(("motion-time-minus", index))
-                            .label("−")
+                        Button::new("motion-photo-apply-ffmpeg")
+                            .label("应用路径")
                             .small()
-                            .ghost()
-                            .disabled(self.colour_gainmap.video_path().is_none())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.colour_gainmap.adjust_motion_time(control, -0.25, cx)
+                            .flex_1()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Err(error) =
+                                    this.colour_gainmap.apply_ffmpeg_input(window, cx)
+                                {
+                                    window.push_notification(
+                                        Notification::error(format!(
+                                            "无法使用 FFmpeg：{error:#}"
+                                        )),
+                                        cx,
+                                    );
+                                }
                             })),
                     )
                     .child(
-                        div()
-                            .w_16()
-                            .text_center()
-                            .text_sm()
-                            .child(format!("{:.2} 秒", value.as_secs_f64())),
-                    )
-                    .child(
-                        Button::new(("motion-time-plus", index))
-                            .label("+")
+                        Button::new("motion-photo-detect-ffmpeg")
+                            .label("自动检测")
                             .small()
-                            .ghost()
-                            .disabled(self.colour_gainmap.video_path().is_none())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.colour_gainmap.adjust_motion_time(control, 0.25, cx)
+                            .flex_1()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Err(error) = this.colour_gainmap.detect_ffmpeg(window, cx) {
+                                    window.push_notification(
+                                        Notification::error(format!(
+                                            "无法检测 FFmpeg：{error:#}"
+                                        )),
+                                        cx,
+                                    );
+                                }
                             })),
                     ),
+            )
+            .child(
+                Button::new("motion-photo-select-ffmpeg")
+                    .label("选择 FFmpeg…")
+                    .small()
+                    .w_full()
+                    .on_click(cx.listener(|this, _, window, cx| this.pick_ffmpeg(window, cx))),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        self.colour_gainmap
+                            .ffmpeg_path()
+                            .map(|path| format!("当前：{}", path.display()))
+                            .unwrap_or_else(|| "尚未检测到 FFmpeg".into()),
+                    ),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("需要 FFmpeg、ffprobe 与 libx264。可自动检测终端 PATH，或手动填写可执行文件路径。"),
             )
     }
 
@@ -726,4 +969,126 @@ fn placeholder(icon: IconName, text: &'static str, cx: &Context<AppView>) -> gpu
         .child(Icon::new(icon))
         .child(text)
         .into_any_element()
+}
+
+fn section_title(title: &'static str) -> impl IntoElement {
+    div().text_sm().font_weight(FontWeight::MEDIUM).child(title)
+}
+
+fn parse_seconds(text: &str) -> Option<f64> {
+    let value = text.trim().parse::<f64>().ok()?;
+    value.is_finite().then_some(value)
+}
+
+fn write_input_seconds(
+    input: &Entity<InputState>,
+    seconds: f64,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let value = format!("{seconds:.2}");
+    if input.read(cx).value().as_ref() == value {
+        return;
+    }
+    input.update(cx, |state, cx| state.set_value(value, window, cx));
+}
+
+fn updated_motion_times(
+    control: MotionTimeControl,
+    seconds: f64,
+    timeline: Duration,
+    current_start: Duration,
+    current_end: Duration,
+    current_cover: Duration,
+) -> (Duration, Duration, Duration) {
+    let timeline_seconds = timeline.as_secs_f64();
+    let minimum_span = MIN_MOTION_DURATION.min(timeline).as_secs_f64();
+    let requested = seconds.clamp(0.0, timeline_seconds);
+    let mut start = current_start.as_secs_f64();
+    let mut end = current_end.as_secs_f64();
+    let current_span = (end - start).clamp(minimum_span, MAX_MOTION_DURATION.as_secs_f64());
+
+    match control {
+        MotionTimeControl::Start => {
+            start = requested.min(timeline_seconds - minimum_span);
+            if end < start + minimum_span {
+                end = (start + current_span).min(timeline_seconds);
+            }
+            end = end.min(start + MAX_MOTION_DURATION.as_secs_f64());
+        }
+        MotionTimeControl::End => {
+            end = requested.max(minimum_span);
+            if start > end - minimum_span {
+                start = (end - current_span).max(0.0);
+            }
+            start = start.max(end - MAX_MOTION_DURATION.as_secs_f64());
+        }
+        MotionTimeControl::Cover => {}
+    }
+
+    let cover = if matches!(control, MotionTimeControl::Cover) {
+        requested
+    } else {
+        current_cover.as_secs_f64()
+    }
+    .clamp(start, (end - 0.000_001).max(start));
+
+    (
+        Duration::from_secs_f64(start),
+        Duration::from_secs_f64(end),
+        Duration::from_secs_f64(cover),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motion_time_controls_can_select_anywhere_in_a_long_video() {
+        let (start, end, cover) = updated_motion_times(
+            MotionTimeControl::Start,
+            100.0,
+            Duration::from_secs(216),
+            Duration::ZERO,
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(start, Duration::from_secs(100));
+        assert_eq!(end, Duration::from_secs(110));
+        assert_eq!(cover, Duration::from_secs(100));
+    }
+
+    #[test]
+    fn motion_time_controls_keep_the_clip_within_ten_seconds() {
+        let (start, end, cover) = updated_motion_times(
+            MotionTimeControl::End,
+            42.0,
+            Duration::from_secs(216),
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(start, Duration::from_secs(32));
+        assert_eq!(end, Duration::from_secs(42));
+        assert_eq!(cover, Duration::from_secs(32));
+    }
+
+    #[test]
+    fn cover_is_clamped_inside_the_selected_clip() {
+        let (start, end, cover) = updated_motion_times(
+            MotionTimeControl::Cover,
+            30.0,
+            Duration::from_secs(60),
+            Duration::from_secs(20),
+            Duration::from_secs(25),
+            Duration::from_secs(22),
+        );
+
+        assert_eq!(start, Duration::from_secs(20));
+        assert_eq!(end, Duration::from_secs(25));
+        assert!(cover >= start && cover < end);
+    }
 }
