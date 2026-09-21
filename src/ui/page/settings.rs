@@ -7,7 +7,7 @@
 //! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IndexPath, Theme, ThemeMode,
+    ActiveTheme as _, Disableable as _, IndexPath, Theme, ThemeMode,
     button::{Button, ButtonVariants as _},
     group_box::GroupBox,
     h_flex,
@@ -21,8 +21,8 @@ use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Win
 use crate::config::AppearanceMode;
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
 
-use super::super::AppView;
 use super::super::component::field::{ColorField, NumberField, field};
+use super::super::{AppView, UpdateState};
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
@@ -179,6 +179,30 @@ impl AppView {
         let scale_index = INTERFACE_SCALES
             .iter()
             .position(|(_, size)| (size - self.interface_scale).abs() < 0.5);
+        let (update_label, update_status, update_disabled): (SharedString, SharedString, bool) =
+            match &self.update_state {
+                UpdateState::Idle => ("检查更新".into(), "默认每 7 天自动检查一次".into(), false),
+                UpdateState::Checking => {
+                    ("正在检查…".into(), "正在连接 GitHub Releases".into(), true)
+                }
+                UpdateState::UpToDate => ("再次检查".into(), "当前已是最新版本".into(), false),
+                UpdateState::Available { version } => (
+                    format!("安装 {version}").into(),
+                    format!("发现新版本 {version}").into(),
+                    false,
+                ),
+                UpdateState::Installing { version } => (
+                    "正在安装…".into(),
+                    format!("正在下载并安装 {version}").into(),
+                    true,
+                ),
+                UpdateState::Installed { version } => (
+                    "已安装".into(),
+                    format!("已安装 {version}，重启应用后生效").into(),
+                    true,
+                ),
+                UpdateState::Failed { message } => ("重试".into(), message.clone(), false),
+            };
 
         v_flex()
             .size_full()
@@ -416,6 +440,33 @@ impl AppView {
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(
                                                         "基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
+                                                    ),
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .gap_2()
+                                                    .pt_2()
+                                                    .child(
+                                                        Button::new("settings-check-update")
+                                                            .label(update_label)
+                                                            .w_full()
+                                                            .disabled(update_disabled)
+                                                            .on_click(cx.listener(
+                                                                |this, _, window, cx| {
+                                                                    this.check_for_updates(
+                                                                        window, cx,
+                                                                    )
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(
+                                                                cx.theme().muted_foreground,
+                                                            )
+                                                            .child(update_status),
                                                     ),
                                             ),
                             ),

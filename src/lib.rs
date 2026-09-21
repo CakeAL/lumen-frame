@@ -5,6 +5,7 @@ pub mod photo;
 pub mod process;
 pub mod theme;
 pub mod ui;
+pub mod update;
 pub mod workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
