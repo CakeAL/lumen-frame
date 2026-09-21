@@ -12,11 +12,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    Position,
-    params::WatermarkParams,
-    process::text::{Text, TextAlign, TextDirection, TextGroup},
-};
+use crate::{params::WatermarkParams, process::text::TextGroup};
 
 /// 一个命名保存的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -25,47 +21,50 @@ pub struct WatermarkPreset {
     pub text_groups: Vec<TextGroup>,
 }
 
-/// 预设文件里记录的元信息。
-///
-/// 名字同时决定文件名，两者可能因为非法字符被规整而不同，所以名字在文件里单独存一份。
+/// 当前唯一的预设文件格式。
+/// 名字同时决定文件名，两者可能因非法字符被规整而不同，因此仍在文件内单独保存。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PresetFile {
-    /// 文件格式版本，方便以后改结构时迁移。
-    version: u32,
     name: String,
     params: WatermarkParams,
     #[serde(default)]
     text_groups: Vec<TextGroup>,
-    /// v1 预设只有一个文字块；读入时迁移成单元素文字组。
-    #[serde(default, skip_serializing)]
-    text: Option<LegacyText>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyText {
-    template: Vec<String>,
-    text_params: Vec<crate::process::text::TextParams>,
-    position: Position,
-    time_format: String,
+const BUILTIN_PRESETS: &[(&str, &str)] = &[
+    ("16_9", include_str!("../assets/presets/16_9.toml")),
+    ("基础样式", include_str!("../assets/presets/基础样式.toml")),
+    ("文字在上", include_str!("../assets/presets/文字在上.toml")),
+    ("白色边框", include_str!("../assets/presets/白色边框.toml")),
+    (
+        "纯色背景_文字在下",
+        include_str!("../assets/presets/纯色背景_文字在下.toml"),
+    ),
+];
+
+/// 编译进应用的默认预设。它们来自 `assets/presets`，不写入用户目录。
+pub fn builtin_presets() -> Result<Vec<(String, WatermarkPreset)>> {
+    BUILTIN_PRESETS
+        .iter()
+        .map(|(name, document)| {
+            parse_preset(document, name).map(|preset| ((*name).to_string(), preset))
+        })
+        .collect()
 }
 
-impl From<LegacyText> for TextGroup {
-    fn from(value: LegacyText) -> Self {
-        Self {
-            text: Text {
-                template: value.template,
-                text_params: value.text_params,
-            },
-            position: value.position,
-            direction: TextDirection::Horizontal,
-            align: TextAlign::Center,
-            padding: 0.0,
-            time_format: value.time_format,
-        }
-    }
+pub fn is_builtin_preset(name: &str) -> bool {
+    BUILTIN_PRESETS
+        .iter()
+        .any(|(builtin_name, _)| *builtin_name == name)
 }
 
-const PRESET_FORMAT_VERSION: u32 = 2;
+pub fn load_builtin_preset(name: &str) -> Result<WatermarkPreset> {
+    let (_, document) = BUILTIN_PRESETS
+        .iter()
+        .find(|(builtin_name, _)| *builtin_name == name)
+        .with_context(|| format!("找不到内置预设「{name}」"))?;
+    parse_preset(document, name)
+}
 
 /// 预设的存放目录。
 pub fn preset_dir() -> Option<PathBuf> {
@@ -205,6 +204,9 @@ pub fn list_presets_in(dir: &Path) -> Result<Vec<String>> {
 
 /// 保存预设，同名覆盖。
 pub fn save_preset(name: &str, preset: &WatermarkPreset) -> Result<PathBuf> {
+    if is_builtin_preset(name.trim()) {
+        bail!("「{}」是内置预设，请使用其他名字", name.trim());
+    }
     let dir = preset_dir().context("找不到系统的配置目录")?;
     save_preset_in(&dir, name, preset)
 }
@@ -215,11 +217,9 @@ pub fn save_preset_in(dir: &Path, name: &str, preset: &WatermarkPreset) -> Resul
     std::fs::create_dir_all(dir).with_context(|| format!("创建预设目录失败：{}", dir.display()))?;
 
     let file = PresetFile {
-        version: PRESET_FORMAT_VERSION,
         name: name.trim().to_string(),
         params: preset.params.clone(),
         text_groups: preset.text_groups.clone(),
-        text: None,
     };
     let document = toml::to_string_pretty(&file).context("序列化预设失败")?;
     let path = dir.join(file_name);
@@ -238,30 +238,14 @@ pub fn load_preset_in(dir: &Path, name: &str) -> Result<WatermarkPreset> {
     let path = dir.join(file_name_for(name)?);
     let document = std::fs::read_to_string(&path)
         .with_context(|| format!("读取预设失败：{}", path.display()))?;
-    let file: PresetFile =
-        toml::from_str(&document).with_context(|| format!("解析预设失败：{}", path.display()))?;
-
-    if file.version > PRESET_FORMAT_VERSION {
-        bail!(
-            "预设「{}」来自更新的版本（格式 {}）",
-            file.name,
-            file.version
-        );
-    }
-    let mut text_groups = file.text_groups;
-    if text_groups.is_empty()
-        && let Some(text) = file.text
-    {
-        text_groups.push(text.into());
-    }
-    Ok(WatermarkPreset {
-        params: file.params,
-        text_groups,
-    })
+    parse_preset(&document, &path.display().to_string())
 }
 
 /// 删除预设。文件不在就当作已经删掉了。
 pub fn delete_preset(name: &str) -> Result<()> {
+    if is_builtin_preset(name) {
+        bail!("内置预设不可删除");
+    }
     let dir = preset_dir().context("找不到系统的配置目录")?;
     delete_preset_in(&dir, name)
 }
@@ -307,6 +291,15 @@ fn read_name(path: &Path) -> Option<String> {
     Some(file.name)
 }
 
+fn parse_preset(document: &str, source: &str) -> Result<WatermarkPreset> {
+    let file: PresetFile =
+        toml::from_str(document).with_context(|| format!("解析预设失败：{source}"))?;
+    Ok(WatermarkPreset {
+        params: file.params,
+        text_groups: file.text_groups,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,11 +326,9 @@ mod tests {
             text_groups: vec![TextGroup::default()],
         };
         let file = PresetFile {
-            version: PRESET_FORMAT_VERSION,
             name: "round trip".to_string(),
             params: preset.params.clone(),
             text_groups: preset.text_groups.clone(),
-            text: None,
         };
         let document = toml::to_string_pretty(&file).unwrap();
         let parsed: PresetFile = toml::from_str(&document).unwrap();

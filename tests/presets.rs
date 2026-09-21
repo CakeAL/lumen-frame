@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use lumen_frame::{
     Position,
     config::{
-        WatermarkPreset, delete_preset_in, list_presets_in, load_preset_in, preset_dir,
-        save_preset_in,
+        WatermarkPreset, builtin_presets, delete_preset_in, list_presets_in, load_preset_in,
+        preset_dir, save_preset_in,
     },
     params::WatermarkParams,
     process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
@@ -99,7 +99,9 @@ fn output_folder_is_not_part_of_a_preset() {
     let path = save_preset_in(&dir, "no-folder", &preset).unwrap();
     let document = std::fs::read_to_string(&path).unwrap();
     assert!(
-        !document.contains("output_folder") && !document.contains("should/not/be/saved"),
+        !document.contains("output_folder")
+            && !document.contains("should/not/be/saved")
+            && !document.contains("version ="),
         "输出文件夹属于本机环境，不该写进预设：\n{document}"
     );
 
@@ -112,40 +114,21 @@ fn output_folder_is_not_part_of_a_preset() {
 }
 
 #[test]
-fn version_one_single_text_is_migrated_to_a_text_group() {
-    let dir = scratch_dir("v1-migration");
-    std::fs::create_dir_all(&dir).unwrap();
-    let document = r#"
-version = 1
-name = "旧预设"
+fn bundled_presets_load_from_assets() {
+    let presets = builtin_presets().expect("内置预设应该随应用一起可用");
+    let names = presets
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
 
-[params]
-
-[text]
-template = ["旧格式文字"]
-position = "Up"
-time_format = "%Y/%m/%d"
-
-[[text.text_params]]
-font = "Arial"
-size = 0.03
-line_spacing = 1.3
-italic = false
-bold = false
-align = "Left"
-"#;
-    std::fs::write(dir.join("旧预设.toml"), document).unwrap();
-
-    let loaded = load_preset_in(&dir, "旧预设").expect("v1 预设应自动迁移");
-
-    assert_eq!(loaded.text_groups.len(), 1);
-    let group = &loaded.text_groups[0];
-    assert_eq!(group.position, Position::Up);
-    assert_eq!(group.direction, TextDirection::Horizontal);
-    assert_eq!(group.align, TextAlign::Center);
-    assert_eq!(group.text.template, ["旧格式文字"]);
-
-    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(presets.len(), 5);
+    assert!(names.contains(&"基础样式"));
+    assert!(names.contains(&"纯色背景_文字在下"));
+    assert!(
+        presets
+            .iter()
+            .all(|(_, preset)| !preset.text_groups.is_empty())
+    );
 }
 
 #[test]

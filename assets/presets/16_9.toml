@@ -1,0 +1,109 @@
+name = "16_9"
+
+[params]
+border_ratio = [
+    0.025,
+    0.05,
+    0.05,
+    0.05,
+]
+border_equal = true
+aspect_ratio = [
+    16.0,
+    9.0,
+]
+position = "Left"
+background = [
+    255,
+    255,
+    255,
+]
+border_radius = 0.02
+shadow_size = 0.06
+shadow_density = 1.2
+solid_background = false
+blur_sigma = 15.0
+quality = 95
+
+[[text_groups]]
+position = "Left"
+direction = "Vertical"
+align = "Left"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = ["{Logo} {型号}"]
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
+align = "Center"
+
+[[text_groups]]
+position = "Left"
+direction = "Vertical"
+align = "Right"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = ["{等效焦距}mm f/{光圈} {快门}s ISO{ISO}"]
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.025
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
+align = "Center"
+
+[[text_groups]]
+position = "Right"
+direction = "Horizontal"
+align = "Center"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = [
+    "{拍摄日期}",
+    "{市}",
+    "·",
+    "{区}",
+]
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 2.5
+italic = false
+bold = true
+align = "Center"
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = false
+align = "Center"
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
+align = "Center"
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = false
+align = "Center"

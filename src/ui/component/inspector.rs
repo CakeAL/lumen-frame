@@ -17,59 +17,83 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, FontWeight, IntoElement, SharedString, Subscription, Window,
-    black, div, white,
+    AnyElement, Context, Entity, FontWeight, Hsla, IntoElement, KeyDownEvent, Role, SharedString,
+    Subscription, Window, black, div, linear_color_stop, linear_gradient, relative, rgba, white,
 };
 
 use crate::Position;
 use crate::params::WatermarkParams;
-use crate::process::text::{TextAlign, TextGroup};
+use crate::process::text::{TextAlign, TextDirection, TextGroup};
 
 use super::super::{AppView, ExportState};
 use super::field::{
-    Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
-    warning,
+    Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, rgb_to_hsla,
+    select_state, warning,
 };
 
-fn preset_text_marker(group: &TextGroup) -> AnyElement {
-    let horizontal = || div().w_8().h_2().border_1().border_color(black());
-    let vertical = || div().w_2().h_8().border_1().border_color(black());
+fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
+    let vertical = group.direction == TextDirection::Vertical;
+    let align_offset = match group.align {
+        TextAlign::Left => 0.08,
+        TextAlign::Center => 0.36,
+        TextAlign::Right => 0.64,
+    };
 
-    match group.position {
-        Position::Up | Position::Bottom | Position::Center => {
-            let lane = h_flex()
-                .absolute()
-                .left_4()
-                .right_4()
-                .when(group.position == Position::Up, |this| this.top_1())
-                .when(group.position == Position::Bottom, |this| this.bottom_1())
-                .when(group.position == Position::Center, |this| {
-                    this.top_0().bottom_0()
-                });
-            match group.align {
-                TextAlign::Left => lane,
-                TextAlign::Center => lane.justify_center(),
-                TextAlign::Right => lane.justify_end(),
-            }
-            .child(horizontal())
+    if vertical {
+        let left = match group.position {
+            Position::Left => 0.04,
+            Position::Right => 0.935,
+            Position::Up | Position::Bottom | Position::Center => align_offset + 0.12,
+        };
+        let top = match group.position {
+            Position::Up => 0.08,
+            Position::Bottom => 0.62,
+            Position::Center => 0.35,
+            Position::Left | Position::Right => match group.align {
+                TextAlign::Left => 0.12,
+                TextAlign::Center => 0.35,
+                TextAlign::Right => 0.58,
+            },
+        };
+        div()
+            .absolute()
+            .w(relative(0.025))
+            .h(relative(0.30))
+            .left(relative(left))
+            .top(relative(top))
+            .rounded_full()
+            .bg(color)
             .into_any_element()
-        }
-        Position::Left | Position::Right => {
-            let lane = v_flex()
-                .absolute()
-                .top_3()
-                .bottom_3()
-                .when(group.position == Position::Left, |this| this.left_1())
-                .when(group.position == Position::Right, |this| this.right_1());
-            match group.align {
-                TextAlign::Left => lane,
-                TextAlign::Center => lane.justify_center(),
-                TextAlign::Right => lane.justify_end(),
-            }
-            .child(vertical())
+    } else {
+        let left = match group.position {
+            Position::Left => 0.05,
+            Position::Right => 0.67,
+            Position::Up | Position::Bottom | Position::Center => align_offset,
+        };
+        let top = match group.position {
+            Position::Up => 0.05,
+            Position::Bottom => 0.90,
+            Position::Center | Position::Left | Position::Right => 0.48,
+        };
+        div()
+            .absolute()
+            .w(relative(0.28))
+            .h(relative(0.035))
+            .left(relative(left))
+            .top(relative(top))
+            .rounded_full()
+            .bg(color)
             .into_any_element()
-        }
     }
+}
+
+fn preset_section_label(label: &'static str, cx: &Context<AppView>) -> impl IntoElement {
+    div()
+        .mt_2()
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(cx.theme().muted_foreground)
+        .child(label)
 }
 
 /// 模糊强度的上限。
@@ -547,29 +571,28 @@ impl AppView {
                     .id("preset-cards")
                     .flex_1()
                     .min_h_0()
-                    .gap_2()
+                    .gap_3()
                     .p_4()
                     .overflow_y_scroll()
-                    .when(self.preset_names.is_empty(), |this| {
-                        this.child(hint("还没有保存过预设。", cx))
-                    })
-                    .when(!self.preset_names.is_empty(), |this| {
-                        this.children(self.preset_names.chunks(2).map(|names| {
-                            h_flex()
-                                .w_full()
-                                .items_stretch()
-                                .gap_2()
-                                // 每一列始终有自己的等分容器。末行只有一张卡时，空列仍
-                                // 占据另一半，卡片不会因为少了邻居而突然变宽。
-                                .children((0..2).map(|column| {
-                                    div().flex_1().min_w_0().children(
-                                        names
-                                            .get(column)
-                                            .map(|name| self.render_preset_card(name.clone(), cx)),
-                                    )
-                                }))
-                        }))
-                    }),
+                    .child(preset_section_label("内置预设", cx))
+                    .children(
+                        self.preset_names
+                            .iter()
+                            .filter(|name| self.builtin_preset_names.contains(*name))
+                            .map(|name| self.render_preset_card(name.clone(), true, cx)),
+                    )
+                    .when(
+                        self.preset_names
+                            .iter()
+                            .any(|name| !self.builtin_preset_names.contains(name)),
+                        |this| this.child(preset_section_label("我的预设", cx)),
+                    )
+                    .children(
+                        self.preset_names
+                            .iter()
+                            .filter(|name| !self.builtin_preset_names.contains(*name))
+                            .map(|name| self.render_preset_card(name.clone(), false, cx)),
+                    ),
             )
             .child(
                 div()
@@ -598,8 +621,14 @@ impl AppView {
             .into_any_element()
     }
 
-    fn render_preset_card(&self, name: SharedString, cx: &Context<Self>) -> impl IntoElement {
+    fn render_preset_card(
+        &self,
+        name: SharedString,
+        builtin: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let for_load = name.clone();
+        let for_keyboard = name.clone();
         let for_delete = name.clone();
         let preview = self
             .preset_previews
@@ -608,40 +637,65 @@ impl AppView {
             .unwrap_or_else(|| hint("预览不可用", cx));
 
         v_flex()
-            .id(format!("preset-card-{name}"))
+            .relative()
             .w_full()
             .min_w_0()
-            .gap_2()
-            .p_3()
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded(cx.theme().radius)
-            .bg(cx.theme().group_box)
-            .child(preview)
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(cx.theme().foreground)
-                    .child(name),
-            )
             .child(
                 h_flex()
+                    .items_stretch()
+                    .id(format!("preset-card-{name}"))
                     .w_full()
-                    .gap_2()
+                    .min_w_0()
+                    .gap_3()
+                    .p_3()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(cx.theme().radius)
+                    .bg(cx.theme().group_box)
+                    .focusable()
+                    .tab_index(0)
+                    .role(Role::Button)
+                    .aria_label(format!("载入预设 {name}"))
+                    .hover(|this| this.bg(cx.theme().muted))
+                    .focus_visible(|this| this.border_color(cx.theme().ring))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.load_preset(&for_load, window, cx)
+                    }))
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.stop_propagation();
+                            this.load_preset(&for_keyboard, window, cx);
+                        }
+                    }))
                     .child(
-                        Button::new(format!("preset-load-{for_load}"))
-                            .label("载入")
-                            .small()
-                            .flex_1()
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.load_preset(&for_load, window, cx)
-                            })),
+                        v_flex()
+                            .w_24()
+                            .flex_shrink_0()
+                            .min_w_0()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().foreground)
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(if builtin { "内置" } else { "我的预设" }),
+                            )
+                            .when(!builtin, |this| this.pr_8()),
                     )
-                    .child(
+                    .child(div().flex_1().min_w_0().child(preview)),
+            )
+            .when(!builtin, |this| {
+                this.child(
+                    div().absolute().right_2().bottom_2().child(
                         Button::new(format!("preset-delete-{for_delete}"))
                             .icon(IconName::Delete)
                             .ghost()
@@ -649,10 +703,12 @@ impl AppView {
                             .tooltip("删除这个预设")
                             .accessibility_label(format!("删除预设 {for_delete}"))
                             .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
                                 this.confirm_delete_preset(&for_delete, window, cx)
                             })),
                     ),
-            )
+                )
+            })
     }
 
     fn render_preset_preview(
@@ -660,29 +716,67 @@ impl AppView {
         preset: &crate::config::WatermarkPreset,
         cx: &Context<Self>,
     ) -> AnyElement {
-        div()
-            .relative()
+        let params = &preset.params;
+        let background = rgb_to_hsla(params.background);
+        let luminance = 0.2126 * f32::from(params.background[0])
+            + 0.7152 * f32::from(params.background[1])
+            + 0.0722 * f32::from(params.background[2]);
+        let ink = if luminance < 128.0 { white() } else { black() };
+        // 这里的固定色是用户指定的“高斯模糊”预览图例，不是应用主题色。
+        let canvas_background = if params.solid_background {
+            background.into()
+        } else {
+            linear_gradient(
+                135.0,
+                linear_color_stop(rgba(0x42e695ff), 0.0),
+                linear_color_stop(rgba(0x3bb2b8ff), 1.0),
+            )
+        };
+        let canvas_ratio = params
+            .aspect_ratio
+            .map(|(width, height)| width / height.max(0.001))
+            .unwrap_or(1.5)
+            .clamp(0.5, 2.0) as f32;
+        // 小尺寸图例里适度放大边框比例；零宽保持为零，避免产生并不存在的边框。
+        let border_top = (params.border_ratio.0 as f32 * 3.2).clamp(0.0, 0.28);
+        let border_bottom = (params.border_ratio.1 as f32 * 3.2).clamp(0.0, 0.28);
+        let border_left = (params.border_ratio.2 as f32 * 3.2).clamp(0.0, 0.28);
+        let border_right = (params.border_ratio.3 as f32 * 3.2).clamp(0.0, 0.28);
+        h_flex()
             .w_full()
-            .h_24()
+            .h_10()
+            .items_center()
+            .justify_end()
+            .pr_1()
             .overflow_hidden()
-            .rounded(cx.theme().radius)
-            .bg(white())
             .child(
                 div()
-                    .absolute()
-                    .top_3()
-                    .right_4()
-                    .bottom_3()
-                    .left_4()
-                    .bg(white())
+                    .relative()
+                    .h_10()
+                    .aspect_ratio(canvas_ratio)
+                    .bg(canvas_background)
                     .border_1()
-                    .border_color(black()),
-            )
-            .children(
-                preset
-                    .text_groups
-                    .iter()
-                    .map(|group| preset_text_marker(group)),
+                    .border_color(ink.opacity(0.42))
+                    .rounded(cx.theme().radius)
+                    .when(params.shadow_size > 0.0, |this| this.shadow_sm())
+                    .child(
+                        div()
+                            .absolute()
+                            .top(relative(border_top))
+                            .bottom(relative(border_bottom))
+                            .left(relative(border_left))
+                            .right(relative(border_right))
+                            .bg(ink.opacity(0.24))
+                            .border_1()
+                            .border_color(ink.opacity(0.62))
+                            .rounded(cx.theme().radius),
+                    )
+                    .children(
+                        preset
+                            .text_groups
+                            .iter()
+                            .map(|group| preset_text_marker(group, ink.opacity(0.88))),
+                    ),
             )
             .into_any_element()
     }

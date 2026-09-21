@@ -107,6 +107,8 @@ pub struct AppView {
     preset_names: Vec<SharedString>,
     /// 预设卡片使用的轻量视觉快照，避免在每一帧渲染时读取磁盘。
     preset_previews: HashMap<SharedString, WatermarkPreset>,
+    /// 编译进应用的预设名称；用于禁止覆盖与删除，并在卡片上标明来源。
+    builtin_preset_names: HashSet<SharedString>,
     preset_feedback: Option<SharedString>,
     preset_feedback_is_error: bool,
 
@@ -161,19 +163,7 @@ impl AppView {
             cx,
         )];
 
-        let preset_names = config::list_presets()
-            .unwrap_or_default()
-            .into_iter()
-            .map(SharedString::from)
-            .collect::<Vec<_>>();
-        let preset_previews = preset_names
-            .iter()
-            .filter_map(|name| {
-                config::load_preset(name)
-                    .ok()
-                    .map(|preset| (name.clone(), preset))
-            })
-            .collect();
+        let (preset_names, preset_previews, builtin_preset_names) = preset_catalog();
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
@@ -217,6 +207,7 @@ impl AppView {
             export: ExportState::Idle,
             preset_names,
             preset_previews,
+            builtin_preset_names,
             preset_feedback: None,
             preset_feedback_is_error: false,
             appearance: settings.appearance,
@@ -890,7 +881,12 @@ impl AppView {
 
     /// 载入预设，并把所有「自己存值」的控件同步到新配置上。
     pub(super) fn load_preset(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        match config::load_preset(name) {
+        let preset = if self.builtin_preset_names.contains(name) {
+            config::load_builtin_preset(name)
+        } else {
+            config::load_preset(name)
+        };
+        match preset {
             Ok(preset) => {
                 self.apply_preset(preset, window, cx);
                 self.preset_feedback = Some(format!("已载入「{name}」").into());
@@ -1036,6 +1032,12 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.builtin_preset_names.contains(name) {
+            self.preset_feedback = Some("内置预设不可删除".into());
+            self.preset_feedback_is_error = true;
+            cx.notify();
+            return;
+        }
         let view = cx.entity();
         let target = name.to_string();
         window.open_alert_dialog(cx, move |alert, _, _| {
@@ -1094,21 +1096,44 @@ impl AppView {
     }
 
     fn refresh_preset_names(&mut self) {
-        self.preset_names = config::list_presets()
-            .unwrap_or_default()
-            .into_iter()
-            .map(SharedString::from)
-            .collect();
-        self.preset_previews = self
-            .preset_names
-            .iter()
-            .filter_map(|name| {
-                config::load_preset(name)
-                    .ok()
-                    .map(|preset| (name.clone(), preset))
-            })
-            .collect();
+        let (names, previews, builtins) = preset_catalog();
+        self.preset_names = names;
+        self.preset_previews = previews;
+        self.builtin_preset_names = builtins;
     }
+}
+
+fn preset_catalog() -> (
+    Vec<SharedString>,
+    HashMap<SharedString, WatermarkPreset>,
+    HashSet<SharedString>,
+) {
+    let builtins = config::builtin_presets().unwrap_or_default();
+    let builtin_names = builtins
+        .iter()
+        .map(|(name, _)| SharedString::from(name.clone()))
+        .collect::<HashSet<_>>();
+    let mut names = Vec::new();
+    let mut previews = HashMap::new();
+
+    for (name, preset) in builtins {
+        let name = SharedString::from(name);
+        names.push(name.clone());
+        previews.insert(name, preset);
+    }
+
+    for name in config::list_presets().unwrap_or_default() {
+        let name = SharedString::from(name);
+        if builtin_names.contains(&name) {
+            continue;
+        }
+        if let Ok(preset) = config::load_preset(&name) {
+            names.push(name.clone());
+            previews.insert(name, preset);
+        }
+    }
+
+    (names, previews, builtin_names)
 }
 
 /// 由参数推出宽高比下拉该选哪一项。

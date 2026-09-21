@@ -1,0 +1,51 @@
+name = "基础样式"
+
+[params]
+border_ratio = [
+    0.05,
+    0.05,
+    0.05,
+    0.05,
+]
+border_equal = true
+position = "Center"
+background = [
+    255,
+    255,
+    255,
+]
+border_radius = 0.02
+shadow_size = 0.06
+shadow_density = 1.2
+solid_background = false
+blur_sigma = 15.0
+quality = 95
+
+[[text_groups]]
+position = "Bottom"
+direction = "Horizontal"
+align = "Center"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = [
+    "{Logo} {型号}",
+    "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}",
+]
+
+[[text_groups.text.text_params]]
+font = "Arial"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
+align = "Center"
+
+[[text_groups.text.text_params]]
+font = "Arial"
+size = 0.02200000047683716
+line_spacing = 1.2999999523162842
+italic = false
+bold = false
+align = "Center"

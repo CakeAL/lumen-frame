@@ -1,0 +1,69 @@
+name = "文字在上"
+
+[params]
+border_ratio = [
+    0.05,
+    0.05,
+    0.05,
+    0.05,
+]
+border_equal = false
+position = "Center"
+background = [
+    255,
+    255,
+    255,
+]
+border_radius = 0.02
+shadow_size = 0.06
+shadow_density = 1.2
+solid_background = false
+blur_sigma = 15.0
+quality = 95
+
+[[text_groups]]
+position = "Up"
+direction = "Horizontal"
+align = "Left"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = ["{Logo} {型号}"]
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
+align = "Left"
+
+[[text_groups]]
+position = "Up"
+direction = "Horizontal"
+align = "Right"
+padding = 0.0
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = [
+    "{拍摄日期} {区}",
+    "{等效焦距}mm f/{光圈} {快门}s ISO{ISO}",
+]
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.02200000047683716
+line_spacing = 1.2999999523162842
+italic = false
+bold = false
+align = "Right"
+
+[[text_groups.text.text_params]]
+font = "Maple Mono NF CN"
+size = 0.02200000047683716
+line_spacing = 1.2999999523162842
+italic = false
+bold = false
+align = "Right"
