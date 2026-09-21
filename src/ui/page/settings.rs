@@ -415,7 +415,7 @@ impl AppView {
                                                     .text_xs()
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(
-                                                        "用 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
+                                                        "基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
                                                     ),
                                             ),
                             ),

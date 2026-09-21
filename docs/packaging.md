@@ -23,7 +23,7 @@ script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
 脚本做六件事：
 
 1. `cargo build --release`
-2. 建 `.app` 骨架 + `Info.plist`
+2. 建 `.app` 骨架 + `Info.plist`，并复制 `assets/app-icon/LumenFrame.icns` 作为兼容图标
 3. 复制需要运行期加载的 vips 格式模块，并将主程序和这些模块一并传给 `dylibbundler`
 4. `dylibbundler` 递归收集非系统动态库到 `Contents/Frameworks/`，并将引用改为
    `@executable_path/../Frameworks/…`；对模块使用同一个路径是安全的，因为
@@ -132,6 +132,10 @@ Frameworks 里各块的归属：
 `src/ui/component/queue.rs` 的 `SUPPORTED_EXTENSIONS` 里去掉**，否则文件选择器会接受打不开的格式。
 
 ### 构建
+
+`build.rs` 会在 Windows 目标下通过 `winresource` 把
+`assets/app-icon/LumenFrame.ico` 嵌入 `lumen-frame.exe`。ICO 内含 16–256 px 的 8 组尺寸，
+因此资源管理器、任务栏和快捷方式可以各自选择合适分辨率。
 
 ```
 $env:RUSTFLAGS = "-L C:\vips\vips-dev-w64-web-8.18.6\lib"

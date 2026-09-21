@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 旧版 macOS / ICNS 回退图标；macOS 27 的 Icon Composer 图层不使用这里的圆角遮罩。 -->
+  <rect x="52" y="52" width="920" height="920" rx="214" fill="#202329"/>
+  <g fill="none" stroke="#F7F8FA" stroke-linejoin="round">
+    <rect x="210" y="210" width="604" height="604" stroke-width="68"/>
+    <rect x="326" y="326" width="372" height="372" stroke-width="52"/>
+  </g>
+  <path d="M390 638H634" fill="none" stroke="#35D6C7" stroke-width="40" stroke-linecap="round"/>
+</svg>

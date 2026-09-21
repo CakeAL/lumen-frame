@@ -26,16 +26,20 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $outDir = Join-Path $root 'dist\lumen-frame'
 $exeName = 'lumen-frame.exe'
+$appIcon = Join-Path $root 'assets\app-icon\LumenFrame.ico'
 
 function Say($message) { Write-Host "==> $message" -ForegroundColor Cyan }
 
 if (-not (Test-Path (Join-Path $VipsDir 'bin'))) {
     throw "在 $VipsDir 下找不到 bin\ 目录。请指向解压后的 vips-dev-w64-* 目录。"
 }
+if (-not (Test-Path $appIcon)) {
+    throw "找不到 Windows 应用图标：$appIcon"
+}
 
 # ------------------------------------------------------------------ 1. 构建
 
-Say 'cargo build --release'
+Say 'cargo build --release（会将 LumenFrame.ico 嵌入 exe）'
 Push-Location $root
 try { cargo build --release } finally { Pop-Location }
 

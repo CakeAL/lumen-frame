@@ -24,6 +24,7 @@ VIPS_LIB_DIR="$CONTENTS/lib"
 VIPS_MODULE_DIR="$VIPS_LIB_DIR/vips-modules-8.18"
 # 只带界面支持列表里用得到的可选模块。libvips 自己并不直接链 libjxl，因而不带 vips-jxl。
 VIPS_MODULES=(vips-heif)
+APP_ICON="$ROOT/assets/app-icon/LumenFrame.icns"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31m错误：\033[0m %s\n' "$*" >&2; exit 1; }
@@ -69,6 +70,8 @@ say "建立 $APP_NAME.app 骨架"
 rm -rf "$APP"
 mkdir -p "$MACOS_DIR" "$VIPS_MODULE_DIR" "$CONTENTS/Resources"
 cp "$ROOT/target/release/$EXECUTABLE" "$MACOS_DIR/$EXECUTABLE"
+[ -f "$APP_ICON" ] || die "找不到应用图标：$APP_ICON"
+cp "$APP_ICON" "$CONTENTS/Resources/LumenFrame.icns"
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -80,6 +83,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>$EXECUTABLE</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>LumenFrame</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
