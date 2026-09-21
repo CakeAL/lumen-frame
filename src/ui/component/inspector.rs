@@ -656,7 +656,11 @@ impl AppView {
                     .tab_index(0)
                     .role(Role::Button)
                     .aria_label(format!("载入预设 {name}"))
-                    .hover(|this| this.bg(cx.theme().muted))
+                    .hover(|this| {
+                        this.bg(cx.theme().muted)
+                            .border_color(cx.theme().primary)
+                            .shadow_sm()
+                    })
                     .focus_visible(|this| this.border_color(cx.theme().ring))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.load_preset(&for_load, window, cx)
