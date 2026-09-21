@@ -80,6 +80,30 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
 
     assert_eq!(padded.get_width(), plain.get_width() + 50);
     assert_eq!(padded.get_height(), plain.get_height());
+
+    let vertical_plain = TextGroup {
+        position: lumen_frame::Position::Left,
+        align: TextAlign::Left,
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1_000, &params)
+    .unwrap()
+    .unwrap();
+    let vertical_padded = TextGroup {
+        position: lumen_frame::Position::Left,
+        align: TextAlign::Left,
+        padding: 0.05,
+        ..TextGroup::default()
+    }
+    .render_text(exif, 1_000, &params)
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(vertical_padded.get_width(), vertical_plain.get_width());
+    assert_eq!(
+        vertical_padded.get_height(),
+        vertical_plain.get_height() + 50
+    );
 }
 
 #[test]

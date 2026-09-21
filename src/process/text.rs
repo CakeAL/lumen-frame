@@ -38,7 +38,7 @@ pub struct TextGroup {
     pub direction: TextDirection,
     /// 文字组在所在边上的位置，不影响组内每行的对齐方式。
     pub align: TextAlign,
-    /// 文字组左/右对齐时，向图片中心收拢的留白比例。
+    /// 文字与相邻图片边缘的留白比例；上下位置沿水平方向，左右位置沿垂直方向。
     #[serde(default)]
     pub padding: f64,
     /// 时间格式
@@ -179,17 +179,36 @@ impl TextGroup {
             return Ok(Some(image));
         }
 
-        let x = if self.align == TextAlign::Left {
-            padding
+        let vertical_edge = matches!(self.position, Position::Left | Position::Right);
+        let (x, y, width, height) = if vertical_edge {
+            (
+                0,
+                if self.align == TextAlign::Left {
+                    padding
+                } else {
+                    0
+                },
+                image.get_width(),
+                image.get_height() + padding,
+            )
         } else {
-            0
+            (
+                if self.align == TextAlign::Left {
+                    padding
+                } else {
+                    0
+                },
+                0,
+                image.get_width() + padding,
+                image.get_height(),
+            )
         };
         Ok(Some(ops::embed_with_opts(
             &image,
             x,
-            0,
-            image.get_width() + padding,
-            image.get_height(),
+            y,
+            width,
+            height,
             &ops::EmbedOptions {
                 extend: ops::Extend::Background,
                 background: vec![0.0, 0.0, 0.0, 0.0],

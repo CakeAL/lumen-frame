@@ -271,6 +271,8 @@ fn side_padding_moves_aligned_text_without_expanding_the_canvas() {
     for (position, align) in [
         (Position::Up, TextAlign::Left),
         (Position::Bottom, TextAlign::Right),
+        (Position::Left, TextAlign::Left),
+        (Position::Right, TextAlign::Right),
     ] {
         let plain = simple_group(position, align, TextDirection::Horizontal);
         let mut padded = plain.clone();

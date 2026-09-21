@@ -14,7 +14,7 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
-    select::{Select, SelectState},
+    select::{Select, SelectEvent, SelectState},
     switch::Switch,
     v_flex,
 };
@@ -44,10 +44,16 @@ pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("右对齐", TextAlign::Right),
 ];
 
-const GROUP_ALIGNS: &[(&str, TextAlign)] = &[
+const HORIZONTAL_GROUP_ALIGNS: &[(&str, TextAlign)] = &[
     ("左侧", TextAlign::Left),
     ("居中", TextAlign::Center),
     ("右侧", TextAlign::Right),
+];
+
+const VERTICAL_GROUP_ALIGNS: &[(&str, TextAlign)] = &[
+    ("上侧", TextAlign::Left),
+    ("居中", TextAlign::Center),
+    ("下侧", TextAlign::Right),
 ];
 
 const TEXT_DIRECTIONS: &[(&str, TextDirection)] = &[
@@ -77,6 +83,13 @@ pub(in crate::ui::app) type FontSelect = ComboboxState<SearchableVec<SharedStrin
 pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
 pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Position>>>;
 pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
+
+fn group_aligns(position: Position) -> &'static [(&'static str, TextAlign)] {
+    match position {
+        Position::Left | Position::Right => VERTICAL_GROUP_ALIGNS,
+        Position::Up | Position::Bottom | Position::Center => HORIZONTAL_GROUP_ALIGNS,
+    }
+}
 
 pub(super) struct TextGroupWindow {
     group_id: u64,
@@ -278,9 +291,10 @@ impl TextGroupEditor {
             window,
             cx,
         );
+        let align_entries = group_aligns(group.position);
         let align = select_state(
-            choices(GROUP_ALIGNS),
-            index_of(GROUP_ALIGNS, &group.align),
+            choices(align_entries),
+            index_of(align_entries, &group.align),
             window,
             cx,
         );
@@ -296,11 +310,29 @@ impl TextGroupEditor {
                 .default_value(group.time_format.clone())
                 .placeholder("%Y/%m/%d")
         });
-        let mut subscriptions = vec![
-            on_select(&position, window, cx, |_, _, _| {}),
-            on_select(&align, window, cx, |_, _, _| {}),
-            on_select(&direction, window, cx, |_, _, _| {}),
-        ];
+        let mut subscriptions = vec![on_select(&align, window, cx, |_, _, _| {})];
+        let align_for_position = align.clone();
+        subscriptions.push(cx.subscribe_in(
+            &position,
+            window,
+            move |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(position)) = event else {
+                    return;
+                };
+                let selected = align_for_position
+                    .read(cx)
+                    .selected_value()
+                    .copied()
+                    .unwrap_or_default();
+                align_for_position.update(cx, |state, cx| {
+                    state.set_items(choices(group_aligns(*position)), window, cx);
+                    state.set_selected_value(&selected, window, cx);
+                });
+                this.refresh_preview(cx);
+                cx.notify();
+            },
+        ));
+        subscriptions.push(on_select(&direction, window, cx, |_, _, _| {}));
         subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
         subscriptions.push(
             cx.subscribe_in(&time_format, window, |this, _, event, _, cx| {
@@ -379,11 +411,13 @@ fn position_label(position: Position) -> &'static str {
     }
 }
 
-fn align_label(align: TextAlign) -> &'static str {
-    match align {
-        TextAlign::Left => "左侧",
-        TextAlign::Center => "居中",
-        TextAlign::Right => "右侧",
+fn align_label(align: TextAlign, position: Position) -> &'static str {
+    match (align, position) {
+        (TextAlign::Left, Position::Left | Position::Right) => "上侧",
+        (TextAlign::Right, Position::Left | Position::Right) => "下侧",
+        (TextAlign::Left, _) => "左侧",
+        (TextAlign::Right, _) => "右侧",
+        (TextAlign::Center, _) => "居中",
     }
 }
 
@@ -433,12 +467,15 @@ impl AppView {
         let mut summary = format!(
             "{} · {} · {} · {} 行",
             position_label(value.position),
-            align_label(value.align),
+            align_label(value.align, value.position),
             direction_label(value.direction),
             value.text.template.len()
         );
-        if matches!(value.position, Position::Left | Position::Right) && value.padding > 0.0 {
-            summary.push_str(&format!(" · 向中心 {:.1}%", value.padding * 100.0));
+        if !matches!(value.align, TextAlign::Center) && value.padding > 0.0 {
+            summary.push_str(&format!(
+                " · 文字与图片边缘留白 {:.1}%",
+                value.padding * 100.0
+            ));
         }
         let edit_view = view.clone();
 
@@ -590,8 +627,7 @@ impl AppView {
         let add_view = view.clone();
         let time_input = group.time_format.clone();
         let time_view = view.clone();
-        // 组对齐决定文字贴哪一侧；留白应从那一侧把文字向中心推开，与文字组实际位于
-        // 上下还是左右无关。
+        // 居中没有单一的相邻边框；只有贴边对齐时才显示文字与那一侧边框的空白。
         let show_padding = matches!(value.align, TextAlign::Left | TextAlign::Right);
 
         h_flex()
@@ -621,7 +657,11 @@ impl AppView {
                     )
                     .child(field("位置", Select::new(&group.position).w_full(), cx))
                     .child(field("组对齐", Select::new(&group.align).w_full(), cx))
-                    .child(group.padding.render("向中心留白", !show_padding, cx))
+                    .child(
+                        group
+                            .padding
+                            .render("文字与图片边缘留白", !show_padding, cx),
+                    )
                     .child(field("方向", Select::new(&group.direction).w_full(), cx))
                     .child(field(
                         "时间格式",
@@ -1034,5 +1074,34 @@ impl AppView {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_alignment_labels_follow_group_position() {
+        assert_eq!(
+            group_aligns(Position::Up),
+            &[
+                ("左侧", TextAlign::Left),
+                ("居中", TextAlign::Center),
+                ("右侧", TextAlign::Right),
+            ]
+        );
+        assert_eq!(
+            group_aligns(Position::Right),
+            &[
+                ("上侧", TextAlign::Left),
+                ("居中", TextAlign::Center),
+                ("下侧", TextAlign::Right),
+            ]
+        );
+        assert_eq!(align_label(TextAlign::Left, Position::Left), "上侧");
+        assert_eq!(align_label(TextAlign::Right, Position::Right), "下侧");
+        assert_eq!(align_label(TextAlign::Left, Position::Bottom), "左侧");
+        assert_eq!(align_label(TextAlign::Right, Position::Up), "右侧");
     }
 }

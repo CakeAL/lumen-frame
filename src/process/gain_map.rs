@@ -122,7 +122,7 @@ pub fn mark_jpeg_gainmap(path: &Path) -> anyhow::Result<()> {
     {
         return Ok(());
     }
-    let (mpf, entries) = find_mpf_entries(&jpeg)?;
+    let (mpf, entries, exif_end) = find_mpf_entries(&jpeg)?;
     let primary_size = read_be_u32(&jpeg, entries + 4)?;
     let secondary_size = read_be_u32(&jpeg, entries + 20)?;
     let xmp = format!(
@@ -146,15 +146,24 @@ pub fn mark_jpeg_gainmap(path: &Path) -> anyhow::Result<()> {
     segment.extend_from_slice(&[0xff, 0xe1]);
     segment.extend_from_slice(&(length as u16).to_be_bytes());
     segment.extend_from_slice(payload);
-    jpeg.splice(2..2, segment);
+    // EXIF 必须排在新增的 XMP 前面。nom-exif 3.6.1 会把遇到的第一个 APP1 当作
+    // EXIF 检查，若它其实是 XMP 就直接报 JpegSegment/Tag，而不会继续向后查找。
+    // libultrahdr 写出的 MPF 位于 EXIF 后面，因此把 XMP 插在 EXIF 与 MPF 之间既兼容
+    // EXIF 读取，也不会改变 MPF 到辅助 JPEG 的相对偏移。
+    let insertion = exif_end.unwrap_or(2);
+    anyhow::ensure!(
+        insertion <= mpf,
+        "JPEG 的 EXIF 位于 MPF 之后，无法安全插入 XMP"
+    );
+    jpeg.splice(insertion..insertion, segment);
     std::fs::write(path, jpeg)?;
-    let _ = mpf;
     Ok(())
 }
 
-fn find_mpf_entries(jpeg: &[u8]) -> anyhow::Result<(usize, usize)> {
+fn find_mpf_entries(jpeg: &[u8]) -> anyhow::Result<(usize, usize, Option<usize>)> {
     anyhow::ensure!(jpeg.starts_with(&[0xff, 0xd8]), "不是 JPEG 文件");
     let mut offset = 2;
+    let mut exif_end = None;
     while offset + 4 <= jpeg.len() {
         anyhow::ensure!(jpeg[offset] == 0xff, "JPEG 标记损坏");
         let marker = jpeg[offset + 1];
@@ -167,6 +176,9 @@ fn find_mpf_entries(jpeg: &[u8]) -> anyhow::Result<(usize, usize)> {
             "JPEG 段长度损坏"
         );
         let payload = offset + 4;
+        if marker == 0xe1 && jpeg.get(payload..payload + 6) == Some(b"Exif\0\0") {
+            exif_end = Some(offset + 2 + length);
+        }
         if marker == 0xe2 && jpeg.get(payload..payload + 4) == Some(b"MPF\0") {
             let tiff = payload + 4;
             anyhow::ensure!(
@@ -179,7 +191,7 @@ fn find_mpf_entries(jpeg: &[u8]) -> anyhow::Result<(usize, usize)> {
                 let entry = ifd + 2 + tag * 12;
                 if read_be_u16(jpeg, entry)? == 0xb002 {
                     let mp_offset = read_be_u32(jpeg, entry + 8)? as usize;
-                    return Ok((offset, tiff + mp_offset));
+                    return Ok((offset, tiff + mp_offset, exif_end));
                 }
             }
         }

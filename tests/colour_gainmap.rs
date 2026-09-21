@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use libvips::ops;
 use lumen_frame::{
-    photo::Photo,
+    photo::{ExifInfo, Photo},
     process::{colour_gainmap::load_black_and_white_with_colour_gainmap, gain_map},
 };
 
@@ -97,6 +97,8 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
             .any(|item| item == b"Item:Semantic=\"GainMap\""),
         "导出 JPEG 的 MPF 未标记 GainMap 类型"
     );
+    let exif = ExifInfo::read(&output).expect("彩色 Gain Map 导出后应仍能读取 EXIF");
+    assert!(exif.model.is_some(), "彩色 Gain Map 导出后丢失了相机型号");
     let exported = Photo::load_base_image(&output).unwrap();
     assert!(
         gain_map::get_gainmap(&exported).is_some(),

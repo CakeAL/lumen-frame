@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 use libvips::{VipsApp, VipsImage, ops};
-use nom_exif::{EntryValue, Exif, ExifDateTime, ExifTag, GPSInfo, read_exif_async};
+use nom_exif::{
+    EntryValue, Exif, ExifDateTime, ExifTag, GPSInfo, MediaParser, MediaSource, read_exif_async,
+};
 use num_integer::Integer;
 use std::{
     fmt::Display,
@@ -116,13 +118,7 @@ impl Photo {
         if let Some(exif) = exif {
             for group in text_groups {
                 if let Some(image) = group.render_text(exif, img_h, params)? {
-                    let padding =
-                        if matches!(group.align, text::TextAlign::Left | text::TextAlign::Right) {
-                            (img_h as f64 * group.padding.max(0.0)).round() as i32
-                        } else {
-                            0
-                        };
-                    rendered_text_groups.push((group.position, group.align, padding, image));
+                    rendered_text_groups.push((group.position, group.align, image));
                 }
             }
         }
@@ -130,10 +126,10 @@ impl Photo {
         // 计算画布边框尺寸
         let mut margin = canvas::Margin::cal_margin(img_w, img_h, params);
         let mut text_thickness = [0; 4];
-        for (position, _, padding, image) in &rendered_text_groups {
+        for (position, _, image) in &rendered_text_groups {
             let thickness = match position {
                 Position::Up | Position::Bottom => image.get_height(),
-                Position::Left | Position::Right => image.get_width() - padding,
+                Position::Left | Position::Right => image.get_width(),
                 Position::Center => 0,
             };
             let slot = match position {
@@ -191,9 +187,8 @@ impl Photo {
 
         // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
         let mut canvas = canvas;
-        for (position, align, padding, text_layer) in rendered_text_groups {
+        for (position, align, text_layer) in rendered_text_groups {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
-            let content_w = text_w - padding;
             let aligned_x = || match align {
                 text::TextAlign::Left => img_x,
                 text::TextAlign::Center => img_x + (img_w - text_w) / 2,
@@ -210,9 +205,9 @@ impl Photo {
                     aligned_x(),
                     img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
                 ),
-                Position::Left => ((img_x - content_w) / 2, aligned_y()),
+                Position::Left => ((img_x - text_w) / 2, aligned_y()),
                 Position::Right => (
-                    img_x + img_w + (canvas_w - img_x - img_w - content_w) / 2 - padding,
+                    img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
                     aligned_y(),
                 ),
                 Position::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
@@ -405,16 +400,32 @@ pub struct ExifInfo {
 
 impl ExifInfo {
     pub async fn new(path: &Path) -> Result<Self> {
-        let exif = read_exif_async(path)
-            .await
-            .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+        let exif = match read_exif_async(path).await {
+            Ok(exif) => exif,
+            Err(original_error) => {
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+                read_exif_from_jpeg_app1(&bytes).with_context(|| {
+                    format!("Failed to read exif, file: {path:?}; original error: {original_error}")
+                })?
+            }
+        };
         Ok(Self::from_exif(&exif))
     }
 
     /// 阻塞读取 EXIF。供没有 tokio 运行时的后台线程使用。
     pub fn read(path: &Path) -> Result<Self> {
-        let exif = nom_exif::read_exif(path)
-            .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+        let exif = match nom_exif::read_exif(path) {
+            Ok(exif) => exif,
+            Err(original_error) => {
+                let bytes = std::fs::read(path)
+                    .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
+                read_exif_from_jpeg_app1(&bytes).with_context(|| {
+                    format!("Failed to read exif, file: {path:?}; original error: {original_error}")
+                })?
+            }
+        };
         Ok(Self::from_exif(&exif))
     }
 
@@ -437,6 +448,42 @@ impl ExifInfo {
             gps_info: exif.gps_info().cloned(),
         }
     }
+}
+
+/// 兼容 XMP APP1 位于 EXIF APP1 之前的 JPEG。
+///
+/// nom-exif 3.6.1 会在第一个非 EXIF APP1 处停止并报错；这里仅在常规读取失败后扫描出
+/// 真正的 `Exif\0\0` 段，再交回 nom-exif 解析 TIFF 内容。扫描只发生在失败路径上。
+fn read_exif_from_jpeg_app1(jpeg: &[u8]) -> Result<Exif> {
+    anyhow::ensure!(jpeg.starts_with(&[0xff, 0xd8]), "不是 JPEG 文件");
+    let mut offset = 2;
+    while offset + 4 <= jpeg.len() {
+        anyhow::ensure!(jpeg[offset] == 0xff, "JPEG 标记损坏");
+        let marker = jpeg[offset + 1];
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let length = u16::from_be_bytes([jpeg[offset + 2], jpeg[offset + 3]]) as usize;
+        anyhow::ensure!(
+            length >= 2 && offset + 2 + length <= jpeg.len(),
+            "JPEG 段长度损坏"
+        );
+        let payload = offset + 4;
+        if marker == 0xe1 && jpeg.get(payload..payload + 6) == Some(b"Exif\0\0") {
+            let end = offset + 2 + length;
+            let mut minimal_jpeg = Vec::with_capacity(end - offset + 2);
+            minimal_jpeg.extend_from_slice(&[0xff, 0xd8]);
+            minimal_jpeg.extend_from_slice(&jpeg[offset..end]);
+            let source = MediaSource::from_memory(minimal_jpeg)?;
+            let mut parser = MediaParser::new();
+            return parser
+                .parse_exif(source)
+                .map(Exif::from)
+                .map_err(Into::into);
+        }
+        offset += 2 + length;
+    }
+    anyhow::bail!("JPEG 中未找到 EXIF APP1 段")
 }
 
 /// 在所有 IFD 中查找指定 tag 的首个条目（拍摄参数通常位于 Exif 子 IFD 中）。
