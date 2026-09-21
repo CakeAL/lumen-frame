@@ -2,6 +2,8 @@
 use anyhow::{Context, Result, anyhow, ensure};
 use ffmpeg_sidecar::command::FfmpegCommand;
 use std::{
+    env,
+    ffi::OsStr,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -19,17 +21,69 @@ pub struct MotionPhotoVideoInfo {
     pub height: u16,
 }
 
-/// 在终端 PATH 中自动检测 FFmpeg。
+/// 在应用 PATH 与常见安装位置中自动检测 FFmpeg。
+///
+/// macOS 从 Finder 启动 `.app` 时不会继承终端 PATH，因此 Homebrew 与
+/// MacPorts 路径必须显式检查。返回经验证的绝对路径，让 ffprobe 可以从
+/// FFmpeg 的同级目录稳定解析。
 pub fn detect_ffmpeg() -> Result<PathBuf> {
-    let mut command = FfmpegCommand::new();
-    command.arg("-version");
-    let output = command
-        .as_inner_mut()
-        .output()
-        .context("无法在终端 PATH 中启动 ffmpeg")?;
-    ensure!(output.status.success(), "终端中的 ffmpeg 无法运行");
-    Ok(PathBuf::from("ffmpeg"))
+    let candidates = ffmpeg_candidates(env::var_os("PATH").as_deref());
+    let mut rejected = Vec::new();
+
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        match validate_ffmpeg(&candidate) {
+            Ok(()) => return Ok(candidate.canonicalize().unwrap_or(candidate)),
+            Err(error) => rejected.push(format!("{} ({error:#})", candidate.display())),
+        }
+    }
+
+    let rejected = if rejected.is_empty() {
+        String::new()
+    } else {
+        format!("；找到但无法运行：{}", rejected.join("、"))
+    };
+    Err(anyhow!(
+        "未在应用 PATH 或常见安装位置找到可运行的 FFmpeg{rejected}。请手动选择 ffmpeg 可执行文件"
+    ))
 }
+
+fn ffmpeg_candidates(path: Option<&OsStr>) -> Vec<PathBuf> {
+    let executable = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let mut candidates = path
+        .into_iter()
+        .flat_map(env::split_paths)
+        .map(|directory| directory.join(executable))
+        .collect::<Vec<_>>();
+
+    #[cfg(target_os = "macos")]
+    candidates.extend([
+        PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+        PathBuf::from("/usr/local/bin/ffmpeg"),
+        PathBuf::from("/opt/local/bin/ffmpeg"),
+    ]);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    candidates.extend([
+        PathBuf::from("/usr/bin/ffmpeg"),
+        PathBuf::from("/usr/local/bin/ffmpeg"),
+        PathBuf::from("/snap/bin/ffmpeg"),
+    ]);
+
+    let mut unique = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if !unique.contains(&candidate) {
+            unique.push(candidate);
+        }
+    }
+    unique
+}
+
 pub fn validate_ffmpeg(path: &Path) -> Result<()> {
     let mut command = FfmpegCommand::new_with_path(path);
     command.arg("-version");
@@ -307,6 +361,48 @@ fn app1_segment(payload: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_detection_includes_entries_from_path() {
+        let path = env::join_paths([Path::new("/example/one"), Path::new("/example/two")])
+            .expect("test PATH should be valid");
+        let candidates = ffmpeg_candidates(Some(&path));
+        let executable = if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        };
+        assert!(candidates.contains(&Path::new("/example/one").join(executable)));
+        assert!(candidates.contains(&Path::new("/example/two").join(executable)));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn automatic_detection_includes_macos_package_managers() {
+        let candidates = ffmpeg_candidates(Some(OsStr::new("/usr/bin:/bin")));
+        assert!(candidates.contains(&PathBuf::from("/opt/homebrew/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/usr/local/bin/ffmpeg")));
+        assert!(candidates.contains(&PathBuf::from("/opt/local/bin/ffmpeg")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn automatic_detection_returns_an_absolute_path_for_known_installations() {
+        let known_installation = [
+            Path::new("/opt/homebrew/bin/ffmpeg"),
+            Path::new("/usr/local/bin/ffmpeg"),
+            Path::new("/opt/local/bin/ffmpeg"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file());
+        let Some(_) = known_installation else {
+            return;
+        };
+
+        let detected = detect_ffmpeg().expect("a known FFmpeg installation should be detected");
+        assert!(detected.is_absolute());
+    }
+
     #[test]
     fn inserts_xmp() {
         let jpeg = insert_motion_photo_xmp(vec![0xff, 0xd8, 0xff, 0xd9], 123, 456).unwrap();

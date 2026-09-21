@@ -984,7 +984,7 @@ impl AppView {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("需要 FFmpeg、ffprobe 与 libx264。可自动检测终端 PATH，或手动填写可执行文件路径。"),
+                    .child("需要 FFmpeg、ffprobe 与 libx264。可自动检测应用 PATH 与常见安装位置，或手动填写可执行文件路径。"),
             )
     }
 
