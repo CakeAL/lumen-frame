@@ -14,6 +14,8 @@ use std::{
     time::Duration,
 };
 
+use crate::rotation::Rotation;
+
 const MAX_DURATION: Duration = Duration::from_secs(10);
 pub const DEFAULT_MAX_OUTPUT_SIZE: u64 = 32 * 1024 * 1024;
 
@@ -141,6 +143,7 @@ pub fn render_motion_photo_cover(
     start: Duration,
     end: Duration,
     cover: Duration,
+    rotation: Rotation,
 ) -> Result<Vec<u8>> {
     validate_range(start, end, cover)?;
     let mut command = FfmpegCommand::new_with_path(ffmpeg);
@@ -149,20 +152,23 @@ pub fn render_motion_photo_cover(
         .args(["-loglevel", "error", "-ss"])
         .arg(seconds(cover))
         .arg("-i")
-        .arg(video)
-        .args([
-            "-map",
-            "0:v:0",
-            "-frames:v",
-            "1",
-            "-q:v",
-            "2",
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "pipe:1",
-        ]);
+        .arg(video);
+    if let Some(filter) = rotation.ffmpeg_filter() {
+        command.args(["-vf", filter]);
+    }
+    command.args([
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "pipe:1",
+    ]);
     let output = run(command.as_inner_mut(), "FFmpeg 无法解码封面帧")?;
     ensure!(
         output.stdout.starts_with(&[0xff, 0xd8]),
@@ -179,6 +185,7 @@ pub struct MotionPhotoOptions<'a> {
     pub end: Duration,
     pub cover_time: Duration,
     pub jpeg_quality: u8,
+    pub rotation: Rotation,
     /// 最终 JPEG Motion Photo 文件的最大字节数，包含封面与内嵌 MP4。
     pub max_output_size: u64,
 }
@@ -201,6 +208,7 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
         options.start,
         options.end,
         options.cover_time,
+        options.rotation,
     )?;
     let temporary = temporary_video_path(options.output_path);
     let duration = options.end - options.start;
@@ -230,7 +238,11 @@ pub fn export_motion_photo(options: &MotionPhotoOptions<'_>) -> Result<()> {
         .arg(seconds(duration))
         .args([
             "-map", "0:v:0", "-an", "-c:v", "libx264", "-preset", "medium",
-        ])
+        ]);
+    if let Some(filter) = options.rotation.ffmpeg_filter() {
+        command.args(["-vf", filter]);
+    }
+    command
         .args([
             "-b:v",
             &video_bitrate,
@@ -398,6 +410,7 @@ mod tests {
             end: Duration::from_secs(2),
             cover_time: Duration::from_secs(1),
             jpeg_quality: 92,
+            rotation: Rotation::Clockwise90,
             max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
         });
         let _ = fs::remove_file(&output);

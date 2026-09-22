@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::rotation::Rotation;
+
 /// 元素相对于照片内容的放置边。
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +36,7 @@ pub struct WatermarkParams {
     pub solid_background: bool,
     pub blur_sigma: f64,
     pub quality: i32,
+    pub rotation: Rotation,
 }
 
 impl Default for WatermarkParams {
@@ -51,6 +54,7 @@ impl Default for WatermarkParams {
             solid_background: false,
             blur_sigma: 15.0,
             quality: 95,
+            rotation: Rotation::None,
         }
     }
 }

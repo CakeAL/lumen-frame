@@ -27,10 +27,13 @@ use super::super::component::colour_gainmap_preview::{
     ColourGainMapPreview, ColourGainMapPreviewState,
 };
 use super::super::component::field::rgb_to_hsla;
-use super::super::component::motion_photo_preview::{MotionPhotoPreview, MotionPhotoPreviewState};
+use super::super::component::motion_photo_preview::{
+    MotionPhotoPreview, MotionPhotoPreviewRequest, MotionPhotoPreviewState,
+};
 use crate::features::motion_photo::{
     DEFAULT_MAX_OUTPUT_SIZE, detect_ffmpeg, inspect_motion_photo_video, validate_ffmpeg,
 };
+use crate::rotation::Rotation;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::ui::app) enum UtilityMode {
@@ -193,6 +196,7 @@ pub(in crate::ui::app) struct OtherToolsState {
     mode: UtilityMode,
     path: Option<PathBuf>,
     preview: Entity<ColourGainMapPreview>,
+    colour_rotation: Rotation,
     exporting: bool,
     video_path: Option<PathBuf>,
     video_duration: Option<Duration>,
@@ -200,6 +204,7 @@ pub(in crate::ui::app) struct OtherToolsState {
     motion_end: Duration,
     motion_cover: Duration,
     motion_preview: Entity<MotionPhotoPreview>,
+    motion_rotation: Rotation,
     motion_exporting: bool,
     motion_max_size_mb: u32,
     ffmpeg_path: Option<PathBuf>,
@@ -249,6 +254,7 @@ impl OtherToolsState {
             mode: UtilityMode::ColourGainMap,
             path: None,
             preview: cx.new(|_| ColourGainMapPreview::new()),
+            colour_rotation: Rotation::None,
             exporting: false,
             video_path: None,
             video_duration: None,
@@ -256,6 +262,7 @@ impl OtherToolsState {
             motion_end: Duration::from_secs(10),
             motion_cover: Duration::from_secs(5),
             motion_preview: cx.new(|_| MotionPhotoPreview::new()),
+            motion_rotation: Rotation::None,
             motion_exporting: false,
             motion_max_size_mb: (DEFAULT_MAX_OUTPUT_SIZE / 1024 / 1024) as u32,
             ffmpeg_path,
@@ -282,6 +289,9 @@ impl OtherToolsState {
     pub(in crate::ui::app) fn preview(&self) -> &Entity<ColourGainMapPreview> {
         &self.preview
     }
+    pub(in crate::ui::app) fn colour_rotation(&self) -> Rotation {
+        self.colour_rotation
+    }
     pub(in crate::ui::app) fn is_exporting(&self) -> bool {
         self.exporting
     }
@@ -302,6 +312,9 @@ impl OtherToolsState {
     }
     pub(in crate::ui::app) fn motion_preview(&self) -> &Entity<MotionPhotoPreview> {
         &self.motion_preview
+    }
+    pub(in crate::ui::app) fn motion_rotation(&self) -> Rotation {
+        self.motion_rotation
     }
     pub(in crate::ui::app) fn is_motion_exporting(&self) -> bool {
         self.motion_exporting
@@ -371,8 +384,25 @@ impl OtherToolsState {
 
     pub(in crate::ui::app) fn select(&mut self, path: PathBuf, cx: &mut Context<AppView>) {
         self.path = Some(path.clone());
+        let rotation = self.colour_rotation;
         self.preview
-            .update(cx, |preview, cx| preview.request(path, cx));
+            .update(cx, |preview, cx| preview.request(path, rotation, cx));
+    }
+
+    pub(in crate::ui::app) fn rotate_colour_photo(&mut self, cx: &mut Context<AppView>) {
+        self.colour_rotation = self.colour_rotation.next();
+        if let Some(path) = self.path.clone() {
+            let rotation = self.colour_rotation;
+            self.preview
+                .update(cx, |preview, cx| preview.request(path, rotation, cx));
+        }
+        cx.notify();
+    }
+
+    pub(in crate::ui::app) fn rotate_motion_photo(&mut self, cx: &mut Context<AppView>) {
+        self.motion_rotation = self.motion_rotation.next();
+        self.request_motion_preview(cx);
+        cx.notify();
     }
 
     pub(in crate::ui::app) fn select_motion_video(
@@ -480,11 +510,14 @@ impl OtherToolsState {
         };
         self.motion_preview.update(cx, |preview, cx| {
             preview.request(
-                self.ffmpeg_path.clone(),
-                path,
-                self.motion_start,
-                self.motion_end,
-                self.motion_cover,
+                MotionPhotoPreviewRequest {
+                    ffmpeg_path: self.ffmpeg_path.clone(),
+                    path,
+                    start: self.motion_start,
+                    end: self.motion_end,
+                    cover_time: self.motion_cover,
+                    rotation: self.motion_rotation,
+                },
                 cx,
             )
         });
@@ -645,6 +678,20 @@ impl AppView {
                     .w_full()
                     .gap_3()
                     .child(section_title("输出"))
+                    .child(
+                        Button::new("colour-gainmap-rotate")
+                            .icon(IconName::RotateCw)
+                            .label(format!(
+                                "顺时针旋转 90° · 当前 {}°",
+                                self.other_tools.colour_rotation().degrees()
+                            ))
+                            .small()
+                            .w_full()
+                            .disabled(self.other_tools.path().is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.other_tools.rotate_colour_photo(cx)
+                            })),
+                    )
                     .child(
                         div()
                             .text_sm()
@@ -882,6 +929,20 @@ impl AppView {
                             .gap_3()
                             .child(section_title("输出"))
                             .child(self.render_motion_size_control(cx))
+                            .child(
+                                Button::new("motion-photo-rotate")
+                                    .icon(IconName::RotateCw)
+                                    .label(format!(
+                                        "顺时针旋转 90° · 当前 {}°",
+                                        self.other_tools.motion_rotation().degrees()
+                                    ))
+                                    .small()
+                                    .w_full()
+                                    .disabled(self.other_tools.video_path().is_none())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.other_tools.rotate_motion_photo(cx)
+                                    })),
+                            )
                             .child(
                                 div()
                                     .text_sm()

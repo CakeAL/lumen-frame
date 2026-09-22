@@ -63,7 +63,7 @@ impl Photo {
     ) -> Result<VipsImage> {
         ensure_vips();
 
-        // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）
+        // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）。
         let original_gainmap = gain_map::get_gainmap(&img);
         // gain map 的分辨率比例（1 表示与 base 同尺寸，2 表示一半尺寸……）
         let gainmap_scale = original_gainmap.as_ref().map(|_| {
@@ -206,7 +206,9 @@ impl Photo {
             gain_map::set_gainmap(&mut canvas, &new_gainmap);
         }
 
-        Ok(canvas)
+        // 旋转属于最终输出变换：照片、边框、文字和重建后的 gain map 一起旋转，不能在
+        // 排版前先旋转输入照片，否则四周边框与文字位置会被重新计算。
+        crate::rotation::apply_to_output(&canvas, params.rotation)
     }
 
     pub fn save_image(&self, params: &WatermarkParams, watermark: &VipsImage) -> Result<()> {

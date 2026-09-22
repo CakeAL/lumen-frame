@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use gpui_kit::{AppContext as _, Context, RenderImage, SharedString, Task};
 
+use crate::rotation::Rotation;
 use crate::ui::image::render_motion_photo_cover;
 
 pub enum MotionPhotoPreviewState {
@@ -19,6 +20,15 @@ pub struct MotionPhotoPreview {
     worker: Option<Task<()>>,
 }
 
+pub struct MotionPhotoPreviewRequest {
+    pub ffmpeg_path: Option<PathBuf>,
+    pub path: PathBuf,
+    pub start: Duration,
+    pub end: Duration,
+    pub cover_time: Duration,
+    pub rotation: Rotation,
+}
+
 impl MotionPhotoPreview {
     pub fn new() -> Self {
         Self {
@@ -32,15 +42,7 @@ impl MotionPhotoPreview {
         &self.state
     }
 
-    pub fn request(
-        &mut self,
-        ffmpeg_path: Option<PathBuf>,
-        path: PathBuf,
-        start: Duration,
-        end: Duration,
-        cover_time: Duration,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn request(&mut self, request: MotionPhotoPreviewRequest, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.state = MotionPhotoPreviewState::Loading;
@@ -48,9 +50,17 @@ impl MotionPhotoPreview {
         self.worker = Some(cx.spawn(async move |this, cx| {
             let rendered = cx
                 .background_spawn(async move {
-                    let ffmpeg_path =
-                        ffmpeg_path.ok_or_else(|| anyhow::anyhow!("未找到 FFmpeg"))?;
-                    render_motion_photo_cover(&ffmpeg_path, &path, start, end, cover_time)
+                    let ffmpeg_path = request
+                        .ffmpeg_path
+                        .ok_or_else(|| anyhow::anyhow!("未找到 FFmpeg"))?;
+                    render_motion_photo_cover(
+                        &ffmpeg_path,
+                        &request.path,
+                        request.start,
+                        request.end,
+                        request.cover_time,
+                        request.rotation,
+                    )
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {

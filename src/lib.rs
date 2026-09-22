@@ -4,6 +4,7 @@ pub mod media;
 pub mod persistence;
 pub mod photo;
 pub mod render;
+pub mod rotation;
 pub mod theme;
 pub mod ui;
 pub mod update;

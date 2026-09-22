@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{AppContext as _, Context, RenderImage, SharedString, Task};
 
+use crate::rotation::Rotation;
 use crate::ui::image::render_colour_gainmap_preview;
 
 pub enum ColourGainMapPreviewState {
@@ -35,14 +36,14 @@ impl ColourGainMapPreview {
         &self.state
     }
 
-    pub fn request(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub fn request(&mut self, path: PathBuf, rotation: Rotation, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.state = ColourGainMapPreviewState::Loading;
         cx.notify();
         self.worker = Some(cx.spawn(async move |this, cx| {
             let rendered = cx
-                .background_spawn(async move { render_colour_gainmap_preview(&path) })
+                .background_spawn(async move { render_colour_gainmap_preview(&path, rotation) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation == generation {

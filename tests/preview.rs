@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use lumen_frame::{
     media::ExifInfo,
+    rotation::Rotation,
     ui::{PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail},
     watermark::{
         Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
@@ -66,6 +67,52 @@ fn preview_is_downscaled_to_stay_responsive() {
         "预览底图没有被缩小，实时拖动会明显卡顿：{}x{}",
         size.width.0,
         size.height.0
+    );
+}
+
+#[test]
+fn rotation_is_applied_to_the_preview_pipeline() {
+    let original = render_preview(&job(WatermarkParams::default())).unwrap();
+    let rotated = render_preview(&job(WatermarkParams {
+        rotation: Rotation::Clockwise90,
+        ..Default::default()
+    }))
+    .unwrap();
+
+    let original_size = original.size(0);
+    let rotated_size = rotated.size(0);
+    assert_eq!(
+        (rotated_size.width.0, rotated_size.height.0),
+        (original_size.height.0, original_size.width.0),
+        "旋转必须作用于完整成片，不能在旋转输入后重新排版：{original_size:?} -> {rotated_size:?}"
+    );
+}
+
+#[test]
+fn ultra_hdr_rotation_keeps_the_preview_pipeline_valid() {
+    let path = PathBuf::from("./test_images/ultra_hdr.jpg");
+    let render = |rotation| {
+        render_preview(&PreviewJob {
+            path: path.clone(),
+            exif: ExifInfo::read(&path).ok(),
+            params: WatermarkParams {
+                rotation,
+                ..Default::default()
+            },
+            text_groups: Vec::new(),
+            max_edge: 1600,
+        })
+        .expect("旋转 Ultra HDR 预览失败")
+    };
+    let original = render(Rotation::None);
+    let rotated = render(Rotation::Clockwise90);
+
+    let original_size = original.size(0);
+    let rotated_size = rotated.size(0);
+    assert_eq!(
+        (rotated_size.width.0, rotated_size.height.0),
+        (original_size.height.0, original_size.width.0),
+        "Ultra HDR 必须连同画布与 gain map 整体旋转：{original_size:?} -> {rotated_size:?}"
     );
 }
 

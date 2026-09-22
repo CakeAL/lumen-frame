@@ -5,6 +5,7 @@ use lumen_frame::{
     features::colour_gainmap::load_black_and_white_with_colour_gainmap,
     gainmap as gain_map,
     media::{ExifInfo, load_base_image},
+    rotation::Rotation,
 };
 
 const PHOTO: &str = "/Users/cakeal/Downloads/DSC_6610.jpg";
@@ -15,8 +16,8 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
     let original = load_base_image(input).expect("读取测试图片失败");
     let _has_input_gainmap = gain_map::get_gainmap(&original).is_some();
 
-    let result =
-        load_black_and_white_with_colour_gainmap(input).expect("黑白底图和彩色 gain map 处理失败");
+    let result = load_black_and_white_with_colour_gainmap(input, Rotation::None)
+        .expect("黑白底图和彩色 gain map 处理失败");
 
     assert_eq!(result.get_bands(), 3, "JPEG SDR 底图应保留三个 RGB 通道");
     assert_eq!(
@@ -105,4 +106,24 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
         gain_map::get_gainmap(&exported).is_some(),
         "重新读取导出的 JPEG 时丢失了 gain map"
     );
+}
+
+#[test]
+fn colour_gainmap_rotates_base_and_gainmap_together() {
+    let input = Path::new(PHOTO);
+    let original =
+        load_black_and_white_with_colour_gainmap(input, Rotation::None).expect("生成原方向失败");
+    let rotated = load_black_and_white_with_colour_gainmap(input, Rotation::Clockwise90)
+        .expect("生成旋转方向失败");
+    let rotated_gainmap = gain_map::get_gainmap(&rotated).expect("旋转结果丢失 gain map");
+
+    assert_eq!(rotated.get_width(), original.get_height());
+    assert_eq!(rotated.get_height(), original.get_width());
+    assert_eq!(rotated_gainmap.get_width(), rotated.get_width());
+    assert_eq!(rotated_gainmap.get_height(), rotated.get_height());
+
+    rotated.image_write_prepare().expect("旋转底图求值失败");
+    rotated_gainmap
+        .image_write_prepare()
+        .expect("旋转 gain map 求值失败");
 }

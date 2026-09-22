@@ -4,4 +4,4 @@ mod metadata;
 mod vips;
 
 pub use metadata::{ExifInfo, Rational};
-pub use vips::{ensure_vips, load_base_image};
+pub use vips::{ensure_vips, image_write_to_memory, load_base_image};

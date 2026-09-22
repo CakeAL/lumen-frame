@@ -4,6 +4,7 @@ use lumen_frame::features::motion_photo::{
     DEFAULT_MAX_OUTPUT_SIZE, MotionPhotoOptions, detect_ffmpeg, export_motion_photo,
     inspect_motion_photo_video,
 };
+use lumen_frame::rotation::Rotation;
 use nom_exif::{MediaParser, MediaSource};
 
 /// 手动烟雾测试：使用用户提供的 AVC MP4，输出保留在仓库根目录，便于直接导入图库验证。
@@ -25,6 +26,7 @@ fn exports_the_requested_motion_photo() {
         end,
         cover_time: end / 2,
         jpeg_quality: 95,
+        rotation: Rotation::None,
         max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
     };
     export_motion_photo(&options).unwrap();

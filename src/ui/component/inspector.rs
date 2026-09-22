@@ -951,6 +951,23 @@ impl AppView {
                     ),
             )
             .child(controls.quality.render("JPEG 质量", false, cx))
+            .child(
+                Button::new("rotate-watermark-photo")
+                    .icon(IconName::RotateCw)
+                    .label(format!(
+                        "顺时针旋转 90° · 当前 {}°",
+                        self.params.rotation.degrees()
+                    ))
+                    .outline()
+                    .small()
+                    .w_full()
+                    .disabled(self.selected_photo().is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.params.rotation = this.params.rotation.next();
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    })),
+            )
             .child(self.render_export_footer(cx))
     }
 

@@ -7,13 +7,20 @@ use anyhow::Result;
 use libvips::{VipsImage, ops};
 use std::path::Path;
 
-use crate::{gainmap as gain_map, media::load_base_image};
+use crate::{
+    gainmap as gain_map,
+    media::load_base_image,
+    rotation::{Rotation, apply_to_output},
+};
 
 /// 读取一张图片，将底图转换为黑白，并生成可恢复完整原图颜色的 gain map。
 ///
 /// 返回的图片是 libvips 图像；调用方自行选择编码器。普通照片也能使用；若原图已有
 /// gain map，会先解码后重编码。
-pub fn load_black_and_white_with_colour_gainmap(path: &Path) -> Result<VipsImage> {
+pub fn load_black_and_white_with_colour_gainmap(
+    path: &Path,
+    rotation: Rotation,
+) -> Result<VipsImage> {
     let base = load_base_image(path)?;
     let source_sdr = ops::s_rgb2sc_rgb(&base)?;
     let target_hdr = if gain_map::get_gainmap(&base).is_some() {
@@ -24,7 +31,6 @@ pub fn load_black_and_white_with_colour_gainmap(path: &Path) -> Result<VipsImage
     } else {
         source_sdr
     };
-
     // JPEG 的 SDR 底图保持三个相同的 RGB 通道，旧设备也会将它显示为黑白图。
     let black_and_white = ops::colourspace(&base, ops::Interpretation::BW)?;
     let mut black_and_white = ops::colourspace(&black_and_white, ops::Interpretation::Srgb)?;
@@ -34,7 +40,8 @@ pub fn load_black_and_white_with_colour_gainmap(path: &Path) -> Result<VipsImage
     gain_map::set_scale_factor(&mut black_and_white, 1.0);
     gain_map::set_rgb_gainmap_metadata(&mut black_and_white, min_boost, max_boost);
 
-    Ok(black_and_white)
+    // 先完整生成黑白底图与彩色 gain map，再把二者作为一张成片统一旋转。
+    apply_to_output(&black_and_white, rotation)
 }
 
 /// 编码逐 RGB 通道增益，并返回与编码匹配的最小、最大 boost。

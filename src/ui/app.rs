@@ -391,6 +391,7 @@ impl AppView {
         if self.other_tools.is_exporting() {
             return;
         }
+        let rotation = self.other_tools.colour_rotation();
         let window_handle = window.window_handle();
         let prompt = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -414,9 +415,9 @@ impl AppView {
             this.update(cx, |this, cx| this.other_tools.set_exporting(true, cx))
                 .ok();
             let result = cx
-                .background_spawn(
-                    async move { export_colour_gainmap(&path, &output).map(|_| output) },
-                )
+                .background_spawn(async move {
+                    export_colour_gainmap(&path, &output, rotation).map(|_| output)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.other_tools.set_exporting(false, cx);
@@ -451,6 +452,7 @@ impl AppView {
             self.other_tools.motion_cover(),
         );
         let max_output_size = self.other_tools.motion_max_size_bytes();
+        let rotation = self.other_tools.motion_rotation();
         let Some(ffmpeg_path) = self.other_tools.ffmpeg_path().map(PathBuf::from) else {
             return;
         };
@@ -488,6 +490,7 @@ impl AppView {
                         end,
                         cover_time: cover,
                         jpeg_quality: 92,
+                        rotation,
                         max_output_size,
                     };
                     export_motion_photo(&options).map(|_| output)

@@ -18,8 +18,9 @@ use libvips::{VipsImage, ops};
 use crate::{
     features::colour_gainmap,
     gainmap as gain_map,
-    media::{ExifInfo, ensure_vips, load_base_image},
+    media::{ExifInfo, ensure_vips, image_write_to_memory, load_base_image},
     photo::Photo,
+    rotation::Rotation,
     watermark::{TextGroup, WatermarkParams},
 };
 
@@ -90,9 +91,12 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
 }
 
 /// 生成彩色恢复 gain map 的黑白底图预览。会阻塞，请在后台线程调用。
-pub fn render_colour_gainmap_preview(path: &Path) -> Result<(Arc<RenderImage>, Arc<RenderImage>)> {
+pub fn render_colour_gainmap_preview(
+    path: &Path,
+    rotation: Rotation,
+) -> Result<(Arc<RenderImage>, Arc<RenderImage>)> {
     ensure_vips();
-    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)
+    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path, rotation)
         .context("生成彩色恢复 Gain Map")?;
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
     let gainmap = gain_map::get_gainmap(&image).context("读取生成的彩色 Gain Map")?;
@@ -109,10 +113,11 @@ pub fn render_motion_photo_cover(
     start: std::time::Duration,
     end: std::time::Duration,
     cover_time: std::time::Duration,
+    rotation: Rotation,
 ) -> Result<Arc<RenderImage>> {
     ensure_vips();
     let jpeg = crate::features::motion_photo::render_motion_photo_cover(
-        ffmpeg, path, start, end, cover_time,
+        ffmpeg, path, start, end, cover_time, rotation,
     )?;
     let image = VipsImage::new_from_buffer(&jpeg, "").context("读取视频封面 JPEG")?;
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
@@ -120,9 +125,9 @@ pub fn render_motion_photo_cover(
 }
 
 /// 把任意照片写成黑白底图 + 彩色恢复 gain map 的 JPEG。
-pub fn export_colour_gainmap(path: &Path, output: &Path) -> Result<()> {
+pub fn export_colour_gainmap(path: &Path, output: &Path, rotation: Rotation) -> Result<()> {
     ensure_vips();
-    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path)?;
+    let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path, rotation)?;
     ops::jpegsave_with_opts(
         &image,
         &output.to_string_lossy(),
@@ -184,7 +189,7 @@ fn to_render_image(img: &VipsImage) -> Result<Arc<RenderImage>> {
         bail!("尺寸非法：{width}x{height}");
     }
 
-    let mut bytes = img.image_write_to_memory();
+    let mut bytes = image_write_to_memory(&img).context("生成预览像素失败")?;
     match img.get_bands() {
         4 => {
             for pixel in bytes.as_chunks_mut::<4>().0 {
