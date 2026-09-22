@@ -28,7 +28,7 @@ use super::super::component::colour_gainmap_preview::{
 };
 use super::super::component::field::rgb_to_hsla;
 use super::super::component::motion_photo_preview::{MotionPhotoPreview, MotionPhotoPreviewState};
-use crate::process::motion_photo::{
+use crate::features::motion_photo::{
     DEFAULT_MAX_OUTPUT_SIZE, detect_ffmpeg, inspect_motion_photo_video, validate_ffmpeg,
 };
 
@@ -94,11 +94,11 @@ impl MotionTimeField {
             move |this, _, event, window, cx| match event {
                 SliderEvent::Change(value) => {
                     let timeline = this
-                        .colour_gainmap
+                        .other_tools
                         .video_duration()
                         .unwrap_or(MAX_MOTION_DURATION)
                         .as_secs_f64();
-                    this.colour_gainmap.set_motion_time(
+                    this.other_tools.set_motion_time(
                         control,
                         f64::from(value.end()) * timeline,
                         None,
@@ -107,7 +107,7 @@ impl MotionTimeField {
                     );
                 }
                 // 拖动过程中只更新数值；松手后才解码一次封面，避免连续启动 FFmpeg。
-                SliderEvent::Release(_) => this.colour_gainmap.request_motion_preview(cx),
+                SliderEvent::Release(_) => this.other_tools.request_motion_preview(cx),
             },
         );
 
@@ -119,23 +119,17 @@ impl MotionTimeField {
                     let Some(seconds) = parse_seconds(&state.read(cx).value()) else {
                         return;
                     };
-                    this.colour_gainmap.set_motion_time(
-                        control,
-                        seconds,
-                        Some(control),
-                        window,
-                        cx,
-                    );
+                    this.other_tools
+                        .set_motion_time(control, seconds, Some(control), window, cx);
                 }
                 InputEvent::PressEnter { .. } | InputEvent::Blur => {
                     if let Some(seconds) = parse_seconds(&state.read(cx).value()) {
-                        this.colour_gainmap
+                        this.other_tools
                             .set_motion_time(control, seconds, None, window, cx);
                     } else {
-                        this.colour_gainmap
-                            .sync_motion_time_fields(None, window, cx);
+                        this.other_tools.sync_motion_time_fields(None, window, cx);
                     }
-                    this.colour_gainmap.request_motion_preview(cx);
+                    this.other_tools.request_motion_preview(cx);
                 }
                 InputEvent::Focus => {}
             },
@@ -195,7 +189,7 @@ impl MotionTimeField {
     }
 }
 
-pub(in crate::ui::app) struct ColourGainMapPageState {
+pub(in crate::ui::app) struct OtherToolsState {
     mode: UtilityMode,
     path: Option<PathBuf>,
     preview: Entity<ColourGainMapPreview>,
@@ -216,7 +210,7 @@ pub(in crate::ui::app) struct ColourGainMapPageState {
     _motion_time_subscriptions: Vec<Subscription>,
 }
 
-impl ColourGainMapPageState {
+impl OtherToolsState {
     pub(in crate::ui::app) fn new(
         window: &mut gpui_kit::Window,
         cx: &mut Context<AppView>,
@@ -498,7 +492,7 @@ impl ColourGainMapPageState {
 }
 
 impl AppView {
-    pub(in crate::ui::app) fn render_colour_gainmap_page(
+    pub(in crate::ui::app) fn render_other_tools_page(
         &self,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -506,15 +500,15 @@ impl AppView {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .child(self.render_colour_gainmap_toolbar(cx))
-            .child(match self.colour_gainmap.mode() {
+            .child(self.render_other_tools_toolbar(cx))
+            .child(match self.other_tools.mode() {
                 UtilityMode::ColourGainMap => {
                     self.render_colour_gainmap_canvas(cx).into_any_element()
                 }
                 UtilityMode::MotionPhoto => self.render_motion_photo_canvas(cx).into_any_element(),
             })
             .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                if this.colour_gainmap.mode() == UtilityMode::ColourGainMap {
+                if this.other_tools.mode() == UtilityMode::ColourGainMap {
                     this.add_colour_gainmap_photo(paths.paths().to_vec(), cx);
                 } else {
                     this.add_motion_photo_video(paths.paths().to_vec(), window, cx);
@@ -522,7 +516,7 @@ impl AppView {
             }))
     }
 
-    fn render_colour_gainmap_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_other_tools_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
             .h_12()
@@ -546,7 +540,7 @@ impl AppView {
                             .small()
                             .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.colour_gainmap.set_mode(UtilityMode::ColourGainMap, cx)
+                                this.other_tools.set_mode(UtilityMode::ColourGainMap, cx)
                             })),
                     )
                     .child(
@@ -555,7 +549,7 @@ impl AppView {
                             .small()
                             .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.colour_gainmap.set_mode(UtilityMode::MotionPhoto, cx)
+                                this.other_tools.set_mode(UtilityMode::MotionPhoto, cx)
                             })),
                     ),
             )
@@ -659,7 +653,7 @@ impl AppView {
                     )
                     .child(
                         Button::new("colour-gainmap-export")
-                            .label(if self.colour_gainmap.is_exporting() {
+                            .label(if self.other_tools.is_exporting() {
                                 "正在生成…"
                             } else {
                                 "导出 JPEG…"
@@ -668,8 +662,8 @@ impl AppView {
                             .primary()
                             .w_full()
                             .disabled(
-                                self.colour_gainmap.path().is_none()
-                                    || self.colour_gainmap.is_exporting(),
+                                self.other_tools.path().is_none()
+                                    || self.other_tools.is_exporting(),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.export_colour_gainmap(window, cx)
@@ -711,7 +705,7 @@ impl AppView {
     }
 
     fn render_black_and_white_preview(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        match self.colour_gainmap.preview().read(cx).state() {
+        match self.other_tools.preview().read(cx).state() {
             ColourGainMapPreviewState::Empty => {
                 placeholder(IconName::Palette, "选择或拖入一张照片", cx)
             }
@@ -732,7 +726,7 @@ impl AppView {
     }
 
     fn render_colour_preview(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
-        match self.colour_gainmap.preview().read(cx).state() {
+        match self.other_tools.preview().read(cx).state() {
             ColourGainMapPreviewState::Empty => {
                 placeholder(IconName::Palette, "生成结果会显示在这里", cx)
             }
@@ -751,7 +745,7 @@ impl AppView {
     }
 
     fn render_motion_photo_canvas(&self, cx: &Context<Self>) -> impl IntoElement {
-        let preview = match self.colour_gainmap.motion_preview().read(cx).state() {
+        let preview = match self.other_tools.motion_preview().read(cx).state() {
             MotionPhotoPreviewState::Empty => {
                 placeholder(IconName::Palette, "选择 MP4 视频后显示封面帧", cx)
             }
@@ -866,19 +860,19 @@ impl AppView {
                                         "滑块覆盖整段视频，输入框可精确填写秒数；片段最长 10 秒。",
                                     ),
                             )
-                            .child(self.colour_gainmap.motion_start_field.render(
+                            .child(self.other_tools.motion_start_field.render(
                                 "入点",
-                                self.colour_gainmap.video_path().is_none(),
+                                self.other_tools.video_path().is_none(),
                                 cx,
                             ))
-                            .child(self.colour_gainmap.motion_end_field.render(
+                            .child(self.other_tools.motion_end_field.render(
                                 "出点",
-                                self.colour_gainmap.video_path().is_none(),
+                                self.other_tools.video_path().is_none(),
                                 cx,
                             ))
-                            .child(self.colour_gainmap.motion_cover_field.render(
+                            .child(self.other_tools.motion_cover_field.render(
                                 "封面",
-                                self.colour_gainmap.video_path().is_none(),
+                                self.other_tools.video_path().is_none(),
                                 cx,
                             )),
                     )
@@ -896,7 +890,7 @@ impl AppView {
                             )
                             .child(
                                 Button::new("motion-photo-export")
-                                    .label(if self.colour_gainmap.is_motion_exporting() {
+                                    .label(if self.other_tools.is_motion_exporting() {
                                         "正在导出…"
                                     } else {
                                         "导出 Motion Photo…"
@@ -905,9 +899,9 @@ impl AppView {
                                     .primary()
                                     .w_full()
                                     .disabled(
-                                        self.colour_gainmap.video_path().is_none()
-                                            || self.colour_gainmap.ffmpeg_path().is_none()
-                                            || self.colour_gainmap.is_motion_exporting(),
+                                        self.other_tools.video_path().is_none()
+                                            || self.other_tools.ffmpeg_path().is_none()
+                                            || self.other_tools.is_motion_exporting(),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.export_motion_photo(window, cx)
@@ -922,7 +916,7 @@ impl AppView {
             .w_full()
             .gap_3()
             .child(section_title("FFmpeg"))
-            .child(Input::new(self.colour_gainmap.ffmpeg_input()).small().w_full())
+            .child(Input::new(self.other_tools.ffmpeg_input()).small().w_full())
             .child(
                 h_flex()
                     .w_full()
@@ -934,7 +928,7 @@ impl AppView {
                             .flex_1()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Err(error) =
-                                    this.colour_gainmap.apply_ffmpeg_input(window, cx)
+                                    this.other_tools.apply_ffmpeg_input(window, cx)
                                 {
                                     window.push_notification(
                                         Notification::error(format!(
@@ -951,7 +945,7 @@ impl AppView {
                             .small()
                             .flex_1()
                             .on_click(cx.listener(|this, _, window, cx| {
-                                if let Err(error) = this.colour_gainmap.detect_ffmpeg(window, cx) {
+                                if let Err(error) = this.other_tools.detect_ffmpeg(window, cx) {
                                     window.push_notification(
                                         Notification::error(format!(
                                             "无法检测 FFmpeg：{error:#}"
@@ -974,7 +968,7 @@ impl AppView {
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
-                        self.colour_gainmap
+                        self.other_tools
                             .ffmpeg_path()
                             .map(|path| format!("当前：{}", path.display()))
                             .unwrap_or_else(|| "尚未检测到 FFmpeg".into()),
@@ -1004,7 +998,7 @@ impl AppView {
                             .small()
                             .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.colour_gainmap.adjust_motion_max_size(-1, cx)
+                                this.other_tools.adjust_motion_max_size(-1, cx)
                             })),
                     )
                     .child(
@@ -1012,7 +1006,7 @@ impl AppView {
                             .w_16()
                             .text_center()
                             .text_sm()
-                            .child(format!("{} MB", self.colour_gainmap.motion_max_size_mb())),
+                            .child(format!("{} MB", self.other_tools.motion_max_size_mb())),
                     )
                     .child(
                         Button::new("motion-size-plus")
@@ -1020,14 +1014,14 @@ impl AppView {
                             .small()
                             .ghost()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.colour_gainmap.adjust_motion_max_size(1, cx)
+                                this.other_tools.adjust_motion_max_size(1, cx)
                             })),
                     ),
             )
     }
 
     fn colour_gainmap_photo_summary(&self) -> String {
-        self.colour_gainmap
+        self.other_tools
             .path()
             .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy().into_owned())
@@ -1036,12 +1030,12 @@ impl AppView {
 
     fn motion_video_summary(&self) -> String {
         let name = self
-            .colour_gainmap
+            .other_tools
             .video_path()
             .and_then(|path| path.file_name())
             .map(|name| name.to_string_lossy())
             .unwrap_or_else(|| "尚未选择视频".into());
-        match self.colour_gainmap.video_duration() {
+        match self.other_tools.video_duration() {
             Some(duration) => format!("{name} · {:.2} 秒", duration.as_secs_f64()),
             None => name.into_owned(),
         }

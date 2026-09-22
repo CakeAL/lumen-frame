@@ -1,45 +1,100 @@
 # 架构与模块边界
 
-## 分层
+项目暂时保持单一 crate，但按能力和依赖方向组织。目录不是为了给文件分类，而是为了说明
+谁拥有状态、谁允许做 I/O，以及高层用例依赖哪些稳定边界。
 
-项目保持单一 Rust crate，但按依赖方向划分为以下层次：
+## 依赖方向
 
 ```text
-main（启动与平台适配）
-        ↓
-ui / theme（GPUI 展示、控件状态、后台任务编排）
-        ↓
-workspace（照片队列、稳定身份、选择策略）
-        ↓
-params / config / photo / process（领域数据、持久化、图像处理）
-        ↓
-libvips、文件系统、GPUI 平台
+main
+  ↓
+ui ───────────────→ features
+  ↓                    ↓
+workspace / photo ─→ watermark
+  ↓                    ↓
+persistence        render / media / gainmap
 ```
 
-- `src/main.rs` 只负责应用启动、窗口和已打包应用的 vips 模块定位。
-- `src/ui/` 是展示层。`app.rs` 中的 `AppView` 拥有 GPUI 控件实体、订阅、预览实体、缩略图位图缓存和导出进度；它编排后台任务，但不定义照片队列的选择规则。
-- `src/ui/page/` 每个文件对应一个完整页面：`watermark.rs` 只组合水印工作区，`settings.rs` 只组合设置页及其页面级控件。
-- `src/ui/component/` 放页面组合会复用的领域组件（标题栏、队列、预览、检查器、文字编辑和字段控件）。组件不持有第二份业务真值。
-- `src/ui/behavior/` 放不直接渲染页面的应用工作流，例如外观偏好与批量导出；`src/ui/image.rs` 是图像管线与 GPUI 位图的专用适配层。
-- `src/workspace.rs` 是应用状态层。它不依赖 GPUI 或 `RenderImage`，只管理照片顺序、去重、`PhotoId`、选择和删除后的选择策略；可用普通单元测试覆盖。
-- `src/params.rs`、`Position` 与文字水印数据是可序列化的领域输入；`src/config.rs` 是它们的 TOML 持久化适配器。
-- `src/photo.rs` 和 `src/process/` 是 libvips 图像处理边界。所有 libvips 初始化仍经 `photo::ensure_vips()`，预览和导出共享 `Photo::compose_watermark`。
-- `src/ui/image.rs` 是刻意保留的展示适配器：它把缩放后的 vips 图像转换为 GPUI `RenderImage`，不应向队列或图像处理层泄漏该类型。
+依赖只能大体向下：
+
+- `main.rs`：进程启动、窗口创建和打包后的平台定位。
+- `ui/`：GPUI 状态、交互、预览任务编排与页面组合；不实现文件格式和图像算法。
+- `features/`：拥有独立工作流的功能。目前包括 Motion Photo 和彩色 Gain Map。
+- `workspace.rs`：照片队列、稳定 `PhotoId`、选择与删除规则，不依赖 GPUI。
+- `photo.rs`：水印合成与照片导出用例；不再负责 EXIF 解析或 libvips 生命周期。
+- `watermark.rs`：唯一的水印输入模型，包含参数、文字组与放置枚举；不依赖 UI、文件系统
+  读写或图像后端。
+- `render/`：水印的 libvips/文字渲染实现，包括画布、图片几何和 EXIF 文字排版。
+- `media/`：外部媒体适配器。`vips.rs` 负责进程级 libvips 生命周期与基础解码，
+  `metadata.rs` 负责 EXIF 读取。
+- `gainmap.rs`：Ultra HDR gain map 元数据、MPF 标记和水印 gain map 重建。
+- `persistence/`：本机 TOML 持久化；应用设置与水印预设分别位于独立模块。
+- `update.rs`：无 UI 依赖的 GitHub Releases 更新后端；UI 生命周期位于
+  `ui/behavior/update.rs`。
+
+## 目录结构
+
+```text
+src/
+├── main.rs
+├── lib.rs
+├── watermark.rs
+├── workspace.rs
+├── photo.rs
+├── gainmap.rs
+├── update.rs
+├── features/
+│   ├── colour_gainmap.rs
+│   └── motion_photo/
+│       ├── mod.rs
+│       └── container.rs
+├── media/
+│   ├── metadata.rs
+│   └── vips.rs
+├── persistence/
+│   ├── presets.rs
+│   └── settings.rs
+├── render/
+│   ├── canvas.rs
+│   ├── image.rs
+│   └── text.rs
+└── ui/
+    ├── app.rs
+    ├── behavior/
+    ├── component/
+    └── page/
+```
 
 ## 状态归属
 
-| 状态 | 所有者 | 原因 |
-| --- | --- | --- |
-| 照片队列、选择、稳定身份 | `PhotoWorkspace` | 独立于界面、可确定地测试 |
-| 缩略图与加载失败占位 | `AppView` | 仅用于 GPUI 展示，随照片移除清理 |
-| 预览节奏、过期请求、预览位图 | `WatermarkPreview` 实体 | 需要跨帧任务生命周期 |
-| 水印参数与文字控件投影 | `AppView` | 一个页面内的唯一编辑真值 |
-| 主题/缩放偏好 | `AppView` + `config` | 前者应用到 GPUI，后者负责持久化 |
+| 状态 | 所有者 |
+| --- | --- |
+| 照片队列、选择、稳定身份 | `PhotoWorkspace` |
+| 水印参数与文字组编辑真值 | `AppView` |
+| 缩略图缓存 | `AppView`，按 `PhotoId` 索引 |
+| 水印预览节奏与过期任务 | `WatermarkPreview` 实体 |
+| 小工具页的 Gain Map / Motion Photo 会话 | `OtherToolsState` |
+| 应用更新 UI 生命周期 | `UpdateState` + `ui/behavior/update.rs` |
+| 可持久化的应用偏好 | `persistence::settings::AppSettings` |
+
+控件实体只保留输入、焦点、下拉开合等交互状态。业务值仍由上述所有者控制，避免第二份真值。
 
 ## 新代码规则
 
-1. 新的队列规则先放入 `workspace` 并编写普通单元测试；不要让它依赖 GPUI 控件或位图。
-2. 仅展示所需的缓存放在 `ui`，以稳定领域 `PhotoId` 作为键；异步结果到达时先确认该身份仍在工作区。
-3. 新的图像效果放在 `process` 或 `photo`，让预览和导出复用同一处理入口。
-4. 配置文件读写只通过 `config`；界面不得自行拼接用户配置目录。
-5. 若某个能力再拥有独立的状态、工作流和界面，再考虑拆成 crate；当前规模下先保持模块边界，避免为单个屏幕过度拆分。
+1. 可序列化的水印输入放在 `watermark.rs`，渲染方法放在 `render/`；持久化不得依赖渲染实现。
+2. libvips 初始化和基础加载只经 `media::ensure_vips` / `media::load_base_image`。
+3. EXIF 读取只经 `media::ExifInfo`；照片合成不自行解析文件容器。
+4. 新的完整工作流放入 `features/`，并通过少量输入/输出类型暴露能力；不要塞回泛化的
+   `process`、`helper` 或 `utils` 模块。
+5. 设置与预设分别通过 `persistence::settings` 和 `persistence::presets`；UI 不拼配置路径。
+6. `AppView` 只组合 feature 状态和窗口级资源。新增独立页面状态时优先创建专有状态类型，
+   不继续增加一组无关字段。
+7. 后台结果必须携带稳定身份或请求版本，旧任务不得覆盖新选择。
+8. 只有当一个 feature 已有稳定公共接缝、独立生命周期和明显编译收益时，才拆成 Cargo crate。
+
+## 测试边界
+
+- `watermark`、`workspace`、时间/范围计算：纯单元测试。
+- `media`、`render`、`gainmap`：真实夹具集成测试，并保留并发首次初始化测试。
+- `persistence`：临时目录往返与损坏输入测试。
+- UI 状态与交互：GPUI 测试上下文；图像视觉事实由预览集成测试覆盖。

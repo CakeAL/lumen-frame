@@ -7,14 +7,14 @@ use anyhow::Result;
 use libvips::{VipsImage, ops};
 use std::path::Path;
 
-use crate::{photo::Photo, process::gain_map};
+use crate::{gainmap as gain_map, media::load_base_image};
 
 /// 读取一张图片，将底图转换为黑白，并生成可恢复完整原图颜色的 gain map。
 ///
-/// 返回的图片是 libvips 图像；如需编码到文件，调用方应沿用 [`Photo::save_image`] 或
-/// 自己选择合适的编码器。普通照片也能使用；若原图已有 gain map，会先解码后重编码。
+/// 返回的图片是 libvips 图像；调用方自行选择编码器。普通照片也能使用；若原图已有
+/// gain map，会先解码后重编码。
 pub fn load_black_and_white_with_colour_gainmap(path: &Path) -> Result<VipsImage> {
-    let base = Photo::load_base_image(path)?;
+    let base = load_base_image(path)?;
     let source_sdr = ops::s_rgb2sc_rgb(&base)?;
     let target_hdr = if gain_map::get_gainmap(&base).is_some() {
         // 有些原 Ultra HDR 的 HDR intent 会比它的 SDR 底图更暗。使用 SDR 彩色图作为

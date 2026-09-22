@@ -6,11 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use lumen_frame::{
-    Position,
-    params::WatermarkParams,
-    photo::ExifInfo,
-    process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
+    media::ExifInfo,
     ui::{PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail},
+    watermark::{
+        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
+    },
 };
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
@@ -168,10 +168,10 @@ fn single_channel_gainmap_can_be_previewed_and_exported() {
 
 #[test]
 fn centred_text_lands_in_the_middle_of_the_canvas() {
-    // 「居中」曾经落到 `Position` 匹配的兜底分支上，也就是画布左上角 (0, 0)，
+    // 「居中」曾经落到 `Placement` 匹配的兜底分支上，也就是画布左上角 (0, 0)，
     // 所以这里用「文字像素落在哪」来验证它真的居中。
     let text_group = TextGroup {
-        position: Position::Center,
+        position: Placement::Center,
         align: TextAlign::Center,
         ..TextGroup::default()
     };
@@ -213,7 +213,7 @@ fn text_groups_on_the_same_side_share_the_largest_thickness() {
         solid_background: true,
         ..Default::default()
     };
-    let left = simple_group(Position::Up, TextAlign::Left, TextDirection::Horizontal);
+    let left = simple_group(Placement::Up, TextAlign::Left, TextDirection::Horizontal);
     let mut right = left.clone();
     right.align = TextAlign::Right;
 
@@ -238,7 +238,7 @@ fn vertical_text_group_expands_canvas_by_its_rotated_height() {
     let horizontal = render_preview(&job_with(
         params.clone(),
         vec![simple_group(
-            Position::Up,
+            Placement::Up,
             TextAlign::Center,
             TextDirection::Horizontal,
         )],
@@ -247,7 +247,7 @@ fn vertical_text_group_expands_canvas_by_its_rotated_height() {
     let vertical = render_preview(&job_with(
         params,
         vec![simple_group(
-            Position::Up,
+            Placement::Up,
             TextAlign::Center,
             TextDirection::Vertical,
         )],
@@ -269,10 +269,10 @@ fn side_padding_moves_aligned_text_without_expanding_the_canvas() {
         ..Default::default()
     };
     for (position, align) in [
-        (Position::Up, TextAlign::Left),
-        (Position::Bottom, TextAlign::Right),
-        (Position::Left, TextAlign::Left),
-        (Position::Right, TextAlign::Right),
+        (Placement::Up, TextAlign::Left),
+        (Placement::Bottom, TextAlign::Right),
+        (Placement::Left, TextAlign::Left),
+        (Placement::Right, TextAlign::Right),
     ] {
         let plain = simple_group(position, align, TextDirection::Horizontal);
         let mut padded = plain.clone();
@@ -294,7 +294,7 @@ fn side_padding_moves_aligned_text_without_expanding_the_canvas() {
     }
 }
 
-fn simple_group(position: Position, align: TextAlign, direction: TextDirection) -> TextGroup {
+fn simple_group(position: Placement, align: TextAlign, direction: TextDirection) -> TextGroup {
     TextGroup {
         text: Text {
             template: vec!["LUMEN FRAME TEXT GROUP".to_owned()],

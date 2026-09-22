@@ -1,7 +1,8 @@
 use lumen_frame::{
-    params::WatermarkParams,
     photo::Photo,
-    process::text::{Text, TextAlign, TextDirection, TextGroup, TextParams},
+    watermark::{
+        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
+    },
 };
 
 #[tokio::test]
@@ -31,7 +32,7 @@ async fn test_generate_watermark() {
                     ..Default::default()
                 }],
             },
-            position: lumen_frame::Position::Up,
+            position: Placement::Up,
             align: TextAlign::Left,
             time_format: "%Y/%m/%d".to_owned(),
             ..TextGroup::default()
@@ -57,7 +58,7 @@ async fn test_generate_watermark() {
                     },
                 ],
             },
-            position: lumen_frame::Position::Up,
+            position: Placement::Up,
             align: TextAlign::Right,
             time_format: "%Y/%m/%d".to_owned(),
             ..TextGroup::default()
@@ -71,7 +72,7 @@ async fn test_generate_watermark() {
                     ..Default::default()
                 }],
             },
-            position: lumen_frame::Position::Right,
+            position: Placement::Right,
             direction: TextDirection::Vertical,
             align: TextAlign::Center,
             padding: 0.03,
@@ -81,7 +82,7 @@ async fn test_generate_watermark() {
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
         aspect_ratio: Some((16.0, 9.0)),
-        position: lumen_frame::Position::Center,
+        position: Placement::Center,
         blur_sigma: 50.0,
         background: [255, 255, 255],
         // solid_background: true,

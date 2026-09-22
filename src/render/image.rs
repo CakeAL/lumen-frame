@@ -1,6 +1,9 @@
 use libvips::{Result, VipsImage, ops};
 
-use crate::{Position, params::WatermarkParams, process::canvas::Margin};
+use crate::{
+    render::canvas::Margin,
+    watermark::{Placement, WatermarkParams},
+};
 
 /// 计算图片放置位置
 pub fn cal_coordinates(
@@ -18,11 +21,11 @@ pub fn cal_coordinates(
     let center_x = margin.left + (inner_w - img_w) / 2;
     let center_y = margin.top + (inner_h - img_h) / 2;
     match params.position {
-        Position::Center => (center_x, center_y),
-        Position::Up => (center_x, margin.top),
-        Position::Bottom => (center_x, canvas_h - margin.bottom - img_h),
-        Position::Left => (margin.left, center_y),
-        Position::Right => (canvas_w - margin.right - img_w, center_y),
+        Placement::Center => (center_x, center_y),
+        Placement::Up => (center_x, margin.top),
+        Placement::Bottom => (center_x, canvas_h - margin.bottom - img_h),
+        Placement::Left => (margin.left, center_y),
+        Placement::Right => (canvas_w - margin.right - img_w, center_y),
     }
 }
 

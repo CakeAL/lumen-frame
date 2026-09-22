@@ -20,39 +20,14 @@ use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
 
 use crate::{
-    Position,
-    helper::auto_color,
-    params::WatermarkParams,
-    photo::{ExifInfo, Rational},
+    media::{ExifInfo, Rational},
+    watermark::{
+        DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
+        WatermarkParams,
+    },
 };
 
 pub type SvgString = String;
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct TextGroup {
-    /// 文字组的多行文本。
-    pub text: Text,
-    /// 文字组相对于图片的位置。
-    pub position: Position,
-    /// 整组文字的方向；竖排会在渲染后顺时针旋转 90°。
-    pub direction: TextDirection,
-    /// 文字组在所在边上的位置，不影响组内每行的对齐方式。
-    pub align: TextAlign,
-    /// 文字与相邻图片边缘的留白比例；上下位置沿水平方向，左右位置沿垂直方向。
-    #[serde(default)]
-    pub padding: f64,
-    /// 时间格式
-    pub time_format: String,
-}
-
-/// 需要渲染的多行文本
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Text {
-    /// 每行文本模板
-    pub template: Vec<String>,
-    /// 每行文本参数
-    pub text_params: Vec<TextParams>,
-}
 
 impl Text {
     pub fn render_text(
@@ -179,7 +154,7 @@ impl TextGroup {
             return Ok(Some(image));
         }
 
-        let vertical_edge = matches!(self.position, Position::Left | Position::Right);
+        let vertical_edge = matches!(self.position, Placement::Left | Placement::Right);
         let (x, y, width, height) = if vertical_edge {
             (
                 0,
@@ -214,88 +189,6 @@ impl TextGroup {
                 background: vec![0.0, 0.0, 0.0, 0.0],
             },
         )?))
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum TextAlign {
-    Left,
-    #[default]
-    Center,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum TextDirection {
-    #[default]
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub struct TextParams {
-    pub font: String,
-    /// 该尺寸系与图片背景高度的百分比，默认为0.03：如果图片高度1000px，那么字体高度为30px
-    pub size: f64,
-    /// 行间距，默认为1.3，即字体高度为30px，那么行间距是9px
-    pub line_spacing: f64,
-    /// None的时候即自动颜色
-    pub color: Option<[u8; 3]>,
-    pub italic: bool,
-    pub bold: bool,
-    pub align: TextAlign,
-}
-
-impl Default for TextParams {
-    fn default() -> Self {
-        Self {
-            font: "Arial".to_string(),
-            size: 0.03,
-            line_spacing: 1.3,
-            color: None,
-            italic: false,
-            bold: false,
-            align: TextAlign::default(),
-        }
-    }
-}
-
-impl Default for Text {
-    /// 新工程默认的两行水印：第一行是品牌标志与机型，第二行是拍摄参数。
-    ///
-    /// 有默认值而不是空模板，是因为「什么都不显示」既看不出排版效果，也看不出字段写法。
-    fn default() -> Self {
-        Self {
-            template: vec![
-                "{Logo} {型号}".to_owned(),
-                "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
-            ],
-            text_params: vec![
-                TextParams {
-                    size: 0.03,
-                    bold: true,
-                    ..Default::default()
-                },
-                TextParams {
-                    size: 0.022,
-                    ..Default::default()
-                },
-            ],
-        }
-    }
-}
-
-impl Default for TextGroup {
-    fn default() -> Self {
-        Self {
-            text: Text::default(),
-            position: Position::Bottom,
-            direction: TextDirection::Horizontal,
-            align: TextAlign::Center,
-            padding: 0.0,
-            time_format: DEFAULT_TIME_FORMAT.to_owned(),
-        }
     }
 }
 
@@ -938,8 +831,6 @@ fn administrative_address(gps: Option<&nom_exif::GPSInfo>) -> Option<Address> {
 }
 
 /// 时间格式的默认值。
-pub const DEFAULT_TIME_FORMAT: &str = "%Y/%m/%d";
-
 /// 界面上给用户参考的常用时间格式。
 pub const TIME_FORMAT_EXAMPLES: &[(&str, &str)] = &[
     ("2026/09/10", "%Y/%m/%d"),
@@ -991,7 +882,7 @@ fn format_model(model: &str, make: &str) -> String {
             .split_last()
             .map(|(last, rest)| {
                 if let Ok(num) = last.parse::<i32>() {
-                    format!("{} {}", rest.join(" "), crate::helper::to_roman(num))
+                    format!("{} {}", rest.join(" "), to_roman(num))
                 } else {
                     format!("{} {}", rest.join(" "), last)
                 }
@@ -1085,6 +976,40 @@ fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<Vips
         _ => return None,
     };
     ops::svgload_buffer(svg.as_bytes()).ok()
+}
+
+/// 浅色纯色背景使用黑色自动文字；其它背景使用白色。
+fn auto_color(watermark_params: &WatermarkParams) -> bool {
+    let [red, green, blue] = watermark_params.background;
+    watermark_params.solid_background && !is_dark_color(red, green, blue)
+}
+
+fn is_dark_color(red: u8, green: u8, blue: u8) -> bool {
+    let linear = |channel: u8| {
+        let channel = f64::from(channel) / 255.0;
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+    luminance < 0.5
+}
+
+fn to_roman(mut number: i32) -> String {
+    let values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+    let symbols = [
+        "M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I",
+    ];
+    let mut result = String::new();
+    for (index, value) in values.into_iter().enumerate() {
+        while number >= value {
+            result.push_str(symbols[index]);
+            number -= value;
+        }
+    }
+    result
 }
 
 #[cfg(test)]

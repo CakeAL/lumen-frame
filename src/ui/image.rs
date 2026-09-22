@@ -15,11 +15,12 @@ use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Rgba};
 use libvips::{VipsImage, ops};
 
-use crate::process::{colour_gainmap, gain_map};
 use crate::{
-    params::WatermarkParams,
-    photo::{ExifInfo, Photo, ensure_vips},
-    process::text::TextGroup,
+    features::colour_gainmap,
+    gainmap as gain_map,
+    media::{ExifInfo, ensure_vips, load_base_image},
+    photo::Photo,
+    watermark::{TextGroup, WatermarkParams},
 };
 
 /// 100% 预览底图的长边上限（px）。
@@ -110,7 +111,7 @@ pub fn render_motion_photo_cover(
     cover_time: std::time::Duration,
 ) -> Result<Arc<RenderImage>> {
     ensure_vips();
-    let jpeg = crate::process::motion_photo::render_motion_photo_cover(
+    let jpeg = crate::features::motion_photo::render_motion_photo_cover(
         ffmpeg, path, start, end, cover_time,
     )?;
     let image = VipsImage::new_from_buffer(&jpeg, "").context("读取视频封面 JPEG")?;
@@ -139,7 +140,7 @@ pub fn export_colour_gainmap(path: &Path, output: &Path) -> Result<()> {
 /// 导出输入图片中保存的原始 gain map。无 gain map 时返回 `Ok(false)`。
 pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
     ensure_vips();
-    let image = Photo::load_base_image(path)?;
+    let image = load_base_image(path)?;
     let Some(gainmap) = gain_map::get_gainmap(&image) else {
         return Ok(false);
     };
@@ -150,7 +151,7 @@ pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
 /// 读取图片并等比缩小到 `max_edge` 的方框内。
 ///
 /// `Size::Down` 只缩小不放大：比预览尺寸还小的原图保持原样，放大只会让预览更糊。
-/// `thumbnail` 会按 EXIF orientation 自动摆正，与 [`Photo::load_base_image`] 一致。
+/// `thumbnail` 会按 EXIF orientation 自动摆正，与 [`load_base_image`] 一致。
 fn load_scaled(path: &Path, max_edge: i32) -> Result<VipsImage> {
     ops::thumbnail_with_opts(
         &path.to_string_lossy(),

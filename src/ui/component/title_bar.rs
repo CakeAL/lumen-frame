@@ -34,7 +34,7 @@ impl AppView {
                         this.selected_index(0)
                     })
                     .when(self.page == AppPage::GainMap, |this| this.selected_index(1))
-                    .when(self.page == AppPage::ColourGainMap, |this| {
+                    .when(self.page == AppPage::OtherTools, |this| {
                         this.selected_index(2)
                     })
                     .child(
@@ -56,7 +56,7 @@ impl AppView {
                         let page = match index {
                             0 => AppPage::Watermark,
                             1 => AppPage::GainMap,
-                            2 => AppPage::ColourGainMap,
+                            2 => AppPage::OtherTools,
                             _ => return,
                         };
                         this.go_to(page, cx);

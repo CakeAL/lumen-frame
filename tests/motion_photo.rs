@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use lumen_frame::process::motion_photo::{
+use lumen_frame::features::motion_photo::{
     DEFAULT_MAX_OUTPUT_SIZE, MotionPhotoOptions, detect_ffmpeg, export_motion_photo,
     inspect_motion_photo_video,
 };
@@ -31,10 +31,10 @@ fn exports_the_requested_motion_photo() {
 
     let mut parser = MediaParser::new();
     let exif = parser
-        .parse_exif(MediaSource::open(&output).unwrap())
+        .parse_exif(MediaSource::open(output).unwrap())
         .unwrap();
     assert!(exif.has_embedded_track());
     parser
-        .parse_track(MediaSource::open(&output).unwrap())
+        .parse_track(MediaSource::open(output).unwrap())
         .unwrap();
 }

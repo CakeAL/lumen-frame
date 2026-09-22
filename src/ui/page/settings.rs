@@ -18,7 +18,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
 
-use crate::config::AppearanceMode;
+use crate::persistence::settings::AppearanceMode;
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
 
 use super::super::component::field::{ColorField, NumberField, field};
@@ -138,10 +138,10 @@ fn theme_index(
     mode: ThemeMode,
     saved_name: Option<&str>,
 ) -> Option<IndexPath> {
-    if let Some(saved_name) = saved_name {
-        if let Some(index) = names.iter().position(|name| name.as_ref() == saved_name) {
-            return Some(IndexPath::new(index));
-        }
+    if let Some(saved_name) = saved_name
+        && let Some(index) = names.iter().position(|name| name.as_ref() == saved_name)
+    {
+        return Some(IndexPath::new(index));
     }
     let fallback = if mode == ThemeMode::Dark {
         "Default Dark"

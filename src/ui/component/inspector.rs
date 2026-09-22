@@ -21,9 +21,7 @@ use gpui_kit::{
     Subscription, Window, black, div, linear_color_stop, linear_gradient, relative, rgba, white,
 };
 
-use crate::Position;
-use crate::params::WatermarkParams;
-use crate::process::text::{TextAlign, TextDirection, TextGroup};
+use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, WatermarkParams};
 
 use super::super::{AppView, ExportState};
 use super::field::{
@@ -41,15 +39,15 @@ fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
 
     if vertical {
         let left = match group.position {
-            Position::Left => 0.04,
-            Position::Right => 0.935,
-            Position::Up | Position::Bottom | Position::Center => align_offset + 0.12,
+            Placement::Left => 0.04,
+            Placement::Right => 0.935,
+            Placement::Up | Placement::Bottom | Placement::Center => align_offset + 0.12,
         };
         let top = match group.position {
-            Position::Up => 0.08,
-            Position::Bottom => 0.62,
-            Position::Center => 0.35,
-            Position::Left | Position::Right => match group.align {
+            Placement::Up => 0.08,
+            Placement::Bottom => 0.62,
+            Placement::Center => 0.35,
+            Placement::Left | Placement::Right => match group.align {
                 TextAlign::Left => 0.12,
                 TextAlign::Center => 0.35,
                 TextAlign::Right => 0.58,
@@ -66,14 +64,14 @@ fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
             .into_any_element()
     } else {
         let left = match group.position {
-            Position::Left => 0.05,
-            Position::Right => 0.67,
-            Position::Up | Position::Bottom | Position::Center => align_offset,
+            Placement::Left => 0.05,
+            Placement::Right => 0.67,
+            Placement::Up | Placement::Bottom | Placement::Center => align_offset,
         };
         let top = match group.position {
-            Position::Up => 0.05,
-            Position::Bottom => 0.90,
-            Position::Center | Position::Left | Position::Right => 0.48,
+            Placement::Up => 0.05,
+            Placement::Bottom => 0.90,
+            Placement::Center | Placement::Left | Placement::Right => 0.48,
         };
         div()
             .absolute()
@@ -126,17 +124,17 @@ pub(in crate::ui::app) const ASPECT_RATIOS: &[(&str, AspectRatioChoice)] = &[
 ];
 
 /// 图片与文字水印可以贴的位置。
-pub(super) const POSITIONS: &[(&str, Position)] = &[
-    ("居中", Position::Center),
-    ("靠上", Position::Up),
-    ("靠下", Position::Bottom),
-    ("靠左", Position::Left),
-    ("靠右", Position::Right),
+pub(super) const POSITIONS: &[(&str, Placement)] = &[
+    ("居中", Placement::Center),
+    ("靠上", Placement::Up),
+    ("靠下", Placement::Bottom),
+    ("靠左", Placement::Left),
+    ("靠右", Placement::Right),
 ];
 
 /// 下拉框状态的具体类型别名，免得这串泛型在签名里反复出现。
 pub(in crate::ui::app) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
-pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Position>>>;
+pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 
 /// 面板里所有需要跨帧保留的控件状态。
 pub(in crate::ui::app) struct ParameterControls {
@@ -408,8 +406,8 @@ pub(super) fn format_number(value: f64) -> String {
 pub(in crate::ui::app) fn preset_of(
     params: &WatermarkParams,
     text_groups: &[TextGroup],
-) -> crate::config::WatermarkPreset {
-    crate::config::WatermarkPreset {
+) -> crate::persistence::presets::WatermarkPreset {
+    crate::persistence::presets::WatermarkPreset {
         params: params.clone(),
         text_groups: text_groups.to_vec(),
     }
@@ -717,7 +715,7 @@ impl AppView {
 
     fn render_preset_preview(
         &self,
-        preset: &crate::config::WatermarkPreset,
+        preset: &crate::persistence::presets::WatermarkPreset,
         cx: &Context<Self>,
     ) -> AnyElement {
         let params = &preset.params;

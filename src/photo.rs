@@ -1,38 +1,13 @@
 use anyhow::{Context, Result, anyhow};
-use libvips::{VipsApp, VipsImage, ops};
-use nom_exif::{
-    EntryValue, Exif, ExifDateTime, ExifTag, GPSInfo, MediaParser, MediaSource, read_exif_async,
+use libvips::{VipsImage, ops};
+use std::path::{Path, PathBuf};
+
+use crate::{
+    gainmap as gain_map,
+    media::{ExifInfo, ensure_vips, load_base_image},
+    render::{canvas, image},
+    watermark::{Placement, TextAlign, TextGroup, WatermarkParams},
 };
-use num_integer::Integer;
-use std::{
-    fmt::Display,
-    path::{Path, PathBuf},
-    sync::OnceLock,
-};
-
-use crate::{Position, params::WatermarkParams, process::*};
-
-/// 进程级单例：保证 libvips 在整个进程生命周期内保持初始化。
-///
-/// `VipsApp` 的 Drop 会调用 `vips_shutdown`，它会释放掉所有仍存活的 `VipsImage`
-/// （包括 `generate_watermark` 返回的那张）。因此不能每次调用都 init/shutdown，
-/// 否则返回的图片和后续的 `save_image` 都会变成 use-after-free。
-fn vips() -> &'static VipsApp {
-    static VIPS: OnceLock<VipsApp> = OnceLock::new();
-    VIPS.get_or_init(|| VipsApp::default("lumen-frame").expect("failed to init libvips"))
-}
-
-/// 保证 libvips 已初始化，并返回进程级单例。
-///
-/// **任何 vips 调用之前都必须先走这里。** libvips 的操作类哈希是首次使用时惰性构建的
-/// （`vips_operation_new` → GLib 的 `g_once`）；如果两个线程同时第一次触碰 vips，或者在
-/// `vips_init` 之前就调用，就会崩在 `vips_class_map_all` 里 —— 这是真实发生过的段错误。
-///
-/// 队列缩略图、预览合成、导出各跑在后台线程池的不同线程上，所以这个入口不能只存在于
-/// 其中某一条路径里。
-pub fn ensure_vips() -> &'static VipsApp {
-    vips()
-}
 
 #[derive(Debug, Clone)]
 pub struct Photo {
@@ -67,24 +42,12 @@ impl Photo {
         })
     }
 
-    /// 加载原图并按 EXIF orientation 摆正。
-    ///
-    /// 用自动检测加载器读取，这样 Ultra HDR (ISO 21496-1) 的 gain map 会被保留在
-    /// `VipsImage` 上，后续处理（缩放、合成等）会带着它一起走。
-    pub fn load_base_image(path: &Path) -> Result<VipsImage> {
-        vips();
-
-        let img =
-            VipsImage::new_from_file(&path.to_string_lossy()).context("failed to load image")?;
-        ops::autorot(&img).context("failed to autorotate image")
-    }
-
     pub fn generate_watermark(
         &self,
         params: &WatermarkParams,
-        text_groups: &[text::TextGroup],
+        text_groups: &[TextGroup],
     ) -> Result<VipsImage> {
-        let img = Self::load_base_image(&self.path)?;
+        let img = load_base_image(&self.path)?;
         Self::compose_watermark(img, self.exif.as_ref(), params, text_groups)
     }
 
@@ -96,9 +59,9 @@ impl Photo {
         img: VipsImage,
         exif: Option<&ExifInfo>,
         params: &WatermarkParams,
-        text_groups: &[text::TextGroup],
+        text_groups: &[TextGroup],
     ) -> Result<VipsImage> {
-        vips();
+        ensure_vips();
 
         // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）
         let original_gainmap = gain_map::get_gainmap(&img);
@@ -128,25 +91,25 @@ impl Photo {
         let mut text_thickness = [0; 4];
         for (position, _, image) in &rendered_text_groups {
             let thickness = match position {
-                Position::Up | Position::Bottom => image.get_height(),
-                Position::Left | Position::Right => image.get_width(),
-                Position::Center => 0,
+                Placement::Up | Placement::Bottom => image.get_height(),
+                Placement::Left | Placement::Right => image.get_width(),
+                Placement::Center => 0,
             };
             let slot = match position {
-                Position::Up => Some(0),
-                Position::Right => Some(1),
-                Position::Bottom => Some(2),
-                Position::Left => Some(3),
-                Position::Center => None,
+                Placement::Up => Some(0),
+                Placement::Right => Some(1),
+                Placement::Bottom => Some(2),
+                Placement::Left => Some(3),
+                Placement::Center => None,
             };
             if let Some(slot) = slot {
                 text_thickness[slot] = text_thickness[slot].max(thickness);
             }
         }
-        margin.include_text_thickness(Position::Up, text_thickness[0]);
-        margin.include_text_thickness(Position::Right, text_thickness[1]);
-        margin.include_text_thickness(Position::Bottom, text_thickness[2]);
-        margin.include_text_thickness(Position::Left, text_thickness[3]);
+        margin.include_text_thickness(Placement::Up, text_thickness[0]);
+        margin.include_text_thickness(Placement::Right, text_thickness[1]);
+        margin.include_text_thickness(Placement::Bottom, text_thickness[2]);
+        margin.include_text_thickness(Placement::Left, text_thickness[3]);
         // 画布尺寸
         let (canvas_w, canvas_h) = canvas::cal_size(&margin, img_w, img_h, params);
         // 计算图片坐标
@@ -190,27 +153,27 @@ impl Photo {
         for (position, align, text_layer) in rendered_text_groups {
             let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
             let aligned_x = || match align {
-                text::TextAlign::Left => img_x,
-                text::TextAlign::Center => img_x + (img_w - text_w) / 2,
-                text::TextAlign::Right => img_x + img_w - text_w,
+                TextAlign::Left => img_x,
+                TextAlign::Center => img_x + (img_w - text_w) / 2,
+                TextAlign::Right => img_x + img_w - text_w,
             };
             let aligned_y = || match align {
-                text::TextAlign::Left => img_y,
-                text::TextAlign::Center => img_y + (img_h - text_h) / 2,
-                text::TextAlign::Right => img_y + img_h - text_h,
+                TextAlign::Left => img_y,
+                TextAlign::Center => img_y + (img_h - text_h) / 2,
+                TextAlign::Right => img_y + img_h - text_h,
             };
             let (text_x, text_y) = match position {
-                Position::Up => (aligned_x(), (img_y - text_h) / 2),
-                Position::Bottom => (
+                Placement::Up => (aligned_x(), (img_y - text_h) / 2),
+                Placement::Bottom => (
                     aligned_x(),
                     img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
                 ),
-                Position::Left => ((img_x - text_w) / 2, aligned_y()),
-                Position::Right => (
+                Placement::Left => ((img_x - text_w) / 2, aligned_y()),
+                Placement::Right => (
                     img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
                     aligned_y(),
                 ),
-                Position::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
+                Placement::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
             };
             canvas = ops::composite2_with_opts(
                 &canvas,
@@ -247,7 +210,7 @@ impl Photo {
     }
 
     pub fn save_image(&self, params: &WatermarkParams, watermark: &VipsImage) -> Result<()> {
-        vips();
+        ensure_vips();
 
         let stem = self
             .path
@@ -324,192 +287,4 @@ mod export_tests {
         assert_eq!(ultra_hdr_resize_scale(8_192, true), None);
         assert_eq!(ultra_hdr_resize_scale(16_384, true), Some(0.5));
     }
-}
-
-/// 光圈，快门速度可能是小数或者分数
-#[derive(Debug, Clone)]
-pub enum Rational {
-    Fraction(i32, i32),
-    Float(f64),
-}
-
-impl Display for Rational {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let format_value = |v: f64| {
-            format!("{v:.2}")
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-                .to_string()
-        };
-        match self {
-            Rational::Fraction(n, d) => {
-                let gcd = n.gcd(d);
-                let n = n / gcd;
-                let d = d / gcd;
-                if d == 1 {
-                    write!(f, "{}", n)
-                } else {
-                    let v = n as f64 / d as f64;
-                    if v >= 1.0 {
-                        write!(f, "{}", format_value(v))
-                    } else {
-                        write!(f, "{}/{}", n, d)
-                    }
-                }
-            }
-            Rational::Float(v) => {
-                if v < &1.0 {
-                    let d = (1.0 / v).round() as u32;
-                    write!(f, "1/{}", d)
-                } else {
-                    write!(f, "{}", format_value(*v))
-                }
-            }
-        }
-    }
-}
-#[derive(Debug, Default, Clone)]
-pub struct ExifInfo {
-    // 拍摄日期
-    pub created_time: Option<ExifDateTime>,
-    // 品牌
-    pub make: Option<String>,
-    // 机型
-    pub model: Option<String>,
-    // 快门速度, (1/100s)
-    pub exposure_time: Option<Rational>,
-    // 光圈
-    pub f_number: Option<Rational>,
-    // 感光度
-    pub isospeed_ratings: Option<u32>,
-    // 曝光补偿
-    pub exposure_bias_value: Option<Rational>,
-    // 实际焦距
-    pub focal_length: Option<Rational>,
-    // 白平衡模式
-    pub white_balance_mode: Option<u16>,
-    // 等效35mm焦距
-    pub focal_length_in35mm_film: Option<u16>,
-    // 镜头生产商
-    pub lens_make: Option<String>,
-    // 镜头型号
-    pub lens_model: Option<String>,
-    // GPS Info
-    pub gps_info: Option<GPSInfo>,
-}
-
-impl ExifInfo {
-    pub async fn new(path: &Path) -> Result<Self> {
-        let exif = match read_exif_async(path).await {
-            Ok(exif) => exif,
-            Err(original_error) => {
-                let bytes = tokio::fs::read(path)
-                    .await
-                    .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
-                read_exif_from_jpeg_app1(&bytes).with_context(|| {
-                    format!("Failed to read exif, file: {path:?}; original error: {original_error}")
-                })?
-            }
-        };
-        Ok(Self::from_exif(&exif))
-    }
-
-    /// 阻塞读取 EXIF。供没有 tokio 运行时的后台线程使用。
-    pub fn read(path: &Path) -> Result<Self> {
-        let exif = match nom_exif::read_exif(path) {
-            Ok(exif) => exif,
-            Err(original_error) => {
-                let bytes = std::fs::read(path)
-                    .with_context(|| format!("Failed to read exif, file: {:?}", path))?;
-                read_exif_from_jpeg_app1(&bytes).with_context(|| {
-                    format!("Failed to read exif, file: {path:?}; original error: {original_error}")
-                })?
-            }
-        };
-        Ok(Self::from_exif(&exif))
-    }
-
-    fn from_exif(exif: &Exif) -> Self {
-        let get = |tag| find_value(exif, tag);
-        let to_string = |v: &EntryValue| v.as_str().map(|s| s.to_string());
-        Self {
-            created_time: get(ExifTag::CreateDate).and_then(|v| v.as_datetime()),
-            make: get(ExifTag::Make).and_then(to_string),
-            model: get(ExifTag::Model).and_then(to_string),
-            exposure_time: get(ExifTag::ExposureTime).and_then(format_value),
-            f_number: get(ExifTag::FNumber).and_then(format_value),
-            isospeed_ratings: get(ExifTag::ISOSpeedRatings).and_then(format_iso),
-            exposure_bias_value: get(ExifTag::ExposureBiasValue).and_then(format_value),
-            focal_length: get(ExifTag::FocalLength).and_then(format_value),
-            white_balance_mode: get(ExifTag::WhiteBalanceMode).and_then(|v| v.as_u16()),
-            focal_length_in35mm_film: get(ExifTag::FocalLengthIn35mmFilm).and_then(|v| v.as_u16()),
-            lens_make: get(ExifTag::LensMake).and_then(to_string),
-            lens_model: get(ExifTag::LensModel).and_then(to_string),
-            gps_info: exif.gps_info().cloned(),
-        }
-    }
-}
-
-/// 兼容 XMP APP1 位于 EXIF APP1 之前的 JPEG。
-///
-/// nom-exif 3.6.1 会在第一个非 EXIF APP1 处停止并报错；这里仅在常规读取失败后扫描出
-/// 真正的 `Exif\0\0` 段，再交回 nom-exif 解析 TIFF 内容。扫描只发生在失败路径上。
-fn read_exif_from_jpeg_app1(jpeg: &[u8]) -> Result<Exif> {
-    anyhow::ensure!(jpeg.starts_with(&[0xff, 0xd8]), "不是 JPEG 文件");
-    let mut offset = 2;
-    while offset + 4 <= jpeg.len() {
-        anyhow::ensure!(jpeg[offset] == 0xff, "JPEG 标记损坏");
-        let marker = jpeg[offset + 1];
-        if marker == 0xda || marker == 0xd9 {
-            break;
-        }
-        let length = u16::from_be_bytes([jpeg[offset + 2], jpeg[offset + 3]]) as usize;
-        anyhow::ensure!(
-            length >= 2 && offset + 2 + length <= jpeg.len(),
-            "JPEG 段长度损坏"
-        );
-        let payload = offset + 4;
-        if marker == 0xe1 && jpeg.get(payload..payload + 6) == Some(b"Exif\0\0") {
-            let end = offset + 2 + length;
-            let mut minimal_jpeg = Vec::with_capacity(end - offset + 2);
-            minimal_jpeg.extend_from_slice(&[0xff, 0xd8]);
-            minimal_jpeg.extend_from_slice(&jpeg[offset..end]);
-            let source = MediaSource::from_memory(minimal_jpeg)?;
-            let mut parser = MediaParser::new();
-            return parser
-                .parse_exif(source)
-                .map(Exif::from)
-                .map_err(Into::into);
-        }
-        offset += 2 + length;
-    }
-    anyhow::bail!("JPEG 中未找到 EXIF APP1 段")
-}
-
-/// 在所有 IFD 中查找指定 tag 的首个条目（拍摄参数通常位于 Exif 子 IFD 中）。
-fn find_value(exif: &Exif, tag: ExifTag) -> Option<&EntryValue> {
-    exif.entries()
-        .find(|e| e.tag().tag() == Some(tag))
-        .map(|e| e.value())
-}
-
-fn format_iso(value: &EntryValue) -> Option<u32> {
-    match value {
-        // 部分相机将 ISO 存为数组（如 [100]）
-        EntryValue::U16Array(v) => v.first().copied().map(|n| n as u32),
-        EntryValue::U32Array(v) => v.first().copied(),
-        _ => value.try_as_integer().and_then(|n| u32::try_from(n).ok()),
-    }
-}
-
-fn format_value(value: &EntryValue) -> Option<Rational> {
-    if let Some(r) = value.as_irational() {
-        let n = r.numerator();
-        let d = r.denominator();
-        if d == 0 {
-            return None;
-        }
-        return Some(Rational::Fraction(n, d));
-    }
-    value.try_as_float().map(Rational::Float)
 }

@@ -3,11 +3,14 @@ use libvips::ops;
 use nom_exif::{Altitude, ExifDateTime, GPSInfo, URational};
 
 use lumen_frame::{
-    params::WatermarkParams,
-    photo::{ExifInfo, Photo, Rational},
-    process::{
+    media::{ExifInfo, Rational},
+    photo::Photo,
+    render::{
         canvas::{self, Margin},
-        text::{Text, TextAlign, TextDirection, TextGroup, TextParams, render_exif_template},
+        text::render_exif_template,
+    },
+    watermark::{
+        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
     },
 };
 
@@ -82,7 +85,7 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
     assert_eq!(padded.get_height(), plain.get_height());
 
     let vertical_plain = TextGroup {
-        position: lumen_frame::Position::Left,
+        position: Placement::Left,
         align: TextAlign::Left,
         ..TextGroup::default()
     }
@@ -90,7 +93,7 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
     .unwrap()
     .unwrap();
     let vertical_padded = TextGroup {
-        position: lumen_frame::Position::Left,
+        position: Placement::Left,
         align: TextAlign::Left,
         padding: 0.05,
         ..TextGroup::default()
@@ -179,7 +182,7 @@ async fn test_render_text_with_logo_mixed() {
     let params = WatermarkParams {
         output_folder: Some(output_path.into()),
         aspect_ratio: Some((16.0, 9.0)),
-        position: lumen_frame::Position::Left,
+        position: Placement::Left,
         blur_sigma: 15.0,
         background: [26, 188, 156],
         border_radius: 0.02,

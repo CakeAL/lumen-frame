@@ -27,15 +27,17 @@ use gpui_kit::{
     WindowHandle,
 };
 
-use crate::config::{self, AppearanceMode, WatermarkPreset};
-use crate::params::WatermarkParams;
-use crate::photo::ExifInfo;
-use crate::process::motion_photo::{MotionPhotoOptions, export_motion_photo};
-use crate::process::text::TextGroup;
-use crate::update::{self, UpdateAvailability};
+use crate::features::motion_photo::{MotionPhotoOptions, export_motion_photo};
+use crate::media::ExifInfo;
+use crate::persistence::{
+    presets::{self, WatermarkPreset},
+    settings::{self as settings_store, AppearanceMode},
+};
+use crate::watermark::{TextGroup, WatermarkParams};
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use super::image::{PreviewJob, export_colour_gainmap, export_gainmap, render_thumbnail};
+use behavior::update::UpdateState;
 use component::field::index_of;
 use component::inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
 use component::preview::WatermarkPreview;
@@ -43,7 +45,7 @@ use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
 use page::{
     gainmap::GainMapPageState,
-    other_tools::ColourGainMapPageState,
+    other_tools::OtherToolsState,
     settings::{self, SettingsControls},
 };
 
@@ -61,7 +63,7 @@ pub enum Thumbnail {
 pub enum AppPage {
     Watermark,
     GainMap,
-    ColourGainMap,
+    OtherTools,
     Settings,
 }
 
@@ -70,18 +72,6 @@ pub enum ExportState {
     Idle,
     Running { completed: usize, total: usize },
     Finished { succeeded: usize, failed: usize },
-}
-
-/// 设置页“关于”区域中的更新生命周期。
-#[derive(Clone, Debug)]
-pub(in crate::ui) enum UpdateState {
-    Idle,
-    Checking,
-    UpToDate,
-    Available { version: SharedString },
-    Installing { version: SharedString },
-    Installed { version: SharedString },
-    Failed { message: SharedString },
 }
 
 pub struct AppView {
@@ -114,7 +104,7 @@ pub struct AppView {
     /// 与水印工作区完全隔离的 HDR 解析页状态。
     gainmap: GainMapPageState,
     /// 黑白底图 + 彩色恢复 gain map 的独立生成页状态。
-    colour_gainmap: ColourGainMapPageState,
+    other_tools: OtherToolsState,
     export: ExportState,
 
     preset_names: Vec<SharedString>,
@@ -147,7 +137,7 @@ pub struct AppView {
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = config::load_settings();
+        let settings = settings_store::load();
         let mut params = WatermarkParams::default();
         if let Some(folder) = settings.output_folder.clone() {
             params.output_folder = Some(folder);
@@ -156,7 +146,7 @@ impl AppView {
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let gainmap = GainMapPageState::new(cx);
-        let colour_gainmap = ColourGainMapPageState::new(window, cx);
+        let other_tools = OtherToolsState::new(window, cx);
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -217,7 +207,7 @@ impl AppView {
             controls,
             preview,
             gainmap,
-            colour_gainmap,
+            other_tools,
             export: ExportState::Idle,
             preset_names,
             preset_previews,
@@ -243,162 +233,6 @@ impl AppView {
         view.apply_appearance(window, cx);
         view.start_automatic_update_check(window, cx);
         view
-    }
-
-    /// 发行构建启动时按 `self_update::UpdateCheckGuard` 的七天间隔静默检查。
-    fn start_automatic_update_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !update::automatic_checks_enabled() {
-            return;
-        }
-        self.start_update_check(true, window, cx);
-    }
-
-    pub(super) fn check_for_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.update_state.clone() {
-            UpdateState::Available { version } => self.confirm_update_install(version, window, cx),
-            UpdateState::Checking | UpdateState::Installing { .. } => {}
-            _ => self.start_update_check(false, window, cx),
-        }
-    }
-
-    fn start_update_check(&mut self, automatic: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(
-            self.update_state,
-            UpdateState::Checking | UpdateState::Installing { .. }
-        ) {
-            return;
-        }
-        self.update_state = UpdateState::Checking;
-        cx.notify();
-
-        let window_handle = window.window_handle();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move {
-                    if automatic {
-                        update::check_if_due()
-                    } else {
-                        update::check_now_and_record().map(Some)
-                    }
-                })
-                .await;
-
-            let _ = this.update(cx, |this, cx| match result {
-                Ok(None) => {
-                    this.update_state = UpdateState::Idle;
-                    cx.notify();
-                }
-                Ok(Some(UpdateAvailability::UpToDate)) => {
-                    this.update_state = UpdateState::UpToDate;
-                    cx.notify();
-                }
-                Ok(Some(UpdateAvailability::Available { version })) => {
-                    let version = SharedString::from(version);
-                    this.update_state = UpdateState::Available {
-                        version: version.clone(),
-                    };
-                    if automatic {
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            window.push_notification(
-                                Notification::success(format!(
-                                    "发现新版本 {version}，可在“设置 > 关于”中安装"
-                                )),
-                                cx,
-                            )
-                        });
-                    }
-                    cx.notify();
-                }
-                Err(error) => {
-                    let message = format!("检查更新失败：{error:#}");
-                    this.update_state = UpdateState::Failed {
-                        message: message.clone().into(),
-                    };
-                    if !automatic {
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            window.push_notification(Notification::error(message), cx)
-                        });
-                    }
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    fn confirm_update_install(
-        &mut self,
-        version: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let view = cx.entity();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let view = view.clone();
-            let version_for_install = version.clone();
-            alert
-                .title(format!("发现新版本 {version}"))
-                .description(
-                    "更新将从 GitHub 下载并替换当前应用。安装完成后请重新启动 Lumen Frame。",
-                )
-                .button_props(
-                    gpui_kit::component::dialog::DialogButtonProps::default()
-                        .ok_text("安装更新")
-                        .show_cancel(true)
-                        .cancel_text("稍后")
-                        .on_ok(move |_, window, cx| {
-                            let version = version_for_install.clone();
-                            view.update(cx, |this, cx| this.install_update(version, window, cx));
-                            true
-                        }),
-                )
-        });
-    }
-
-    fn install_update(
-        &mut self,
-        version: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(self.update_state, UpdateState::Installing { .. }) {
-            return;
-        }
-        self.update_state = UpdateState::Installing {
-            version: version.clone(),
-        };
-        cx.notify();
-
-        let window_handle = window.window_handle();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { update::install_latest() })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                let notification = match result {
-                    Ok(installed_version) => {
-                        this.update_state = UpdateState::Installed {
-                            version: installed_version.clone().into(),
-                        };
-                        Notification::success(format!(
-                            "已安装 {installed_version}，重新启动应用后生效"
-                        ))
-                    }
-                    Err(error) => {
-                        let message = format!("安装更新失败：{error:#}");
-                        this.update_state = UpdateState::Failed {
-                            message: message.clone().into(),
-                        };
-                        Notification::error(message)
-                    }
-                };
-                let _ = window_handle.update(cx, |_, window, cx| {
-                    window.push_notification(notification, cx)
-                });
-                cx.notify();
-            });
-        })
-        .detach();
     }
 
     // MARK: 读取
@@ -551,10 +385,10 @@ impl AppView {
     }
 
     pub(super) fn export_colour_gainmap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.colour_gainmap.path().map(PathBuf::from) else {
+        let Some(path) = self.other_tools.path().map(PathBuf::from) else {
             return;
         };
-        if self.colour_gainmap.is_exporting() {
+        if self.other_tools.is_exporting() {
             return;
         }
         let window_handle = window.window_handle();
@@ -577,7 +411,7 @@ impl AppView {
                     .and_then(|name| name.to_str())
                     .unwrap_or("image")
             ));
-            this.update(cx, |this, cx| this.colour_gainmap.set_exporting(true, cx))
+            this.update(cx, |this, cx| this.other_tools.set_exporting(true, cx))
                 .ok();
             let result = cx
                 .background_spawn(
@@ -585,7 +419,7 @@ impl AppView {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.colour_gainmap.set_exporting(false, cx);
+                this.other_tools.set_exporting(false, cx);
                 let notification = match result {
                     Ok(output) => Notification::success(format!(
                         "黑白+彩色 Gain Map 已导出到 {}",
@@ -605,19 +439,19 @@ impl AppView {
     }
 
     pub(super) fn export_motion_photo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.colour_gainmap.video_path().map(PathBuf::from) else {
+        let Some(path) = self.other_tools.video_path().map(PathBuf::from) else {
             return;
         };
-        if self.colour_gainmap.is_motion_exporting() {
+        if self.other_tools.is_motion_exporting() {
             return;
         }
         let (start, end, cover) = (
-            self.colour_gainmap.motion_start(),
-            self.colour_gainmap.motion_end(),
-            self.colour_gainmap.motion_cover(),
+            self.other_tools.motion_start(),
+            self.other_tools.motion_end(),
+            self.other_tools.motion_cover(),
         );
-        let max_output_size = self.colour_gainmap.motion_max_size_bytes();
-        let Some(ffmpeg_path) = self.colour_gainmap.ffmpeg_path().map(PathBuf::from) else {
+        let max_output_size = self.other_tools.motion_max_size_bytes();
+        let Some(ffmpeg_path) = self.other_tools.ffmpeg_path().map(PathBuf::from) else {
             return;
         };
         let window_handle = window.window_handle();
@@ -641,7 +475,7 @@ impl AppView {
                     .unwrap_or("video")
             ));
             this.update(cx, |this, cx| {
-                this.colour_gainmap.set_motion_exporting(true, cx)
+                this.other_tools.set_motion_exporting(true, cx)
             })
             .ok();
             let result = cx
@@ -660,7 +494,7 @@ impl AppView {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.colour_gainmap.set_motion_exporting(false, cx);
+                this.other_tools.set_motion_exporting(false, cx);
                 let notification = match result {
                     Ok(output) => {
                         Notification::success(format!("Motion Photo 已导出到 {}", output.display()))
@@ -784,7 +618,7 @@ impl AppView {
             };
             let _ = window_handle.update(cx, |_, window, cx| {
                 this.update(cx, |this, cx| {
-                    if let Err(error) = this.colour_gainmap.set_ffmpeg_path(path, window, cx) {
+                    if let Err(error) = this.other_tools.set_ffmpeg_path(path, window, cx) {
                         window.push_notification(
                             Notification::error(format!("无法使用 FFmpeg：{error:#}")),
                             cx,
@@ -812,7 +646,7 @@ impl AppView {
             cx.notify();
             return;
         };
-        self.colour_gainmap.select(path, cx);
+        self.other_tools.select(path, cx);
         cx.notify();
     }
 
@@ -830,7 +664,7 @@ impl AppView {
             cx.notify();
             return;
         };
-        if let Err(error) = self.colour_gainmap.select_motion_video(path, window, cx) {
+        if let Err(error) = self.other_tools.select_motion_video(path, window, cx) {
             window.push_notification(
                 Notification::error(format!("无法使用 Motion Photo 视频：{error:#}")),
                 cx,
@@ -1037,7 +871,7 @@ impl AppView {
         }
 
         let preset = preset_of(&self.params, &self.build_text_groups(cx));
-        match config::save_preset(&name, &preset) {
+        match presets::save(&name, &preset) {
             Ok(path) => {
                 self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());
                 self.preset_feedback_is_error = false;
@@ -1054,9 +888,9 @@ impl AppView {
     /// 载入预设，并把所有「自己存值」的控件同步到新配置上。
     pub(super) fn load_preset(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let preset = if self.builtin_preset_names.contains(name) {
-            config::load_builtin_preset(name)
+            presets::load_builtin(name)
         } else {
-            config::load_preset(name)
+            presets::load(name)
         };
         match preset {
             Ok(preset) => {
@@ -1232,7 +1066,7 @@ impl AppView {
     }
 
     fn delete_preset(&mut self, name: &str, cx: &mut Context<Self>) {
-        match config::delete_preset(name) {
+        match presets::delete(name) {
             Ok(()) => {
                 self.preset_feedback = Some(format!("已删除「{name}」").into());
                 self.preset_feedback_is_error = false;
@@ -1248,7 +1082,7 @@ impl AppView {
 
     /// 确保预设目录存在后交给系统文件管理器显示；空目录也应可直接打开，方便手工管理。
     pub(super) fn open_preset_folder(&mut self, cx: &mut Context<Self>) {
-        let Some(dir) = config::preset_dir() else {
+        let Some(dir) = presets::directory() else {
             self.preset_feedback = Some("找不到系统的配置目录".into());
             self.preset_feedback_is_error = true;
             cx.notify();
@@ -1280,7 +1114,7 @@ fn preset_catalog() -> (
     HashMap<SharedString, WatermarkPreset>,
     HashSet<SharedString>,
 ) {
-    let builtins = config::builtin_presets().unwrap_or_default();
+    let builtins = presets::builtin().unwrap_or_default();
     let builtin_names = builtins
         .iter()
         .map(|(name, _)| SharedString::from(name.clone()))
@@ -1294,12 +1128,12 @@ fn preset_catalog() -> (
         previews.insert(name, preset);
     }
 
-    for name in config::list_presets().unwrap_or_default() {
+    for name in presets::list().unwrap_or_default() {
         let name = SharedString::from(name);
         if builtin_names.contains(&name) {
             continue;
         }
-        if let Ok(preset) = config::load_preset(&name) {
+        if let Ok(preset) = presets::load(&name) {
             names.push(name.clone());
             previews.insert(name, preset);
         }

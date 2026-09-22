@@ -24,12 +24,9 @@ use gpui_kit::{
     WindowBounds, WindowOptions, div, px, size,
 };
 
-use crate::Position;
-use crate::photo::ExifInfo;
-use crate::process::text::{
-    TIME_FORMAT_EXAMPLES, Text, TextAlign, TextDirection, TextGroup, TextParams,
-    render_exif_template, time_format_is_valid,
-};
+use crate::media::ExifInfo;
+use crate::render::text::{TIME_FORMAT_EXAMPLES, render_exif_template, time_format_is_valid};
+use crate::watermark::{Placement, Text, TextAlign, TextDirection, TextGroup, TextParams};
 
 use super::super::AppView;
 use super::field::{
@@ -81,13 +78,13 @@ const TEMPLATE_FIELDS: &[(&str, &str)] = &[
 
 pub(in crate::ui::app) type FontSelect = ComboboxState<SearchableVec<SharedString>>;
 pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
-pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Position>>>;
+pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
-fn group_aligns(position: Position) -> &'static [(&'static str, TextAlign)] {
+fn group_aligns(position: Placement) -> &'static [(&'static str, TextAlign)] {
     match position {
-        Position::Left | Position::Right => VERTICAL_GROUP_ALIGNS,
-        Position::Up | Position::Bottom | Position::Center => HORIZONTAL_GROUP_ALIGNS,
+        Placement::Left | Placement::Right => VERTICAL_GROUP_ALIGNS,
+        Placement::Up | Placement::Bottom | Placement::Center => HORIZONTAL_GROUP_ALIGNS,
     }
 }
 
@@ -382,7 +379,7 @@ impl TextGroupEditor {
                 .read(cx)
                 .selected_value()
                 .copied()
-                .unwrap_or(Position::Bottom),
+                .unwrap_or(Placement::Bottom),
             direction: self
                 .direction
                 .read(cx)
@@ -401,20 +398,20 @@ impl TextGroupEditor {
     }
 }
 
-fn position_label(position: Position) -> &'static str {
+fn position_label(position: Placement) -> &'static str {
     match position {
-        Position::Center => "居中",
-        Position::Up => "靠上",
-        Position::Bottom => "靠下",
-        Position::Left => "靠左",
-        Position::Right => "靠右",
+        Placement::Center => "居中",
+        Placement::Up => "靠上",
+        Placement::Bottom => "靠下",
+        Placement::Left => "靠左",
+        Placement::Right => "靠右",
     }
 }
 
-fn align_label(align: TextAlign, position: Position) -> &'static str {
+fn align_label(align: TextAlign, position: Placement) -> &'static str {
     match (align, position) {
-        (TextAlign::Left, Position::Left | Position::Right) => "上侧",
-        (TextAlign::Right, Position::Left | Position::Right) => "下侧",
+        (TextAlign::Left, Placement::Left | Placement::Right) => "上侧",
+        (TextAlign::Right, Placement::Left | Placement::Right) => "下侧",
         (TextAlign::Left, _) => "左侧",
         (TextAlign::Right, _) => "右侧",
         (TextAlign::Center, _) => "居中",
@@ -1084,7 +1081,7 @@ mod tests {
     #[test]
     fn group_alignment_labels_follow_group_position() {
         assert_eq!(
-            group_aligns(Position::Up),
+            group_aligns(Placement::Up),
             &[
                 ("左侧", TextAlign::Left),
                 ("居中", TextAlign::Center),
@@ -1092,16 +1089,16 @@ mod tests {
             ]
         );
         assert_eq!(
-            group_aligns(Position::Right),
+            group_aligns(Placement::Right),
             &[
                 ("上侧", TextAlign::Left),
                 ("居中", TextAlign::Center),
                 ("下侧", TextAlign::Right),
             ]
         );
-        assert_eq!(align_label(TextAlign::Left, Position::Left), "上侧");
-        assert_eq!(align_label(TextAlign::Right, Position::Right), "下侧");
-        assert_eq!(align_label(TextAlign::Left, Position::Bottom), "左侧");
-        assert_eq!(align_label(TextAlign::Right, Position::Up), "右侧");
+        assert_eq!(align_label(TextAlign::Left, Placement::Left), "上侧");
+        assert_eq!(align_label(TextAlign::Right, Placement::Right), "下侧");
+        assert_eq!(align_label(TextAlign::Left, Placement::Bottom), "左侧");
+        assert_eq!(align_label(TextAlign::Right, Placement::Up), "右侧");
     }
 }

@@ -7,7 +7,7 @@
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::{SharedString, TestAppContext};
 
-use lumen_frame::config::AppearanceMode;
+use lumen_frame::persistence::settings::AppearanceMode;
 use lumen_frame::theme;
 use lumen_frame::ui::AppView;
 

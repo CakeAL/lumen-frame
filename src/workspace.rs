@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::photo::ExifInfo;
+use crate::media::ExifInfo;
 
 /// 队列中照片的稳定身份。
 ///

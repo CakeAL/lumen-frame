@@ -2,8 +2,9 @@ use std::{fs, path::Path};
 
 use libvips::ops;
 use lumen_frame::{
-    photo::{ExifInfo, Photo},
-    process::{colour_gainmap::load_black_and_white_with_colour_gainmap, gain_map},
+    features::colour_gainmap::load_black_and_white_with_colour_gainmap,
+    gainmap as gain_map,
+    media::{ExifInfo, load_base_image},
 };
 
 const PHOTO: &str = "/Users/cakeal/Downloads/DSC_6610.jpg";
@@ -11,7 +12,7 @@ const PHOTO: &str = "/Users/cakeal/Downloads/DSC_6610.jpg";
 #[test]
 fn colour_gainmap_restores_colour_at_normal_display_headroom() {
     let input = Path::new(PHOTO);
-    let original = Photo::load_base_image(input).expect("读取测试图片失败");
+    let original = load_base_image(input).expect("读取测试图片失败");
     let _has_input_gainmap = gain_map::get_gainmap(&original).is_some();
 
     let result =
@@ -99,7 +100,7 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
     );
     let exif = ExifInfo::read(&output).expect("彩色 Gain Map 导出后应仍能读取 EXIF");
     assert!(exif.model.is_some(), "彩色 Gain Map 导出后丢失了相机型号");
-    let exported = Photo::load_base_image(&output).unwrap();
+    let exported = load_base_image(&output).unwrap();
     assert!(
         gain_map::get_gainmap(&exported).is_some(),
         "重新读取导出的 JPEG 时丢失了 gain map"

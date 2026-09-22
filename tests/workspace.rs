@@ -216,7 +216,7 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
 fn colour_gainmap_page_renders_and_returns(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
 
-    view.update_in(cx, |view, _, cx| view.go_to(AppPage::ColourGainMap, cx));
+    view.update_in(cx, |view, _, cx| view.go_to(AppPage::OtherTools, cx));
     cx.run_until_parked();
 
     view.update_in(cx, |view, _, cx| view.go_to(AppPage::Watermark, cx));

@@ -3,7 +3,7 @@ use libvips::{
     ops::{self, BlackOptions},
 };
 
-use crate::{Position, params::WatermarkParams};
+use crate::watermark::{Placement, WatermarkParams};
 
 /// 画布边框margin
 #[derive(Debug, Copy, Clone)]
@@ -38,13 +38,13 @@ impl Margin {
 
     /// 在原有边框外扩出文字组所需的厚度。同一侧的多个文字组共享一条带状区域，
     /// 因此该侧只取最厚的一组，而不是把它们逐组累加。
-    pub fn include_text_thickness(&mut self, position: Position, thickness: i32) {
+    pub fn include_text_thickness(&mut self, position: Placement, thickness: i32) {
         match position {
-            Position::Up => self.top += thickness,
-            Position::Right => self.right += thickness,
-            Position::Bottom => self.bottom += thickness,
-            Position::Left => self.left += thickness,
-            Position::Center => {}
+            Placement::Up => self.top += thickness,
+            Placement::Right => self.right += thickness,
+            Placement::Bottom => self.bottom += thickness,
+            Placement::Left => self.left += thickness,
+            Placement::Center => {}
         }
     }
 }

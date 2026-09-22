@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use lumen_frame::config::{
-    AppSettings, AppearanceMode, load_settings_at, save_settings_at, settings_path,
+use lumen_frame::persistence::settings::{
+    AppSettings, AppearanceMode, load_at, save_at, settings_path,
 };
 
 fn scratch_file(tag: &str) -> PathBuf {
@@ -22,10 +22,7 @@ fn default_appearance_follows_the_system() {
         AppSettings::default().preview_background,
         [0x9a, 0xa7, 0xb1]
     );
-    assert_eq!(
-        load_settings_at(&scratch_file("missing")),
-        AppSettings::default()
-    );
+    assert_eq!(load_at(&scratch_file("missing")), AppSettings::default());
 }
 
 #[test]
@@ -37,7 +34,7 @@ fn appearance_round_trips() {
         AppearanceMode::Light,
         AppearanceMode::System,
     ] {
-        save_settings_at(
+        save_at(
             &path,
             &AppSettings {
                 appearance: mode,
@@ -45,11 +42,7 @@ fn appearance_round_trips() {
             },
         )
         .unwrap();
-        assert_eq!(
-            load_settings_at(&path).appearance,
-            mode,
-            "{mode:?} 没能往返"
-        );
+        assert_eq!(load_at(&path).appearance, mode, "{mode:?} 没能往返");
     }
 
     // 存的是可读的 TOML，不是二进制。
@@ -72,12 +65,12 @@ fn theme_slots_round_trip() {
         preview_background: [0x24, 0x32, 0x4a],
         output_folder: Some(PathBuf::from("/tmp/lumen-frame-output")),
     };
-    save_settings_at(&path, &settings).unwrap();
-    assert_eq!(load_settings_at(&path), settings);
+    save_at(&path, &settings).unwrap();
+    assert_eq!(load_at(&path), settings);
 
     // 没选过主题时是 None，表示用默认的那套，而不是空字符串。
-    save_settings_at(&path, &AppSettings::default()).unwrap();
-    let loaded = load_settings_at(&path);
+    save_at(&path, &AppSettings::default()).unwrap();
+    let loaded = load_at(&path);
     assert_eq!(loaded.light_theme, None);
     assert_eq!(loaded.dark_theme, None);
     assert_eq!(
@@ -96,11 +89,11 @@ fn a_broken_file_falls_back_instead_of_failing_to_start() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
     std::fs::write(&path, "这不是 TOML {{{").unwrap();
-    assert_eq!(load_settings_at(&path), AppSettings::default());
+    assert_eq!(load_at(&path), AppSettings::default());
 
     // 未知的取值同样退回默认，而不是让应用起不来。
     std::fs::write(&path, "appearance = \"Rainbow\"\n").unwrap();
-    assert_eq!(load_settings_at(&path), AppSettings::default());
+    assert_eq!(load_at(&path), AppSettings::default());
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

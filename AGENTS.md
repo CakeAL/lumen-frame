@@ -12,12 +12,14 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 ## 目录与职责
 
 - `src/main.rs`：应用启动、窗口配置，以及打包后 `VIPS_LIBDIR` 的设置。
-- `src/lib.rs`：库模块和共享的 `Position` 枚举。
+- `src/lib.rs`：公开模块边界；水印模型集中在 `src/watermark.rs`。
 - `src/ui/`：GPUI 界面。`ui/mod.rs` 中的 `AppView` 是应用状态所有者；`preview.rs` 管理后台预览节奏；`preview_image.rs` 是图像管线到 GPUI 位图的边界。
 - `src/workspace.rs`：无 GPUI 依赖的照片队列状态、稳定 `PhotoId` 与选择规则；缩略图等展示缓存不得放入这里。
-- `src/photo.rs`：照片加载、EXIF 提取、整条水印合成与导出；也是 libvips 初始化的唯一入口。
-- `src/process/`：纯图像/文本处理细节：画布、阴影、圆角、Ultra HDR gain map 和 EXIF 文本渲染。
-- `src/config.rs` / `src/params.rs`：预设、应用设置及水印参数的序列化。
+- `src/photo.rs`：整条水印合成与导出用例；照片解码和 EXIF 读取分别由 `src/media/` 提供。
+- `src/render/`：水印渲染细节：画布、阴影、圆角和 EXIF 文字排版。
+- `src/gainmap.rs`：Ultra HDR gain map 元数据、MPF 标记和重建。
+- `src/features/`：拥有独立工作流的功能，例如 Motion Photo 与彩色 Gain Map。
+- `src/persistence/`：预设和应用设置的 TOML 持久化；`src/watermark.rs` 是水印输入模型。
 - `src/theme.rs` 与 `assets/themes/`：内置主题注册及主题 JSON。
 - `static/logo/`：EXIF 相机品牌对应的黑白 SVG 标志。
 - `tests/`：集成测试；`test_images/` 是受版本控制的真实图片夹具。
@@ -40,7 +42,7 @@ script/bundle-macos.sh
 
 ### libvips 生命周期与并发
 
-- **任何 libvips 调用前都必须通过 `photo::ensure_vips()`（或仅从已保证它的 `Photo` API）初始化。** 不要在 UI 或处理模块中自行创建/销毁 `VipsApp`。
+- **任何 libvips 调用前都必须通过 `media::ensure_vips()`（或仅从已保证它的媒体 API）初始化。** 不要在 UI 或渲染模块中自行创建/销毁 `VipsApp`。
 - libvips 在首次操作时有并发初始化风险；缩略图、预览和导出会在不同后台线程运行。修改相关代码后必须运行 `cargo test --test vips_init`。
 - `VipsImage` 依赖进程级 `VipsApp` 的存活期，不能引入会提前 `Drop` 该应用实例的设计。
 
@@ -54,14 +56,14 @@ script/bundle-macos.sh
 ### 预设、主题和素材
 
 - `WatermarkParams::output_folder` 是本机环境，不属于预设。载入预设时必须保留当前输出目录。
-- 预设名必须经 `config::file_name_for` 的安全规整；不要绕过它直接用用户输入拼路径。
+- 预设读写只通过 `persistence::presets`；不要绕过它直接用用户输入拼路径。
 - 主题的浅色和深色槽位独立保存；修改外观逻辑时要保留“跟随系统”的行为。
 - 新增/移除图片格式时，同时更新 `src/ui/queue.rs` 的支持列表、测试和打包文档；Windows `web` 版 libvips 不支持 HEIC、AVIF 与相机 RAW。
-- 新增相机品牌 Logo 时补齐浅/深色 SVG，并验证 `process/text.rs` 中的映射。
+- 新增相机品牌 Logo 时补齐浅/深色 SVG，并验证 `render/text.rs` 中的映射。
 
 ### Ultra HDR
 
-- 保留输入图的 gain map；水印输出需要由 `process/gain_map.rs` 重建只覆盖照片区域的 gain map。
+- 保留输入图的 gain map；水印输出需要由 `gainmap.rs` 重建只覆盖照片区域的 gain map。
 - 修改裁切、缩放、合成或导出逻辑时，使用 `test_images/ultra_hdr.jpg` 进行验证，避免将 HDR 图像悄然降为 SDR。
 
 ## 测试指引

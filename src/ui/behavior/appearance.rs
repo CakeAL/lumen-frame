@@ -3,7 +3,7 @@
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Context, SharedString, Window, WindowAppearance};
 
-use crate::config::{self, AppearanceMode};
+use crate::persistence::settings::{self as settings_store, AppearanceMode};
 
 use super::super::{AppView, page::settings};
 
@@ -59,7 +59,7 @@ impl AppView {
     }
 
     pub(in crate::ui::app) fn persist_settings_inner(&mut self) {
-        let settings = config::AppSettings {
+        let settings = settings_store::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
@@ -68,7 +68,7 @@ impl AppView {
             preview_background: self.preview_background,
             output_folder: self.params.output_folder.clone(),
         };
-        self.settings_feedback = config::save_settings(&settings)
+        self.settings_feedback = settings_store::save(&settings)
             .err()
             .map(|error| format!("偏好没能保存：{error:#}").into());
     }
@@ -79,7 +79,7 @@ impl AppView {
         self.dark_theme = None;
         self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
         self.preview_max_edge = settings::DEFAULT_PREVIEW_MAX_EDGE;
-        self.preview_background = config::DEFAULT_PREVIEW_BACKGROUND;
+        self.preview_background = settings_store::DEFAULT_PREVIEW_BACKGROUND;
         let (light, dark) = {
             let registry = ThemeRegistry::global(cx);
             (

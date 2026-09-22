@@ -1,18 +1,11 @@
-pub mod config;
-pub mod helper;
-pub mod params;
+pub mod features;
+pub mod gainmap;
+pub mod media;
+pub mod persistence;
 pub mod photo;
-pub mod process;
+pub mod render;
 pub mod theme;
 pub mod ui;
 pub mod update;
+pub mod watermark;
 pub mod workspace;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Position {
-    Center,
-    Up,
-    Right,
-    Bottom,
-    Left,
-}
