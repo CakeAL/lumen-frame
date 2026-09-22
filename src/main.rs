@@ -1,9 +1,48 @@
 //! Lumen Frame：为照片加上边框、阴影与 EXIF 文字水印。
 
+use std::borrow::Cow;
+
 use gpui_kit::component::*;
 use gpui_kit::*;
 
 use lumen_frame::ui::AppView;
+
+#[derive(Clone, Copy)]
+struct AppAssets;
+
+impl AssetSource for AppAssets {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        let bytes: Option<&'static [u8]> = match path {
+            "qr-code/wechat-reward-code.jpg" => {
+                Some(include_bytes!("../assets/qr_code/wechat_reward_code.jpg"))
+            }
+            "qr-code/rednote.jpg" => Some(include_bytes!("../assets/qr_code/rednote.jpg")),
+            "qr-code/bilibili.jpg" => Some(include_bytes!("../assets/qr_code/bilibili.jpg")),
+            _ => None,
+        };
+        if let Some(bytes) = bytes {
+            return Ok(Some(Cow::Borrowed(bytes)));
+        }
+        gpui_kit::assets::AllAssets.load(path)
+    }
+
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        let mut paths = gpui_kit::assets::AllAssets.list(path)?;
+        paths.extend(
+            [
+                "qr-code/wechat-reward-code.jpg",
+                "qr-code/rednote.jpg",
+                "qr-code/bilibili.jpg",
+            ]
+            .into_iter()
+            .filter(|asset| asset.starts_with(path))
+            .map(SharedString::from),
+        );
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
 
 /// 让 libvips 到应用包里找它的格式模块。
 ///
@@ -50,7 +89,7 @@ fn main() {
     point_vips_at_bundled_modules();
 
     let app = gpui_kit::application()
-        .with_assets(gpui_kit::assets::AllAssets)
+        .with_assets(AppAssets)
         // GPUI 的默认退出策略是 `QuitMode::Default`，它的定义就是
         // `cfg!(not(target_os = "macos"))` —— 也就是说 macOS 上关掉窗口后进程会留在
         // Dock 里，这是框架刻意的平台默认值。一个单窗口的照片工具没有「关掉窗口还继续
@@ -78,4 +117,26 @@ fn main() {
         })
         .detach();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppAssets;
+    use gpui_kit::AssetSource as _;
+
+    #[test]
+    fn qr_codes_are_embedded_in_the_application_assets() {
+        for path in [
+            "qr-code/wechat-reward-code.jpg",
+            "qr-code/rednote.jpg",
+            "qr-code/bilibili.jpg",
+        ] {
+            let bytes = AppAssets
+                .load(path)
+                .unwrap_or_else(|error| panic!("读取 {path} 失败：{error:#}"))
+                .unwrap_or_else(|| panic!("缺少内置素材：{path}"));
+            image::load_from_memory(&bytes)
+                .unwrap_or_else(|error| panic!("{path} 不是有效图片：{error}"));
+        }
+    }
 }

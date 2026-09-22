@@ -204,6 +204,31 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     view.update_in(cx, |view, _, cx| view.go_to(AppPage::Settings, cx));
     cx.run_until_parked();
 
+    let preferences = cx
+        .debug_bounds("settings-preferences")
+        .expect("设置选项栏没有渲染");
+    let about_panel = cx
+        .debug_bounds("settings-about-panel")
+        .expect("关于栏没有渲染");
+    assert!(
+        about_panel.size.width.as_f32() >= preferences.size.width.as_f32() * 0.9,
+        "关于栏应当和设置选项栏大致等宽：左侧 {:?}，右侧 {:?}",
+        preferences.size.width,
+        about_panel.size.width,
+    );
+
+    // 关于区域的二维码默认收起；三个稳定触发器都必须能展开而不破坏设置页布局。
+    cx.update(|window, cx| {
+        window.click("settings-sponsor-toggle", cx);
+        window.click("settings-rednote-toggle", cx);
+        window.click("settings-bilibili-toggle", cx);
+    });
+    cx.run_until_parked();
+
+    let _wechat = cx
+        .debug_bounds("settings-sponsor-image")
+        .expect("展开赞助信息后没有显示微信二维码");
+
     view.update_in(cx, |view, _, cx| view.go_to(AppPage::Watermark, cx));
     cx.run_until_parked();
 

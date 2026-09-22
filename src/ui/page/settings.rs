@@ -7,16 +7,22 @@
 //! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IndexPath, Theme, ThemeMode,
+    ActiveTheme as _, Disableable as _, IconName, IndexPath, Theme, ThemeMode,
     button::{Button, ButtonVariants as _},
+    collapsible::Collapsible,
     group_box::GroupBox,
     h_flex,
+    link::Link,
     radio::RadioGroup,
+    scroll::ScrollableElement as _,
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{App, Context, Entity, FontWeight, SharedString, Subscription, Window, div, px};
+use gpui_kit::{
+    AnyElement, App, Context, Entity, FontWeight, ObjectFit, SharedString, Subscription, Window,
+    div, img, px, relative,
+};
 
 use crate::persistence::settings::AppearanceMode;
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
@@ -59,6 +65,9 @@ pub(in crate::ui::app) struct SettingsControls {
     pub dark_theme: Entity<ThemeSelect>,
     pub preview_background: ColorField,
     pub preview_max_edge: NumberField,
+    sponsor_open: bool,
+    rednote_open: bool,
+    bilibili_open: bool,
 }
 
 impl SettingsControls {
@@ -115,6 +124,9 @@ impl SettingsControls {
                 dark_theme,
                 preview_background,
                 preview_max_edge,
+                sponsor_open: false,
+                rednote_open: false,
+                bilibili_open: false,
             },
             subscriptions,
         )
@@ -162,7 +174,126 @@ const APPEARANCES: &[(&str, AppearanceMode)] = &[
     ("深色", AppearanceMode::Dark),
 ];
 
+const ISSUES_URL: &str = "https://github.com/CakeAL/lumen-frame/issues";
+const REDNOTE_URL: &str = "https://www.xiaohongshu.com/user/profile/64db20ba0000000001006e6c";
+const BILIBILI_URL: &str = "https://space.bilibili.com/13161874";
+
+#[derive(Clone, Copy)]
+enum AboutDisclosure {
+    Sponsor,
+    Rednote,
+    Bilibili,
+}
+
+impl AboutDisclosure {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Sponsor => "settings-sponsor",
+            Self::Rednote => "settings-rednote",
+            Self::Bilibili => "settings-bilibili",
+        }
+    }
+
+    const fn asset(self) -> &'static str {
+        match self {
+            Self::Sponsor => "qr-code/wechat-reward-code.jpg",
+            Self::Rednote => "qr-code/rednote.jpg",
+            Self::Bilibili => "qr-code/bilibili.jpg",
+        }
+    }
+}
+
 impl AppView {
+    fn about_disclosure_is_open(&self, disclosure: AboutDisclosure) -> bool {
+        match disclosure {
+            AboutDisclosure::Sponsor => self.settings.sponsor_open,
+            AboutDisclosure::Rednote => self.settings.rednote_open,
+            AboutDisclosure::Bilibili => self.settings.bilibili_open,
+        }
+    }
+
+    fn toggle_about_disclosure(&mut self, disclosure: AboutDisclosure, cx: &mut Context<Self>) {
+        let open = match disclosure {
+            AboutDisclosure::Sponsor => &mut self.settings.sponsor_open,
+            AboutDisclosure::Rednote => &mut self.settings.rednote_open,
+            AboutDisclosure::Bilibili => &mut self.settings.bilibili_open,
+        };
+        *open = !*open;
+        cx.notify();
+    }
+
+    fn render_qr_disclosure(
+        &self,
+        disclosure: AboutDisclosure,
+        label: &'static str,
+        href: Option<&'static str>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let open = self.about_disclosure_is_open(disclosure);
+        let image = img(disclosure.asset())
+            .size_full()
+            .object_fit(ObjectFit::Contain)
+            .rounded(cx.theme().radius);
+        let image = if let Some(href) = href {
+            Link::new(format!("{}-image", disclosure.id()))
+                .href(href)
+                .size_full()
+                .child(image)
+                .into_any_element()
+        } else {
+            image.into_any_element()
+        };
+        let image_selector = format!("{}-image", disclosure.id());
+        let image = div()
+            .debug_selector(move || image_selector.clone().into())
+            .w_full()
+            .max_w_80()
+            .h_128()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .child(image);
+
+        Collapsible::new()
+            .w_full()
+            .open(open)
+            .child(
+                Button::new(format!("{}-toggle", disclosure.id()))
+                    .label(label)
+                    .icon(if open {
+                        IconName::ChevronUp
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .outline()
+                    .w_full()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_about_disclosure(disclosure, cx)
+                    })),
+            )
+            .content(
+                v_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_3()
+                    .pt_3()
+                    .child(image)
+                    .when_some(href, |this, href| {
+                        this.child(
+                            Button::new(format!("{}-open-profile", disclosure.id()))
+                                .label("打开主页")
+                                .icon(IconName::ExternalLink)
+                                .ghost()
+                                .w_full()
+                                .on_click(move |_, _, cx| cx.open_url(href)),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
     /// 一个配色槽位的下拉。两个槽位长一样，只有标题和来源状态不同。
     fn render_theme_slot(&self, mode: ThemeMode, cx: &Context<Self>) -> impl IntoElement {
         let (label, state) = match mode {
@@ -233,7 +364,9 @@ impl AppView {
                     .child(
                         v_flex()
                             .id("settings-preferences")
-                            .flex_1()
+                            .debug_selector(|| "settings-preferences".into())
+                            .w(relative(0.7))
+                            .flex_shrink_0()
                             .min_w_0()
                             .overflow_y_scroll()
                             .gap_6()
@@ -413,64 +546,111 @@ impl AppView {
                     )
                     .child(
                         v_flex()
-                            .w_1_3()
+                            .id("settings-about-panel")
+                            .debug_selector(|| "settings-about-panel".into())
+                            .w_80()
                             .flex_shrink_0()
+                            .overflow_y_scrollbar()
+                            .gap_6()
                             .border_l_1()
                             .border_color(cx.theme().border)
                             .p_6()
                             .child(
-                                v_flex()
+                                GroupBox::new()
+                                    .id("settings-about")
                                     .w_full()
+                                    .title("关于")
                                     .child(
-                                        GroupBox::new()
-                                            .id("settings-about")
-                                            .title("关于")
+                                        div()
+                                            .text_sm()
+                                            .text_color(cx.theme().foreground)
+                                            .child(format!(
+                                                "Lumen Frame {}",
+                                                env!("CARGO_PKG_VERSION")
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
                                             .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(cx.theme().foreground)
-                                                    .child(format!(
-                                                        "Lumen Frame {}",
-                                                        env!("CARGO_PKG_VERSION")
+                                                "基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .w_full()
+                                            .gap_2()
+                                            .pt_2()
+                                            .child(
+                                                Button::new("settings-check-update")
+                                                    .label(update_label)
+                                                    .w_full()
+                                                    .disabled(update_disabled)
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.check_for_updates(window, cx)
+                                                        },
                                                     )),
                                             )
                                             .child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
-                                                    ),
-                                            )
-                                            .child(
-                                                v_flex()
-                                                    .w_full()
-                                                    .gap_2()
-                                                    .pt_2()
-                                                    .child(
-                                                        Button::new("settings-check-update")
-                                                            .label(update_label)
-                                                            .w_full()
-                                                            .disabled(update_disabled)
-                                                            .on_click(cx.listener(
-                                                                |this, _, window, cx| {
-                                                                    this.check_for_updates(
-                                                                        window, cx,
-                                                                    )
-                                                                },
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                            .child(update_status),
-                                                    ),
+                                                    .child(update_status),
                                             ),
-                            ),
-                            ),
+                                    ),
+                            )
+                            .child(
+                                GroupBox::new()
+                                    .id("settings-wishing-well")
+                                    .w_full()
+                                    .title("许愿池")
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("许愿新功能 / 反馈 Bug"),
+                                    )
+                                    .child(
+                                        Button::new("settings-open-issues")
+                                            .label("前往 GitHub Issues")
+                                            .icon(IconName::ExternalLink)
+                                            .outline()
+                                            .w_full()
+                                            .on_click(|_, _, cx| cx.open_url(ISSUES_URL)),
+                                    ),
+                            )
+                            .child(
+                                GroupBox::new()
+                                    .id("settings-sponsor-group")
+                                    .w_full()
+                                    .title("赞助")
+                                    .child(self.render_qr_disclosure(
+                                        AboutDisclosure::Sponsor,
+                                        "WeChat",
+                                        None,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                GroupBox::new()
+                                    .id("settings-social-platforms")
+                                    .w_full()
+                                    .title("关注我的社交平台")
+                                    .child(self.render_qr_disclosure(
+                                        AboutDisclosure::Rednote,
+                                        "小红书",
+                                        Some(REDNOTE_URL),
+                                        cx,
+                                    ))
+                                    .child(self.render_qr_disclosure(
+                                        AboutDisclosure::Bilibili,
+                                        "Bilibili",
+                                        Some(BILIBILI_URL),
+                                        cx,
+                                    )),
+                            )
                     ),
             )
     }
