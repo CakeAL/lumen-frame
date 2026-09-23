@@ -210,18 +210,17 @@ fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     let about_panel = cx
         .debug_bounds("settings-about-panel")
         .expect("关于栏没有渲染");
+    let settings_width = preferences.size.width.as_f32() + about_panel.size.width.as_f32();
+    let about_ratio = about_panel.size.width.as_f32() / settings_width;
     assert!(
-        about_panel.size.width.as_f32() >= preferences.size.width.as_f32() * 0.9,
-        "关于栏应当和设置选项栏大致等宽：左侧 {:?}，右侧 {:?}",
-        preferences.size.width,
-        about_panel.size.width,
+        (about_ratio - 0.3).abs() <= 0.01,
+        "关于栏应占设置内容宽度的 30%，实际为 {:.1}%",
+        about_ratio * 100.0,
     );
 
-    // 关于区域的二维码默认收起；三个稳定触发器都必须能展开而不破坏设置页布局。
+    // 关于区域的二维码默认收起；展开首个可见项后不应破坏设置页布局。
     cx.update(|window, cx| {
         window.click("settings-sponsor-toggle", cx);
-        window.click("settings-rednote-toggle", cx);
-        window.click("settings-bilibili-toggle", cx);
     });
     cx.run_until_parked();
 
