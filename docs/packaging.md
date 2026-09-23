@@ -16,13 +16,33 @@
 ## macOS
 
 ```bash
-brew install dylibbundler
-script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
+brew install dylibbundler create-dmg
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+script/bundle-macos.sh arm64    # Apple Silicon DMG
+script/bundle-macos.sh x86_64   # Intel DMG
+script/bundle-macos.sh all      # 两套环境齐全时依次构建二者
 ```
 
-脚本做六件事：
+不传架构时构建当前 Mac 对应的版本。两种架构保持为独立安装包，不会合并成 Universal Binary：
 
-1. `cargo build --release`
+```
+dist/Lumen-Frame-0.1.0-macOS-arm64.dmg
+dist/Lumen-Frame-0.1.0-macOS-x86_64.dmg
+```
+
+脚本使用 `create-dmg` 排列应用与 Applications 快捷方式，并直接将 660×400 的
+`assets/bg.svg` 设为 Finder 背景。
+
+每个架构必须链接同架构的 Homebrew/libvips。默认查找位置是 Apple Silicon 的
+`/opt/homebrew/bin/brew` 和 Intel 的 `/usr/local/bin/brew`，也可以用 `BREW_ARM64`、
+`BREW_X86_64` 指定其它位置。若在 Apple Silicon 机器交叉构建 Intel 版本，需要另外安装
+Rosetta 2 和 x86_64 Homebrew，并由后者安装 `vips`、`glib`、`gettext`。脚本会用 `lipo`
+检查主程序、vips 模块及所有随附动态库，架构混用会立即报错，不会生成伪装成 Intel 的 DMG。
+
+脚本做七件事：
+
+1. 按所选架构执行 `cargo build --release --target …`
 2. 建 `.app` 骨架 + `Info.plist`，并复制 `assets/app-icon/LumenFrame.icns` 作为兼容图标
 3. 复制需要运行期加载的 vips 格式模块，并将主程序和这些模块一并传给 `dylibbundler`
 4. `dylibbundler` 递归收集非系统动态库到 `Contents/Frameworks/`，并将引用改为
@@ -32,8 +52,9 @@ script/bundle-macos.sh          # 产物：dist/Lumen Frame.app
    最后封签整个 `.app`（`codesign --force -s -`）。
    `dylibbundler` 1.0.5 可能在某些库留下重复 rpath，dyld 会拒绝加载它；它调用
    `install_name_tool` 也会让原签名失效，Apple Silicon 上不重签根本加载不了
-6. 校验：任何漏网的绝对路径依赖、或无法在包内解析的 `@executable_path` / `@loader_path`
-   都**报错退出**
+6. 校验：包内所有 Mach-O 都是目标架构；任何漏网的绝对路径依赖、或无法在包内解析的
+   `@executable_path` / `@loader_path` 都**报错退出**
+7. 使用 `assets/bg.svg` 和 `create-dmg` 生成带 Applications 拖放入口的 DMG
 
 `dylibbundler` 通过 Homebrew 安装。脚本将 vips、glib 与 gettext 的 `lib/` 目录作为搜索路径，
 因为 Homebrew 库的依赖可能是 `@rpath` 形式。需要新增其它运行期插件时，要把该插件也加入

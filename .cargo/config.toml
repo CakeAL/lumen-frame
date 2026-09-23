@@ -16,9 +16,9 @@ rustflags = [
 
 [target.x86_64-apple-darwin]
 rustflags = [
-    "-L", "/opt/homebrew/opt/vips/lib",
-    "-L", "/opt/homebrew/opt/glib/lib",
-    "-L", "/opt/homebrew/opt/gettext/lib",
+    "-L", "/usr/local/opt/vips/lib",
+    "-L", "/usr/local/opt/glib/lib",
+    "-L", "/usr/local/opt/gettext/lib",
 ]
 
 # Windows：指向解压官方预编译包之后的 `lib\` 目录（里面有 vips.lib / glib-2.0.lib …）。
