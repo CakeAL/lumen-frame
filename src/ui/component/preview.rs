@@ -7,8 +7,8 @@
 use std::{sync::Arc, time::Duration};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, Size, StyledExt as _, h_flex, spinner::Spinner,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, StyledExt as _,
+    button::Button, h_flex, spinner::Spinner, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, ObjectFit, RenderImage, SharedString, Task, div, img};
@@ -186,7 +186,25 @@ impl AppView {
                     .text_color(cx.theme().foreground)
                     .child(title.unwrap_or_else(|| "预览".into())),
             )
-            .child(self.render_preview_status(cx))
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .child(self.render_preview_status(cx))
+                    .child(
+                        Button::new("preview-exif")
+                            .icon(IconName::Info)
+                            .label("EXIF 信息…")
+                            .outline()
+                            .small()
+                            .disabled(self.selected_photo_id().is_none())
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_exif_editor(window, cx)
+                                }),
+                            ),
+                    ),
+            )
     }
 
     /// 只在预览不是最新的时候说话：正在算就说正在算，失败就说失败。

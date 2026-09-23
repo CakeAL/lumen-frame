@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::{cell::RefCell, rc::Rc};
 
-use gpui_kit::component::Root;
+use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AppContext as _, Entity, ExternalPaths, FileDropEvent, InputEvent as _, ScrollDelta,
@@ -101,6 +101,22 @@ fn dropped_photos_reach_the_queue_and_the_preview(cx: &mut TestAppContext) {
         view.add_photos(vec![PathBuf::from(PHOTO)], cx);
     });
     assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 1);
+}
+
+/// 当前照片的 EXIF 入口应打开可编辑 Sheet，而不是跳离预览页。
+#[gpui_kit::test]
+fn exif_editor_opens_for_the_selected_photo(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    view.update_in(cx, |view, _, cx| {
+        view.add_photos(vec![PathBuf::from(PHOTO)], cx);
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.click("preview-exif", cx);
+        window.render_frame(cx);
+        assert!(window.has_active_sheet(cx));
+    });
 }
 
 #[gpui_kit::test]

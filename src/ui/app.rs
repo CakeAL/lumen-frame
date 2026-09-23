@@ -815,10 +815,11 @@ impl AppView {
 
             this.update(cx, |this, cx| {
                 let is_selected = this.workspace.selected_id() == Some(id);
-                if let Some(photo) = this.workspace.photo_mut(id) {
-                    photo.set_exif(exif);
-                }
-                if is_selected {
+                let changed = this
+                    .workspace
+                    .photo_mut(id)
+                    .is_some_and(|photo| photo.set_loaded_exif(exif));
+                if is_selected && changed {
                     this.refresh_preview(cx);
                 }
                 cx.notify();

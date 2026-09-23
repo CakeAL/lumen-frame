@@ -40,7 +40,10 @@ impl Display for Rational {
                 }
             }
             Rational::Float(value) => {
-                if value < &1.0 {
+                // 只有正的小数才可能表示以秒计的快门速度。负数通常是曝光补偿；把它
+                // 取倒数再转成 u32 会饱和成 4294967295，最终显示为无效的
+                // `1/4294967295`。
+                if value.is_finite() && *value > 0.0 && *value < 1.0 {
                     write!(formatter, "1/{}", (1.0 / value).round() as u32)
                 } else {
                     write!(formatter, "{}", format_value(*value))
@@ -179,4 +182,16 @@ fn format_value(value: &EntryValue) -> Option<Rational> {
         return Some(Rational::Fraction(numerator, denominator));
     }
     value.try_as_float().map(Rational::Float)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rational;
+
+    #[test]
+    fn float_display_only_uses_reciprocal_for_positive_shutter_values() {
+        assert_eq!(Rational::Float(1.0 / 400.0).to_string(), "1/400");
+        assert_eq!(Rational::Float(-1.0 / 3.0).to_string(), "-0.33");
+        assert_eq!(Rational::Float(0.0).to_string(), "0");
+    }
 }

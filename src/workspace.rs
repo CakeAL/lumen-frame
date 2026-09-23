@@ -26,6 +26,7 @@ pub struct QueuedPhoto {
     id: PhotoId,
     path: PathBuf,
     exif: Option<ExifInfo>,
+    exif_edited: bool,
 }
 
 impl QueuedPhoto {
@@ -41,8 +42,24 @@ impl QueuedPhoto {
         self.exif.as_ref()
     }
 
-    pub fn set_exif(&mut self, exif: Option<ExifInfo>) {
+    /// 用户对 EXIF 做过覆盖时，导出应使用这份值；否则仍由照片读取流程获取原始 EXIF。
+    pub fn exif_override(&self) -> Option<&ExifInfo> {
+        self.exif_edited.then_some(self.exif.as_ref()).flatten()
+    }
+
+    /// 写入后台读取结果。用户已经编辑过时，迟到的读取任务不得覆盖编辑值。
+    pub fn set_loaded_exif(&mut self, exif: Option<ExifInfo>) -> bool {
+        if self.exif_edited {
+            return false;
+        }
         self.exif = exif;
+        true
+    }
+
+    /// 用用户编辑结果替换当前 EXIF，后续后台读取结果不再覆盖它。
+    pub fn replace_exif(&mut self, exif: ExifInfo) {
+        self.exif = Some(exif);
+        self.exif_edited = true;
     }
 }
 
@@ -98,6 +115,7 @@ impl PhotoWorkspace {
             id,
             path,
             exif: None,
+            exif_edited: false,
         });
         Some(id)
     }
@@ -169,5 +187,37 @@ mod tests {
         assert!(workspace.add(PathBuf::from("same.jpg")).is_some());
         assert_eq!(workspace.add(PathBuf::from("same.jpg")), None);
         assert_eq!(workspace.len(), 1);
+    }
+
+    #[test]
+    fn loaded_exif_does_not_replace_a_user_edit() {
+        let mut workspace = PhotoWorkspace::default();
+        let id = workspace.add(PathBuf::from("photo.jpg")).unwrap();
+        let photo = workspace.photo_mut(id).unwrap();
+        assert!(photo.set_loaded_exif(Some(ExifInfo {
+            model: Some("初始型号".to_owned()),
+            ..Default::default()
+        })));
+        assert!(
+            photo.exif_override().is_none(),
+            "仅从文件读取的 EXIF 不应成为导出覆盖值"
+        );
+        photo.replace_exif(ExifInfo {
+            model: Some("手动型号".to_owned()),
+            ..Default::default()
+        });
+
+        assert!(!photo.set_loaded_exif(Some(ExifInfo {
+            model: Some("文件型号".to_owned()),
+            ..Default::default()
+        })));
+        assert_eq!(
+            photo.exif().and_then(|exif| exif.model.as_deref()),
+            Some("手动型号")
+        );
+        assert_eq!(
+            photo.exif_override().and_then(|exif| exif.model.as_deref()),
+            Some("手动型号")
+        );
     }
 }

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use gpui_kit::component::{WindowExt as _, notification::Notification};
 use gpui_kit::{Context, Window, prelude::*};
 
+use crate::media::ExifInfo;
 use crate::photo::Photo;
 
 use super::super::{AppView, ExportState};
@@ -27,13 +28,13 @@ impl AppView {
 
         let params = self.params.clone();
         let text_groups = self.build_text_groups(cx);
-        let paths: Vec<PathBuf> = self
+        let photos: Vec<(PathBuf, Option<ExifInfo>)> = self
             .workspace
             .photos()
             .iter()
-            .map(|photo| photo.path().to_path_buf())
+            .map(|photo| (photo.path().to_path_buf(), photo.exif_override().cloned()))
             .collect();
-        let total = paths.len();
+        let total = photos.len();
         let window_handle = window.window_handle();
 
         self.export = ExportState::Running {
@@ -44,12 +45,16 @@ impl AppView {
 
         cx.spawn(async move |this, cx| {
             let mut succeeded = 0usize;
-            for (ix, path) in paths.into_iter().enumerate() {
+            for (ix, (path, exif)) in photos.into_iter().enumerate() {
                 let params = params.clone();
                 let text_groups = text_groups.clone();
                 let result = cx
                     .background_spawn(async move {
-                        let photo = Photo::open_blocking(&path)?;
+                        let mut photo = Photo::open_blocking(&path)?;
+                        // 只有用户编辑过时才覆盖，未编辑的照片仍使用打开文件时读到的 EXIF。
+                        if let Some(exif) = exif {
+                            photo.exif = Some(exif);
+                        }
                         let watermark = photo.generate_watermark(&params, &text_groups)?;
                         photo.save_image(&params, &watermark)
                     })
