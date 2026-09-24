@@ -41,12 +41,30 @@ if (-not (Test-Path $appIcon)) {
 
 Say 'cargo build --release（会将 LumenFrame.ico 嵌入 exe）'
 Push-Location $root
-try { cargo build --release } finally { Pop-Location }
+try {
+    cargo build --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo build --release 失败（退出码 $LASTEXITCODE）" }
+} finally { Pop-Location }
 
 # ------------------------------------------------------------------ 2. 组装
 
 Say "输出到 $outDir"
-if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
+$distRoot = [IO.Path]::GetFullPath((Join-Path $root 'dist'))
+$resolvedOutDir = [IO.Path]::GetFullPath($outDir)
+if (-not $resolvedOutDir.StartsWith($distRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "输出目录不在 dist 内：$resolvedOutDir"
+}
+if (Test-Path $distRoot) {
+    if ((Get-Item -LiteralPath $distRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "dist 目录是重解析点，拒绝递归删除：$distRoot"
+    }
+}
+if (Test-Path $outDir) {
+    if ((Get-Item -LiteralPath $outDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw "输出目录是重解析点，拒绝递归删除：$outDir"
+    }
+    Remove-Item -LiteralPath $outDir -Recurse -Force
+}
 New-Item -ItemType Directory -Path $outDir | Out-Null
 
 Copy-Item (Join-Path $root "target\release\$exeName") $outDir
@@ -73,25 +91,42 @@ Say '校验：主程序、随附 DLL 与 vips 插件的导入都必须在输出�
 # dumpbin 来自 Visual Studio，objdump 来自 MinGW —— 用哪个取决于本机工具链。
 $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
 $objdump = Get-Command objdump.exe -ErrorAction SilentlyContinue
+if (-not $dumpbin -and -not $objdump) {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path -LiteralPath $vswhere) {
+        $vsInstall = & $vswhere -latest -prerelease -products '*' -property installationPath
+        if ($vsInstall) {
+            $dumpbinPath = Get-ChildItem -LiteralPath (Join-Path $vsInstall 'VC\Tools\MSVC') -Filter dumpbin.exe -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match 'Hostx64\\x64\\dumpbin\.exe$' } |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+            if ($dumpbinPath) { $dumpbin = Get-Command $dumpbinPath }
+        }
+    }
+}
 
 # 系统 DLL 由 Windows 提供，其余必须随包分发。
 $systemPrefixes = @('api-ms-', 'ext-ms-', 'kernel32', 'user32', 'gdi32', 'advapi32',
-    'shell32', 'ole32', 'oleaut32', 'ws2_32', 'bcrypt', 'ntdll', 'crypt32',
-    'dwmapi', 'uxtheme', 'comdlg32', 'winmm', 'imm32', 'd3d', 'dxgi', 'opengl32',
+    'shell32', 'ole32', 'oleaut32', 'combase', 'comctl32', 'ws2_32', 'bcrypt', 'ntdll', 'crypt32',
+    'dwmapi', 'dcomp', 'uxtheme', 'comdlg32', 'winmm', 'imm32', 'd3d', 'dxgi', 'opengl32',
     'msvcrt', 'vcruntime', 'ucrtbase', 'shlwapi', 'version', 'setupapi', 'cfgmgr32',
     'propsys', 'wintrust', 'userenv', 'powrprof', 'rpcrt4', 'secur32', 'dnsapi',
     'iphlpapi', 'netapi32', 'wtsapi32', 'mswsock', 'normaliz', 'pdh', 'psapi',
     'd2d1', 'windowscodecs', 'wldap32', 'dbghelp', 'ksuser', 'avrt', 'mfplat',
-    'mfuuid', 'mfreadwrite', 'gdiplus', 'msimg32', 'usp10', 'dwrite')
+    'mfuuid', 'mfreadwrite', 'gdiplus', 'msimg32', 'usp10', 'dwrite', 'icuuc', 'uiautomationcore')
 
 function Get-Imports([string]$path) {
     if ($dumpbin) {
-        return @(& $dumpbin /dependents $path |
+        $output = & $dumpbin /dependents $path
+        if ($LASTEXITCODE -ne 0) { throw "dumpbin 无法读取 $path（退出码 $LASTEXITCODE）" }
+        return @($output |
             Select-String -Pattern '^\s+(\S+\.dll)\s*$' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
     }
     if ($objdump) {
-        return @(& $objdump -p $path |
+        $output = & $objdump -p $path
+        if ($LASTEXITCODE -ne 0) { throw "objdump 无法读取 $path（退出码 $LASTEXITCODE）" }
+        return @($output |
             Select-String -Pattern 'DLL Name:\s*(\S+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
     }
@@ -99,7 +134,7 @@ function Get-Imports([string]$path) {
 }
 
 if (-not $dumpbin -and -not $objdump) {
-    Write-Warning '找不到 dumpbin 或 objdump，跳过导入表校验（建议装 Visual Studio Build Tools 或 MinGW）。'
+    throw '找不到 dumpbin 或 objdump，无法校验发布包的 DLL 导入表'
 } else {
     # vips 的格式插件也是运行期加载的 DLL；扫描整个输出树，才能发现它们缺失的依赖。
     $binaries = @(Get-ChildItem $outDir -Recurse -File | Where-Object {
@@ -135,6 +170,12 @@ Write-Host ('  文件：{0} 个' -f (Get-ChildItem $outDir -Recurse -File).Count
 
 if ($Variant -eq 'web') {
     Write-Host ''
-    Write-Host '  注意：web 变体不含 libheif / libraw，因此不支持 HEIC/AVIF 与相机 RAW。' -ForegroundColor Yellow
-    Write-Host '        界面的文件选择器目前仍会接受这些扩展名，建议按变体调整支持列表。' -ForegroundColor Yellow
+    if (Test-Path (Join-Path $outDir 'libheif.dll')) {
+        Write-Host '  本包包含 libheif；HEIC/AVIF 加载器还需用真实样张验证。' -ForegroundColor Yellow
+    } else {
+        Write-Host '  本包未包含 libheif，不支持 HEIC/AVIF。' -ForegroundColor Yellow
+    }
+    if (-not (Test-Path (Join-Path $outDir 'libraw.dll'))) {
+        Write-Host '  本包未包含 libraw，不支持相机 RAW。' -ForegroundColor Yellow
+    }
 }

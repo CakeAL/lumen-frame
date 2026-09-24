@@ -125,8 +125,8 @@ Frameworks 里各块的归属：
 
 ## Windows
 
-> 这一节和 `script/bundle-windows.ps1` 是**按官方文档写的，但在 Windows 上实测过之前
-> 不能算数** —— 我手上没有 Windows 环境。
+已在 Windows x64/MSVC 上用 libvips 8.18.6 开发包完成 Release 构建、DLL 导入校验、
+ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚本的 libvips 包。
 
 ### 准备 libvips
 
@@ -158,23 +158,24 @@ Frameworks 里各块的归属：
 `assets/app-icon/LumenFrame.ico` 嵌入 `lumen-frame.exe`。ICO 内含 16–256 px 的 8 组尺寸，
 因此资源管理器、任务栏和快捷方式可以各自选择合适分辨率。
 
-```
-$env:RUSTFLAGS = "-L C:\vips\vips-dev-w64-web-8.18.6\lib"
+```powershell
+# 本项目的 .cargo/config.toml 会从同级 ../vcpkg 找 vips:x64-windows。
+# 如果 vcpkg 不在该位置，请先设置 VCPKG_ROOT。
 cargo build --release
 ```
 
 ### 打包
 
 ```powershell
-.\script\bundle-windows.ps1 -VipsDir C:\vips\vips-dev-w64-web-8.18.6 -Variant web
+.\script\bundle-windows.ps1 -VipsDir .\vips-dev-8.18 -Variant web
 ```
 
 产物是 `dist\lumen-frame\`，直接整个目录发出去即可 —— 里面的 exe 和 DLL 并排放着，
 Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重签名。
 
 脚本会扫描 exe、随附 DLL 和 vips 格式插件的导入表（`dumpbin /dependents` 或 `objdump -p`），
-确认每个非系统 DLL 都在输出目录里，缺一个就报错退出。Windows DLL 搜索会优先查找 exe
-目录，因此这里不需要也不应采用 macOS 那种 install-name 改写。
+确认每个非系统 DLL 都在输出目录里，缺一个就报错退出；找不到检查工具时也会停止。
+Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那种 install-name 改写。
 
 ### 还需要注意
 
@@ -185,8 +186,8 @@ Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重�
   建议用 Windows 机器或 CI 的 `windows-latest` runner 出包。
 - 配置和预设走 `dirs::config_dir()`，Windows 上是 `%APPDATA%\lumen-frame\presets`，
   代码不需要改。
-- GPUI 支持 Windows（`gpui_windows::WindowsPlatform`），但**这个应用没在 Windows 上跑过**，
-  首次移植要留出验证时间。
+- 已验证打包程序可在不包含 vcpkg 或开发包路径的 PATH 下启动；发布前仍应手动检查
+  设置、照片预览、导出，以及 HEIC/AVIF 等所宣称支持的格式。
 
 ---
 
