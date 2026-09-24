@@ -1,0 +1,7 @@
+{
+  "name": "vips",
+  "version": "8.18.6",
+  "description": "Local libvips 8.18.6 Windows development binary for the vips Rust sample",
+  "license": "LGPL-2.1-or-later",
+  "supports": "windows & x64"
+}

@@ -3,3 +3,4 @@
 /test_images/watermark
 # 打包产物（自带 libvips 的 .app）
 /dist
+/vips-dev-8.18
