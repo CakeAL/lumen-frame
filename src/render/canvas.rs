@@ -1,7 +1,5 @@
-use libvips::{
-    Result, VipsImage,
-    ops::{self, BlackOptions},
-};
+use crate::media::vips::{VipsImage, from_owned_ptr, image_op};
+use vips::{Result, VipsBandFormat, VipsBlendMode, VipsInterpretation};
 
 use crate::watermark::{Placement, WatermarkParams};
 
@@ -71,16 +69,32 @@ pub fn new_canvas(
     img: &VipsImage,
     params: &WatermarkParams,
 ) -> Result<VipsImage> {
-    let (img_w, img_h) = (img.get_width(), img.get_height());
+    let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let canvas = if params.solid_background {
         // 纯色背景
         let [r, g, b] = params.background;
-        let background = ops::black_with_opts(canvas_w, canvas_h, &BlackOptions { bands: 3 })?;
-        ops::linear(
-            &background,
-            &mut [1.0, 1.0, 1.0],
-            &mut [r as f64, g as f64, b as f64],
-        )
+        let background = image_op(|out| unsafe {
+            vips_sys::vips_black(
+                out,
+                canvas_w,
+                canvas_h,
+                c"bands".as_ptr(),
+                3_i32,
+                std::ptr::null::<i8>(),
+            )
+        })?;
+        let a = [1.0; 3];
+        let b = [r as f64, g as f64, b as f64];
+        image_op(|out| unsafe {
+            vips_sys::vips_linear(
+                background.as_ptr(),
+                out,
+                a.as_ptr(),
+                b.as_ptr(),
+                3,
+                std::ptr::null::<i8>(),
+            )
+        })
     } else {
         // 模糊背景
         // 1. 计算缩放比例，使原图完全覆盖画布 (Cover 模式)
@@ -89,27 +103,36 @@ pub fn new_canvas(
             canvas_h as f64 / img_h as f64,
         );
         // 2. 等比缩放原图
-        let scaled_img = ops::resize(img, scale)?;
+        let scaled_img = img.resize(scale, None, None)?;
         // 3. 从缩放后的图片中心裁剪出画布大小（居中裁剪）
-        let (scaled_w, scaled_h) = (scaled_img.get_width(), scaled_img.get_height());
+        let (scaled_w, scaled_h) = (scaled_img.width() as i32, scaled_img.height() as i32);
         let crop_x = (scaled_w - canvas_w) / 2;
         let crop_y = (scaled_h - canvas_h) / 2;
-        let background_img = ops::extract_area(&scaled_img, crop_x, crop_y, canvas_w, canvas_h)?;
+        let background_img = image_op(|out| unsafe {
+            vips_sys::vips_extract_area(
+                scaled_img.as_ptr(),
+                out,
+                crop_x,
+                crop_y,
+                canvas_w,
+                canvas_h,
+                std::ptr::null::<i8>(),
+            )
+        })?;
         // 4. 对裁剪后的背景图片应用高斯模糊
-        ops::gaussblur(&background_img, params.blur_sigma)
+        image_op(|out| unsafe {
+            vips_sys::vips_gaussblur(
+                background_img.as_ptr(),
+                out,
+                params.blur_sigma,
+                std::ptr::null::<i8>(),
+            )
+        })
     }?;
-    let canvas = ops::addalpha(&canvas)?;
-    let canvas = ops::cast(&canvas, ops::BandFormat::Uchar)?;
-    let canvas = ops::copy_with_opts(
-        &canvas,
-        &ops::CopyOptions {
-            width: canvas_w,
-            height: canvas_h,
-            bands: 4,
-            interpretation: ops::Interpretation::Srgb,
-            ..Default::default()
-        },
-    )?;
+    let canvas = image_op(|out| unsafe {
+        vips_sys::vips_addalpha(canvas.as_ptr(), out, std::ptr::null::<i8>())
+    })?;
+    let canvas = rgba_srgb(&canvas, canvas_w, canvas_h)?;
     Ok(canvas)
 }
 
@@ -121,7 +144,7 @@ pub fn add_shadow(
     img_x: i32,
     img_y: i32,
 ) -> Result<VipsImage> {
-    let (img_w, img_h) = (img.get_width(), img.get_height());
+    let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let shadow_size = (img_h as f64 * params.shadow_size).round() as i32;
     let shadow_sigma = shadow_size as f64 / 3.0;
     // Gaussian blur 需要足够的外围空间
@@ -155,53 +178,103 @@ pub fn add_shadow(
             radius = radius,
         );
 
-        ops::svgload_buffer(svg.as_bytes())?
+        let svg_image = vips::VipsImage::from_buffer(svg.as_bytes())?;
+        unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(svg_image.as_ptr()))? }
     };
 
     // 确保 mask 为单通道
-    let shadow_mask = if shadow_mask.get_bands() > 1 {
-        ops::extract_band(&shadow_mask, 0)?
+    let shadow_mask = if shadow_mask.bands() > 1 {
+        image_op(|out| unsafe {
+            vips_sys::vips_extract_band(shadow_mask.as_ptr(), out, 0, std::ptr::null::<i8>())
+        })?
     } else {
         shadow_mask
     };
     // 对 mask 进行高斯模糊
-    let shadow_mask = ops::gaussblur(&shadow_mask, shadow_sigma)?;
+    let shadow_mask = image_op(|out| unsafe {
+        vips_sys::vips_gaussblur(
+            shadow_mask.as_ptr(),
+            out,
+            shadow_sigma,
+            std::ptr::null::<i8>(),
+        )
+    })?;
     // 生成与 mask 同尺寸的黑色 RGB（3 band）。注意不能对 VipsImage 使用 `.clone()`
     // 来复制 band：该 crate 的 Clone 是浅拷贝（不增加 GObject 引用计数），而 Drop
     // 会 unref，多次 clone 会导致 double-free / use-after-free。
-    let shadow_rgb = VipsImage::new_from_image(&shadow_mask, &[0.0, 0.0, 0.0])?;
+    let shadow_rgb = unsafe {
+        from_owned_ptr(vips_sys::vips_image_new_from_image(
+            shadow_mask.as_ptr(),
+            [0.0; 3].as_ptr(),
+            3,
+        ))?
+    };
     // 根据 opacity 调整 Alpha（保持 uchar，避免 linear 默认输出 float 导致 composite2 崩溃）
-    let shadow_alpha = ops::linear_with_opts(
-        &shadow_mask,
-        &mut [params.shadow_density],
-        &mut [0.0],
-        &ops::LinearOptions { uchar: true },
-    )?;
+    let a = [params.shadow_density];
+    let b = [0.0];
+    let shadow_alpha = image_op(|out| unsafe {
+        vips_sys::vips_linear(
+            shadow_mask.as_ptr(),
+            out,
+            a.as_ptr(),
+            b.as_ptr(),
+            1,
+            c"uchar".as_ptr(),
+            1_i32,
+            std::ptr::null::<i8>(),
+        )
+    })?;
     // RGB + Alpha → RGBA
-    let shadow = ops::bandjoin(&mut [shadow_rgb, shadow_alpha])?;
+    let shadow = image_op(|out| unsafe {
+        vips_sys::vips_bandjoin2(
+            shadow_rgb.as_ptr(),
+            shadow_alpha.as_ptr(),
+            out,
+            std::ptr::null::<i8>(),
+        )
+    })?;
     // 确保 shadow 与 canvas 一样是 uchar/SRGB，避免 band 格式不一致导致 composite2 崩溃。
-    let shadow = ops::cast(&shadow, ops::BandFormat::Uchar)?;
-    let shadow = ops::copy_with_opts(
-        &shadow,
-        &ops::CopyOptions {
-            width: shadow_w,
-            height: shadow_h,
-            bands: 4,
-            interpretation: ops::Interpretation::Srgb,
-            ..Default::default()
-        },
-    )?;
+    let shadow = rgba_srgb(&shadow, shadow_w, shadow_h)?;
     let shadow_x = img_x - shadow_margin;
     let shadow_y = img_y - shadow_margin;
 
-    ops::composite2_with_opts(
-        &canvas,
-        &shadow,
-        ops::BlendMode::Over,
-        &ops::Composite2Options {
-            x: shadow_x,
-            y: shadow_y,
-            ..Default::default()
-        },
-    )
+    image_op(|out| unsafe {
+        vips_sys::vips_composite2(
+            canvas.as_ptr(),
+            shadow.as_ptr(),
+            out,
+            VipsBlendMode::VIPS_BLEND_MODE_OVER,
+            c"x".as_ptr(),
+            shadow_x,
+            c"y".as_ptr(),
+            shadow_y,
+            std::ptr::null::<i8>(),
+        )
+    })
+}
+
+fn rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {
+    let cast = image_op(|out| unsafe {
+        vips_sys::vips_cast(
+            image.as_ptr(),
+            out,
+            VipsBandFormat::VIPS_FORMAT_UCHAR,
+            std::ptr::null::<i8>(),
+        )
+    })?;
+    image_op(|out| unsafe {
+        vips_sys::vips_copy(
+            cast.as_ptr(),
+            out,
+            c"width".as_ptr(),
+            width,
+            c"height".as_ptr(),
+            height,
+            c"bands".as_ptr(),
+            4_i32,
+            c"interpretation".as_ptr(),
+            VipsInterpretation::VIPS_INTERPRETATION_sRGB,
+            std::ptr::null::<i8>(),
+        )
+    })
 }

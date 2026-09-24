@@ -1,56 +1,82 @@
-//! libvips 的进程生命周期与基础图片解码。
+//! libvips 的进程生命周期、图像所有权和基础解码。
 
-use std::{ffi::CStr, path::Path, sync::OnceLock};
+use std::{ffi::CStr, path::Path, ptr, sync::OnceLock};
 
-use anyhow::{Context as _, Result, anyhow, bail};
-use libvips::{VipsApp, VipsImage, ops};
+use anyhow::{Context as _, Result, anyhow};
+use vips::VipsInstance;
 
-fn vips() -> &'static VipsApp {
-    static VIPS: OnceLock<VipsApp> = OnceLock::new();
-    VIPS.get_or_init(|| VipsApp::default("lumen-frame").expect("failed to init libvips"))
+pub type VipsImage = vips::VipsImage<'static>;
+
+fn instance() -> &'static VipsInstance {
+    static VIPS: OnceLock<VipsInstance> = OnceLock::new();
+    VIPS.get_or_init(|| VipsInstance::new("lumen-frame", false).expect("failed to init libvips"))
 }
 
 /// 保证 libvips 已初始化，并让进程级实例存活到程序退出。
-pub fn ensure_vips() -> &'static VipsApp {
-    vips()
+pub fn ensure_vips() -> &'static VipsInstance {
+    instance()
+}
+
+/// 接管 libvips 返回的一个非空、独占引用。
+///
+/// `vips` 0.1.0 尚未公开从原始指针构造图像的方法。这里固定该版本，并集中处理
+/// 底层操作的返回值；升级 `vips` 时需要重新核对其 `VipsImage` 布局。
+pub(crate) unsafe fn from_owned_ptr(raw: *mut vips_sys::VipsImage) -> vips::Result<VipsImage> {
+    if raw.is_null() {
+        return Err(vips::Error::Vips(
+            vips::take_vips_error().unwrap_or_else(|| "未知 libvips 错误".into()),
+        ));
+    }
+    assert_eq!(
+        std::mem::size_of::<VipsImage>(),
+        std::mem::size_of::<*mut vips_sys::VipsImage>(),
+    );
+    // SAFETY: vips 0.1.0 的 VipsImage 仅包含一个 NonNull 指针和零尺寸的 PhantomData。
+    // 调用方必须转交一份 GObject 引用，Drop 会释放它。
+    Ok(unsafe { std::mem::transmute(raw) })
+}
+
+/// 执行返回一张新图像的 vips-sys 操作，并验证状态与所有权。
+pub(crate) fn image_op(
+    f: impl FnOnce(*mut *mut vips_sys::VipsImage) -> i32,
+) -> vips::Result<VipsImage> {
+    let mut out = ptr::null_mut();
+    let status = f(&mut out);
+    if status != 0 {
+        if !out.is_null() {
+            unsafe { vips_sys::g_object_unref(out.cast()) };
+        }
+        return Err(vips::Error::Vips(
+            vips::take_vips_error().unwrap_or_else(|| "未知 libvips 错误".into()),
+        ));
+    }
+    unsafe { from_owned_ptr(out) }
 }
 
 /// 加载图片并按 EXIF orientation 摆正，同时保留 Ultra HDR gain map 元数据。
 pub fn load_base_image(path: &Path) -> Result<VipsImage> {
     ensure_vips();
-    let image =
-        VipsImage::new_from_file(&path.to_string_lossy()).context("failed to load image")?;
-    ops::autorot(&image).context("failed to autorotate image")
+    let image = VipsImage::from_file(path).context("failed to load image")?;
+    image_op(|out| unsafe { vips_sys::vips_autorot(image.as_ptr(), out, ptr::null::<i8>()) })
+        .context("failed to autorotate image")
 }
 
 /// 将 vips 图像求值为连续像素内存，并在 libvips 失败时返回错误。
-///
-/// `libvips` crate 的同名方法没有检查 C API 返回的空指针，会在处理失败时直接 abort。
-/// 这里保留相同的内存读取路径，但先验证指针与长度。
 pub fn image_write_to_memory(image: &VipsImage) -> Result<Vec<u8>> {
     ensure_vips();
-    let mut size = 0_u64;
-    // VipsImage 目前是单字段指针包装；项目读取 gain map 时也使用同一适配方式。
-    let raw = unsafe { *(image as *const VipsImage as *const *mut libvips::bindings::VipsImage) };
-    let buffer = unsafe { libvips::bindings::vips_image_write_to_memory(raw, &mut size) };
-    if buffer.is_null() {
-        let message = unsafe {
-            let error = libvips::bindings::vips_error_buffer();
-            if error.is_null() {
-                "未知 libvips 错误".to_owned()
-            } else {
-                CStr::from_ptr(error).to_string_lossy().trim().to_owned()
-            }
-        };
-        unsafe { libvips::bindings::vips_error_clear() };
-        return Err(anyhow!(message));
-    }
-    if size == 0 || size > isize::MAX as u64 {
-        unsafe { libvips::bindings::g_free(buffer) };
-        bail!("libvips 返回了非法像素缓冲区长度：{size}");
-    }
+    image.write_to_memory().map_err(Into::into)
+}
 
-    let bytes = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), size as usize) }.to_vec();
-    unsafe { libvips::bindings::g_free(buffer) };
-    Ok(bytes)
+pub fn image_metadata_string(image: &VipsImage, name: &str) -> Result<String> {
+    let name = std::ffi::CString::new(name)?;
+    let mut value = ptr::null_mut();
+    let status =
+        unsafe { vips_sys::vips_image_get_as_string(image.as_ptr(), name.as_ptr(), &mut value) };
+    vips::code_to_result(status)?;
+    if value.is_null() {
+        return Err(anyhow!("libvips 未返回元数据值"));
+    }
+    let text = unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() };
+    unsafe { vips_sys::g_free(value.cast()) };
+    Ok(text)
 }

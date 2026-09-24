@@ -1,10 +1,14 @@
 use anyhow::{Context, Result, anyhow};
-use libvips::{VipsImage, ops};
 use std::path::{Path, PathBuf};
+use vips::VipsBlendMode;
+use vips_sys::VipsForeignKeep;
 
 use crate::{
     gainmap as gain_map,
-    media::{ExifInfo, ensure_vips, load_base_image},
+    media::{
+        ExifInfo, ensure_vips, load_base_image,
+        vips::{VipsImage, image_metadata_string, image_op},
+    },
     render::{canvas, image},
     watermark::{Placement, TextAlign, TextGroup, WatermarkParams},
 };
@@ -67,14 +71,14 @@ impl Photo {
         let original_gainmap = gain_map::get_gainmap(&img);
         // gain map 的分辨率比例（1 表示与 base 同尺寸，2 表示一半尺寸……）
         let gainmap_scale = original_gainmap.as_ref().map(|_| {
-            img.get_as_string("gainmap-scale-factor")
+            image_metadata_string(&img, "gainmap-scale-factor")
                 .ok()
                 .and_then(|s| s.trim().parse::<f64>().ok())
                 .unwrap_or(2.0)
         });
 
         // 计算水印照片的图片尺寸
-        let (img_w, img_h) = (img.get_width(), img.get_height());
+        let (img_w, img_h) = (img.width() as i32, img.height() as i32);
 
         // 先渲染每个文字组，旋转后的真实尺寸才能准确决定四周需要扩出多少画布。
         let mut rendered_text_groups = Vec::new();
@@ -91,8 +95,8 @@ impl Photo {
         let mut text_thickness = [0; 4];
         for (position, _, image) in &rendered_text_groups {
             let thickness = match position {
-                Placement::Up | Placement::Bottom => image.get_height(),
-                Placement::Left | Placement::Right => image.get_width(),
+                Placement::Up | Placement::Bottom => image.height() as i32,
+                Placement::Left | Placement::Right => image.width() as i32,
                 Placement::Center => 0,
             };
             let slot = match position {
@@ -136,22 +140,25 @@ impl Photo {
         };
 
         // 合成照片
-        let canvas = ops::composite2_with_opts(
-            &canvas,
-            &img,
-            ops::BlendMode::Over,
-            &ops::Composite2Options {
-                x: img_x,
-                y: img_y,
-                ..Default::default()
-            },
-        )
+        let canvas = image_op(|out| unsafe {
+            vips_sys::vips_composite2(
+                canvas.as_ptr(),
+                img.as_ptr(),
+                out,
+                VipsBlendMode::VIPS_BLEND_MODE_OVER,
+                c"x".as_ptr(),
+                img_x,
+                c"y".as_ptr(),
+                img_y,
+                std::ptr::null::<i8>(),
+            )
+        })
         .context("composite image err")?;
 
         // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
         let mut canvas = canvas;
         for (position, align, text_layer) in rendered_text_groups {
-            let (text_w, text_h) = (text_layer.get_width(), text_layer.get_height());
+            let (text_w, text_h) = (text_layer.width() as i32, text_layer.height() as i32);
             let aligned_x = || match align {
                 TextAlign::Left => img_x,
                 TextAlign::Center => img_x + (img_w - text_w) / 2,
@@ -175,16 +182,19 @@ impl Photo {
                 ),
                 Placement::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
             };
-            canvas = ops::composite2_with_opts(
-                &canvas,
-                &text_layer,
-                ops::BlendMode::Over,
-                &ops::Composite2Options {
-                    x: text_x,
-                    y: text_y,
-                    ..Default::default()
-                },
-            )
+            canvas = image_op(|out| unsafe {
+                vips_sys::vips_composite2(
+                    canvas.as_ptr(),
+                    text_layer.as_ptr(),
+                    out,
+                    VipsBlendMode::VIPS_BLEND_MODE_OVER,
+                    c"x".as_ptr(),
+                    text_x,
+                    c"y".as_ptr(),
+                    text_y,
+                    std::ptr::null::<i8>(),
+                )
+            })
             .context("composite text layer err")?;
         }
 
@@ -229,38 +239,48 @@ impl Photo {
 
             // 合成结果带 alpha（4 band），写出 JPEG 前先压平为 3 band RGB。
             let [r, g, b] = params.background;
-            let mut flattened = ops::flatten_with_opts(
-                watermark,
-                &ops::FlattenOptions {
-                    background: vec![r as f64, g as f64, b as f64],
-                    ..Default::default()
-                },
-            )
-            .context("flatten image failed")?;
+            let background = [r as f64, g as f64, b as f64];
+            let array = unsafe { vips_sys::vips_array_double_new(background.as_ptr(), 3) };
+            if array.is_null() {
+                return Err(anyhow!("无法创建 JPEG 背景色"));
+            }
+            let flatten_result = image_op(|out| unsafe {
+                vips_sys::vips_flatten(
+                    watermark.as_ptr(),
+                    out,
+                    c"background".as_ptr(),
+                    array,
+                    std::ptr::null::<i8>(),
+                )
+            });
+            unsafe { vips_sys::vips_area_unref(array.cast()) };
+            let mut flattened = flatten_result.context("flatten image failed")?;
 
             // libuhdr 只接受边长不超过 8192 的 Ultra HDR 图像。普通 JPEG 不走这条
             // 编码器，绝不能因为同一个上限被悄悄缩小；只有确实带 gain map 的输出才缩放。
-            let max_dim = flattened.get_width().max(flattened.get_height());
+            let max_dim = flattened.width().max(flattened.height()) as i32;
             if let Some(scale) =
                 ultra_hdr_resize_scale(max_dim, gain_map::get_gainmap(&flattened).is_some())
             {
-                flattened =
-                    ops::resize(&flattened, scale).context("resize for UHDR limit failed")?;
+                flattened = flattened
+                    .resize(scale, None, None)
+                    .context("resize for UHDR limit failed")?;
             }
 
             // 保留源图的 ICC（如 Display P3），让照片保持原色域。
             // profile: None 表示不要用 libvips 默认的 sRGB profile 覆盖它。
-            ops::jpegsave_with_opts(
-                &flattened,
-                &output_path.to_string_lossy(),
-                &ops::JpegsaveOptions {
-                    q: params.quality,
-                    // 保留 Ultra HDR gain map 等元数据
-                    keep: ops::ForeignKeep::All,
-                    profile: None,
-                    ..Default::default()
-                },
-            )
+            let output = std::ffi::CString::new(output_path.to_string_lossy().as_bytes())?;
+            vips::code_to_result(unsafe {
+                vips_sys::vips_jpegsave(
+                    flattened.as_ptr(),
+                    output.as_ptr(),
+                    c"Q".as_ptr(),
+                    params.quality,
+                    c"keep".as_ptr(),
+                    VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
+                    std::ptr::null::<i8>(),
+                )
+            })
             .context("save jpg failed")?;
             if gain_map::get_gainmap(&flattened).is_some() {
                 gain_map::mark_jpeg_gainmap(&output_path)?;

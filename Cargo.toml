@@ -7,7 +7,8 @@ edition = "2024"
 tokio = { version = "1", features = ["full"] }
 nom-exif = { version = "3", features = ["tokio-fs"] }
 anyhow = "1"
-libvips = "2.3.0"
+vips = "=0.1.0"
+vips-sys = "=0.2.0"
 dirs = "7"
 regex = "1"
 num-integer = "0.1"

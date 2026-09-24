@@ -13,12 +13,16 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Rgba};
-use libvips::{VipsImage, ops};
+use vips::{VipsBandFormat, VipsSize};
+use vips_sys::VipsForeignKeep;
 
 use crate::{
     features::colour_gainmap,
     gainmap as gain_map,
-    media::{ExifInfo, ensure_vips, image_write_to_memory, load_base_image},
+    media::{
+        ExifInfo, ensure_vips, image_write_to_memory, load_base_image,
+        vips::{VipsImage, from_owned_ptr, image_op},
+    },
     photo::Photo,
     rotation::Rotation,
     watermark::{TextGroup, WatermarkParams},
@@ -76,12 +80,19 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
     let Some(gainmap) = gain_map::get_gainmap(&image) else {
         return Ok(None);
     };
-    let gainmap = if gainmap.get_bands() == 1 {
+    let gainmap = if gainmap.bands() == 1 {
         // `VipsImage::clone` 只会复制底层句柄；把同一个所有权句柄交给 bandjoin 后会在
         // 释放时发生重复释放。单通道 gain map 要明确创建三份独立的 vips 图像。
-        let green = ops::copy(&gainmap)?;
-        let blue = ops::copy(&gainmap)?;
-        ops::bandjoin(&mut [gainmap, green, blue])?
+        let green = image_op(|out| unsafe {
+            vips_sys::vips_copy(gainmap.as_ptr(), out, std::ptr::null::<i8>())
+        })?;
+        let blue = image_op(|out| unsafe {
+            vips_sys::vips_copy(gainmap.as_ptr(), out, std::ptr::null::<i8>())
+        })?;
+        let mut images = [gainmap.as_ptr(), green.as_ptr(), blue.as_ptr()];
+        image_op(|out| unsafe {
+            vips_sys::vips_bandjoin(images.as_mut_ptr(), out, 3, std::ptr::null::<i8>())
+        })?
     } else {
         gainmap
     };
@@ -119,7 +130,8 @@ pub fn render_motion_photo_cover(
     let jpeg = crate::features::motion_photo::render_motion_photo_cover(
         ffmpeg, path, start, end, cover_time, rotation,
     )?;
-    let image = VipsImage::new_from_buffer(&jpeg, "").context("读取视频封面 JPEG")?;
+    let borrowed = vips::VipsImage::from_buffer(&jpeg).context("读取视频封面 JPEG")?;
+    let image = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
     to_render_image(&image).context("转换视频封面预览")
 }
@@ -128,16 +140,18 @@ pub fn render_motion_photo_cover(
 pub fn export_colour_gainmap(path: &Path, output: &Path, rotation: Rotation) -> Result<()> {
     ensure_vips();
     let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path, rotation)?;
-    ops::jpegsave_with_opts(
-        &image,
-        &output.to_string_lossy(),
-        &ops::JpegsaveOptions {
-            q: 95,
-            keep: ops::ForeignKeep::All,
-            profile: None,
-            ..Default::default()
-        },
-    )?;
+    let output_c = std::ffi::CString::new(output.to_string_lossy().as_bytes())?;
+    vips::code_to_result(unsafe {
+        vips_sys::vips_jpegsave(
+            image.as_ptr(),
+            output_c.as_ptr(),
+            c"Q".as_ptr(),
+            95_i32,
+            c"keep".as_ptr(),
+            VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
+            std::ptr::null::<i8>(),
+        )
+    })?;
     gain_map::mark_jpeg_gainmap(output)?;
     Ok(())
 }
@@ -149,7 +163,7 @@ pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
     let Some(gainmap) = gain_map::get_gainmap(&image) else {
         return Ok(false);
     };
-    ops::pngsave(&gainmap, &output.to_string_lossy()).context("保存 gain map")?;
+    gainmap.write_to_file(output).context("保存 gain map")?;
     Ok(true)
 }
 
@@ -158,24 +172,23 @@ pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
 /// `Size::Down` 只缩小不放大：比预览尺寸还小的原图保持原样，放大只会让预览更糊。
 /// `thumbnail` 会按 EXIF orientation 自动摆正，与 [`load_base_image`] 一致。
 fn load_scaled(path: &Path, max_edge: i32) -> Result<VipsImage> {
-    ops::thumbnail_with_opts(
-        &path.to_string_lossy(),
-        max_edge,
-        &ops::ThumbnailOptions {
-            height: max_edge,
-            size: ops::Size::Down,
-            ..Default::default()
-        },
-    )
-    .map_err(anyhow::Error::from)
+    let image = VipsImage::from_file(path)?;
+    image
+        .thumbnail(max_edge as u32, max_edge as u32, VipsSize::VIPS_SIZE_DOWN)
+        .map_err(anyhow::Error::from)
 }
 
 fn shrink_to_edge(image: &VipsImage, max_edge: i32) -> Result<VipsImage> {
-    let edge = image.get_width().max(image.get_height());
+    let edge = image.width().max(image.height()) as i32;
     if edge <= max_edge {
-        return ops::copy(image).map_err(anyhow::Error::from);
+        return image_op(|out| unsafe {
+            vips_sys::vips_copy(image.as_ptr(), out, std::ptr::null::<i8>())
+        })
+        .map_err(anyhow::Error::from);
     }
-    ops::resize(image, max_edge as f64 / edge as f64).map_err(anyhow::Error::from)
+    image
+        .resize(max_edge as f64 / edge as f64, None, None)
+        .map_err(anyhow::Error::from)
 }
 
 /// vips 图像 → GPUI 位图。
@@ -183,14 +196,22 @@ fn shrink_to_edge(image: &VipsImage, max_edge: i32) -> Result<VipsImage> {
 /// GPUI 用 `image` crate 的 `Rgba` 缓冲承载 **BGRA** 字节序，所以这里必须交换 vips 的
 /// R/B 通道，否则预览会红蓝互换。
 fn to_render_image(img: &VipsImage) -> Result<Arc<RenderImage>> {
-    let img = ops::cast(img, ops::BandFormat::Uchar).context("转换为 8bit 失败")?;
-    let (width, height) = (img.get_width(), img.get_height());
+    let img = image_op(|out| unsafe {
+        vips_sys::vips_cast(
+            img.as_ptr(),
+            out,
+            VipsBandFormat::VIPS_FORMAT_UCHAR,
+            std::ptr::null::<i8>(),
+        )
+    })
+    .context("转换为 8bit 失败")?;
+    let (width, height) = (img.width(), img.height());
     if width <= 0 || height <= 0 {
         bail!("尺寸非法：{width}x{height}");
     }
 
     let mut bytes = image_write_to_memory(&img).context("生成预览像素失败")?;
-    match img.get_bands() {
+    match img.bands() {
         4 => {
             for pixel in bytes.as_chunks_mut::<4>().0 {
                 pixel.swap(0, 2);

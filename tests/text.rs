@@ -1,5 +1,4 @@
 use chrono::Local;
-use libvips::ops;
 use nom_exif::{Altitude, ExifDateTime, GPSInfo, URational};
 
 use lumen_frame::{
@@ -56,8 +55,8 @@ async fn vertical_text_group_rotates_the_complete_group() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(vertical.get_width(), horizontal.get_height());
-    assert_eq!(vertical.get_height(), horizontal.get_width());
+    assert_eq!(vertical.width(), horizontal.height());
+    assert_eq!(vertical.height(), horizontal.width());
 }
 
 #[tokio::test]
@@ -81,8 +80,8 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(padded.get_width(), plain.get_width() + 50);
-    assert_eq!(padded.get_height(), plain.get_height());
+    assert_eq!(padded.width(), plain.width() + 50);
+    assert_eq!(padded.height(), plain.height());
 
     let vertical_plain = TextGroup {
         position: Placement::Left,
@@ -102,11 +101,8 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
     .unwrap()
     .unwrap();
 
-    assert_eq!(vertical_padded.get_width(), vertical_plain.get_width());
-    assert_eq!(
-        vertical_padded.get_height(),
-        vertical_plain.get_height() + 50
-    );
+    assert_eq!(vertical_padded.width(), vertical_plain.width());
+    assert_eq!(vertical_padded.height(), vertical_plain.height() + 50);
 }
 
 #[test]
@@ -189,15 +185,8 @@ async fn test_render_text_with_logo_mixed() {
         solid_background: true,
         ..Default::default()
     };
-    let img = ops::jpegload_with_opts(
-        &photo.path.to_string_lossy(),
-        &ops::JpegloadOptions {
-            autorotate: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let (img_w, img_h) = (img.get_width(), img.get_height());
+    let img = lumen_frame::media::load_base_image(&photo.path).unwrap();
+    let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let margin = Margin::cal_margin(img_w, img_h, &params);
     let (canvas_w, _canvas_h) = canvas::cal_size(&margin, img_w, img_h, &params);
 
@@ -206,7 +195,7 @@ async fn test_render_text_with_logo_mixed() {
         .unwrap()
         .expect("render_text should produce an image");
 
-    let (w, h) = (text_img.get_width(), text_img.get_height());
+    let (w, h) = (text_img.width() as i32, text_img.height() as i32);
     assert!(w > 0, "text image width must be positive");
     assert!(h > 0, "text image height must be positive");
     // 已去掉左右空白：图片宽度 = 最长一行，而不是整个画布宽度
@@ -216,7 +205,7 @@ async fn test_render_text_with_logo_mixed() {
     );
 
     // 确保确实有可见像素（文字或 logo）
-    let pixels = text_img.image_write_to_memory();
+    let pixels = text_img.write_to_memory().unwrap();
     let has_visible = pixels.as_chunks::<4>().0.iter().any(|p| p[3] > 0);
     assert!(
         has_visible,
@@ -224,7 +213,9 @@ async fn test_render_text_with_logo_mixed() {
     );
 
     std::fs::create_dir_all(output_path).unwrap();
-    ops::pngsave(&text_img, &format!("{output_path}/text.png")).unwrap();
+    text_img
+        .write_to_file(format!("{output_path}/text.png"))
+        .unwrap();
 
     // 一个没有 EXIF 相机品牌（无 logo）的模板也能正常渲染出图片
     let text = Text {
@@ -239,6 +230,6 @@ async fn test_render_text_with_logo_mixed() {
         .render_text(photo.exif.as_ref().unwrap(), img_h, &params, "%Y/%m/%d")
         .unwrap()
         .expect("render_text should produce an image");
-    assert!(fallback_img.get_width() > 0);
-    assert!(fallback_img.get_height() > 0);
+    assert!(fallback_img.width() > 0);
+    assert!(fallback_img.height() > 0);
 }

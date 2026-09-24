@@ -4,8 +4,6 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use libvips::error::Error as VipsError;
-use libvips::{Result, VipsImage, ops};
 use nom_exif::ExifDateTime;
 use parley::style::{FontFamily, FontStyle, FontWeight, LineHeight, StyleProperty};
 use parley::{
@@ -18,9 +16,13 @@ use swash::FontRef;
 use swash::scale::image::{Content, Image};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::zeno::Format;
+use vips::{Error as VipsError, Result, VipsAngle, VipsBandFormat, VipsInterpretation};
 
 use crate::{
-    media::{ExifInfo, Rational},
+    media::{
+        ExifInfo, Rational,
+        vips::{VipsImage, from_owned_ptr, image_op},
+    },
     watermark::{
         DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
         WatermarkParams,
@@ -107,23 +109,14 @@ impl Text {
             y_off += line.height as i32;
         }
 
-        let img = VipsImage::new_from_memory_copy(
-            &canvas,
-            width,
-            total_h as i32,
+        let img = VipsImage::from_memory(
+            canvas,
+            width as u32,
+            total_h as u32,
             4,
-            ops::BandFormat::Uchar,
+            VipsBandFormat::VIPS_FORMAT_UCHAR,
         )?;
-        let img = ops::copy_with_opts(
-            &img,
-            &ops::CopyOptions {
-                width,
-                height: total_h as i32,
-                bands: 4,
-                interpretation: ops::Interpretation::Srgb,
-                ..Default::default()
-            },
-        )?;
+        let img = set_rgba_srgb(&img, width, total_h as i32)?;
         Ok(Some(img))
     }
 }
@@ -145,7 +138,14 @@ impl TextGroup {
         };
 
         let image = if self.direction == TextDirection::Vertical {
-            ops::rot(&image, ops::Angle::D90)?
+            image_op(|out| unsafe {
+                vips_sys::vips_rot(
+                    image.as_ptr(),
+                    out,
+                    VipsAngle::VIPS_ANGLE_D90,
+                    std::ptr::null::<i8>(),
+                )
+            })?
         } else {
             image
         };
@@ -163,8 +163,8 @@ impl TextGroup {
                 } else {
                     0
                 },
-                image.get_width(),
-                image.get_height() + padding,
+                image.width() as i32,
+                image.height() as i32 + padding,
             )
         } else {
             (
@@ -174,21 +174,32 @@ impl TextGroup {
                     0
                 },
                 0,
-                image.get_width() + padding,
-                image.get_height(),
+                image.width() as i32 + padding,
+                image.height() as i32,
             )
         };
-        Ok(Some(ops::embed_with_opts(
-            &image,
-            x,
-            y,
-            width,
-            height,
-            &ops::EmbedOptions {
-                extend: ops::Extend::Background,
-                background: vec![0.0, 0.0, 0.0, 0.0],
-            },
-        )?))
+        let background = [0.0; 4];
+        let array = unsafe { vips_sys::vips_array_double_new(background.as_ptr(), 4) };
+        if array.is_null() {
+            return Err(VipsError::Vips("无法创建背景色".into()));
+        }
+        let result = image_op(|out| unsafe {
+            vips_sys::vips_embed(
+                image.as_ptr(),
+                out,
+                x,
+                y,
+                width,
+                height,
+                c"extend".as_ptr(),
+                vips::VipsExtend::VIPS_EXTEND_BACKGROUND,
+                c"background".as_ptr(),
+                array,
+                std::ptr::null::<i8>(),
+            )
+        });
+        unsafe { vips_sys::vips_area_unref(array.cast()) };
+        Ok(Some(result?))
     }
 }
 
@@ -286,7 +297,7 @@ fn prepare_line(
                     // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
                     layout_text.push('\u{200b}');
 
-                    let (logo_w, logo_img_h) = (logo.get_width(), logo.get_height());
+                    let (logo_w, logo_img_h) = (logo.width(), logo.height());
                     if logo_w <= 0 || logo_img_h <= 0 {
                         continue;
                     }
@@ -539,12 +550,12 @@ fn draw_logo(
     y: i32,
     logo: &VipsImage,
 ) -> Result<()> {
-    let (logo_w, logo_h) = (logo.get_width(), logo.get_height());
-    let bands = logo.get_bands();
+    let (logo_w, logo_h) = (logo.width() as i32, logo.height() as i32);
+    let bands = logo.bands();
     if bands != 4 {
-        return Err(VipsError::OperationError("logo image must be RGBA"));
+        return Err(VipsError::Vips("logo image must be RGBA".into()));
     }
-    let data = logo.image_write_to_memory();
+    let data = logo.write_to_memory()?;
     let dx0 = x;
     let dy0 = y + y_off;
 
@@ -608,64 +619,102 @@ fn blend_pixel(
 
 /// 把 libvips 图片统一转成 RGBA / uchar，用于手工合成像素。
 fn to_rgba(img: VipsImage) -> Result<VipsImage> {
-    let img = ops::cast(&img, ops::BandFormat::Uchar)?;
-    let bands = img.get_bands();
+    let img = image_op(|out| unsafe {
+        vips_sys::vips_cast(
+            img.as_ptr(),
+            out,
+            VipsBandFormat::VIPS_FORMAT_UCHAR,
+            std::ptr::null::<i8>(),
+        )
+    })?;
+    let bands = img.bands();
     let rgba = match bands {
         4 => img,
-        3 => ops::addalpha(&img)?,
+        3 => image_op(|out| unsafe {
+            vips_sys::vips_addalpha(img.as_ptr(), out, std::ptr::null::<i8>())
+        })?,
         2 => {
-            let grey = ops::extract_band(&img, 0)?;
-            let alpha = ops::extract_band(&img, 1)?;
-            let g2 = ops::copy(&grey)?;
-            let g3 = ops::copy(&grey)?;
-            let rgb = ops::bandjoin(&mut [grey, g2, g3])?;
-            ops::bandjoin(&mut [rgb, alpha])?
+            let grey = extract_band(&img, 0)?;
+            let alpha = extract_band(&img, 1)?;
+            let g2 = copy_image(&grey)?;
+            let g3 = copy_image(&grey)?;
+            let rgb = join_images(&[&grey, &g2, &g3])?;
+            join_images(&[&rgb, &alpha])?
         }
         1 => {
             let g1 = img;
-            let g2 = ops::copy(&g1)?;
-            let g3 = ops::copy(&g1)?;
-            let rgb = ops::bandjoin(&mut [g1, g2, g3])?;
-            let alpha = VipsImage::new_from_image(&rgb, &[255.0])?;
-            ops::bandjoin(&mut [rgb, alpha])?
+            let g2 = copy_image(&g1)?;
+            let g3 = copy_image(&g1)?;
+            let rgb = join_images(&[&g1, &g2, &g3])?;
+            let value = [255.0];
+            let alpha = unsafe {
+                from_owned_ptr(vips_sys::vips_image_new_from_image(
+                    rgb.as_ptr(),
+                    value.as_ptr(),
+                    1,
+                ))?
+            };
+            join_images(&[&rgb, &alpha])?
         }
         _ => {
-            return Err(VipsError::OperationError(
-                "unsupported logo bands, expected 1..=4",
+            return Err(VipsError::Vips(
+                "unsupported logo bands, expected 1..=4".into(),
             ));
         }
     };
 
-    let w = rgba.get_width();
-    let h = rgba.get_height();
-    ops::copy_with_opts(
-        &rgba,
-        &ops::CopyOptions {
-            width: w,
-            height: h,
-            bands: 4,
-            interpretation: ops::Interpretation::Srgb,
-            ..Default::default()
-        },
-    )
+    set_rgba_srgb(&rgba, rgba.width() as i32, rgba.height() as i32)
 }
 
 fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage> {
     let img = to_rgba(img)?;
-    let (w, h) = (img.get_width(), img.get_height());
+    let (w, h) = (img.width() as i32, img.height() as i32);
     if (w, h) != (target_w, target_h) {
         let scale_x = target_w as f64 / w as f64;
         let scale_y = target_h as f64 / h as f64;
-        return ops::resize_with_opts(
-            &img,
-            scale_x,
-            &ops::ResizeOptions {
-                vscale: scale_y,
-                ..Default::default()
-            },
-        );
+        return img.resize(scale_x, Some(scale_y), None);
     }
     Ok(img)
+}
+
+fn copy_image(image: &VipsImage) -> Result<VipsImage> {
+    image_op(|out| unsafe { vips_sys::vips_copy(image.as_ptr(), out, std::ptr::null::<i8>()) })
+}
+
+fn extract_band(image: &VipsImage, band: i32) -> Result<VipsImage> {
+    image_op(|out| unsafe {
+        vips_sys::vips_extract_band(image.as_ptr(), out, band, std::ptr::null::<i8>())
+    })
+}
+
+fn join_images(images: &[&VipsImage]) -> Result<VipsImage> {
+    let mut raw: Vec<_> = images.iter().map(|image| image.as_ptr()).collect();
+    image_op(|out| unsafe {
+        vips_sys::vips_bandjoin(
+            raw.as_mut_ptr(),
+            out,
+            raw.len() as i32,
+            std::ptr::null::<i8>(),
+        )
+    })
+}
+
+fn set_rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {
+    image_op(|out| unsafe {
+        vips_sys::vips_copy(
+            image.as_ptr(),
+            out,
+            c"width".as_ptr(),
+            width,
+            c"height".as_ptr(),
+            height,
+            c"bands".as_ptr(),
+            4_i32,
+            c"interpretation".as_ptr(),
+            VipsInterpretation::VIPS_INTERPRETATION_sRGB,
+            std::ptr::null::<i8>(),
+        )
+    })
 }
 
 /// 根据给定的模板生成文字。
@@ -975,7 +1024,8 @@ fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<Vips
         ("sony", 'w') => include_str!("../../assets/logo/sony-w.svg"),
         _ => return None,
     };
-    ops::svgload_buffer(svg.as_bytes()).ok()
+    let borrowed = vips::VipsImage::from_buffer(svg.as_bytes()).ok()?;
+    unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr())).ok() }
 }
 
 /// 浅色纯色背景使用黑色自动文字；其它背景使用白色。

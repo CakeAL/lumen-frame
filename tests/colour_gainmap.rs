@@ -1,14 +1,15 @@
 use std::{fs, path::Path};
 
-use libvips::ops;
 use lumen_frame::{
     features::colour_gainmap::load_black_and_white_with_colour_gainmap,
     gainmap as gain_map,
-    media::{ExifInfo, load_base_image},
+    media::{ExifInfo, image_metadata_string, load_base_image},
     rotation::Rotation,
 };
+use vips::VipsInterpretation;
+use vips_sys::VipsForeignKeep;
 
-const PHOTO: &str = "/Users/cakeal/Downloads/DSC_6610.jpg";
+const PHOTO: &str = "./test_images/ultra_hdr.jpg";
 
 #[test]
 fn colour_gainmap_restores_colour_at_normal_display_headroom() {
@@ -19,13 +20,13 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
     let result = load_black_and_white_with_colour_gainmap(input, Rotation::None)
         .expect("黑白底图和彩色 gain map 处理失败");
 
-    assert_eq!(result.get_bands(), 3, "JPEG SDR 底图应保留三个 RGB 通道");
+    assert_eq!(result.bands(), 3, "JPEG SDR 底图应保留三个 RGB 通道");
     assert_eq!(
-        result.get_interpretation().unwrap() as i32,
-        ops::Interpretation::Srgb as i32,
+        unsafe { vips_sys::vips_image_get_interpretation(result.as_ptr()) } as i32,
+        VipsInterpretation::VIPS_INTERPRETATION_sRGB as i32,
         "底图没有标记为 sRGB"
     );
-    let base_pixel = ops::getpoint(&result, 100, 100).unwrap();
+    let base_pixel = getpoint(&result, 100, 100);
     assert!(
         base_pixel
             .windows(2)
@@ -34,7 +35,7 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
     );
 
     let result_gainmap = gain_map::get_gainmap(&result).expect("处理结果丢失了 gain map");
-    assert_eq!(result_gainmap.get_bands(), 3, "gain map 被降成了非彩色图");
+    assert_eq!(result_gainmap.bands(), 3, "gain map 被降成了非彩色图");
     assert!(
         !gain_map::has_icc_profile(&result_gainmap),
         "gain map 不应继承主图的 ICC profile"
@@ -44,25 +45,24 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
         "新生成的 gain map 不应嵌套继承输入图的 gain map"
     );
     assert_eq!(
-        result_gainmap.get_interpretation().unwrap() as i32,
-        ops::Interpretation::Srgb as i32,
+        unsafe { vips_sys::vips_image_get_interpretation(result_gainmap.as_ptr()) } as i32,
+        VipsInterpretation::VIPS_INTERPRETATION_sRGB as i32,
         "gain map 应以 sRGB 交给 JPEG 编码器转换为 YUV"
     );
     assert_eq!(
-        result.get_as_string("gainmap-scale-factor").unwrap(),
+        image_metadata_string(&result, "gainmap-scale-factor").unwrap(),
         "1",
         "由原图生成的 gain map 应与底图 1:1 对应"
     );
     assert!(
-        result
-            .get_as_string("gainmap-hdr-capacity-max")
+        image_metadata_string(&result, "gainmap-hdr-capacity-max")
             .unwrap()
             .parse::<f64>()
             .unwrap()
             <= 2.0,
         "显示端应在常见 HDR 余量下完整应用 gain map"
     );
-    let gainmap_pixel = ops::getpoint(&result_gainmap, 100, 100).unwrap();
+    let gainmap_pixel = getpoint(&result_gainmap, 100, 100);
     assert!(
         gainmap_pixel
             .windows(2)
@@ -80,15 +80,18 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
             .expect("输入文件缺少 UTF-8 文件名")
     );
     let output = output_dir.join(file_name);
-    ops::jpegsave_with_opts(
-        &result,
-        &output.to_string_lossy(),
-        &ops::JpegsaveOptions {
-            q: 95,
-            keep: ops::ForeignKeep::All,
-            ..Default::default()
-        },
-    )
+    let output_c = std::ffi::CString::new(output.to_string_lossy().as_bytes()).unwrap();
+    vips::code_to_result(unsafe {
+        vips_sys::vips_jpegsave(
+            result.as_ptr(),
+            output_c.as_ptr(),
+            c"Q".as_ptr(),
+            95_i32,
+            c"keep".as_ptr(),
+            VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
+            std::ptr::null::<i8>(),
+        )
+    })
     .expect("保存完整彩色 gain map 效果失败");
     gain_map::mark_jpeg_gainmap(&output).expect("写入 MPF GainMap 类型失败");
     assert!(output.is_file(), "没有生成完整效果图片");
@@ -117,13 +120,33 @@ fn colour_gainmap_rotates_base_and_gainmap_together() {
         .expect("生成旋转方向失败");
     let rotated_gainmap = gain_map::get_gainmap(&rotated).expect("旋转结果丢失 gain map");
 
-    assert_eq!(rotated.get_width(), original.get_height());
-    assert_eq!(rotated.get_height(), original.get_width());
-    assert_eq!(rotated_gainmap.get_width(), rotated.get_width());
-    assert_eq!(rotated_gainmap.get_height(), rotated.get_height());
+    assert_eq!(rotated.width(), original.height());
+    assert_eq!(rotated.height(), original.width());
+    assert_eq!(rotated_gainmap.width(), rotated.width());
+    assert_eq!(rotated_gainmap.height(), rotated.height());
 
-    rotated.image_write_prepare().expect("旋转底图求值失败");
+    rotated.write_to_memory().expect("旋转底图求值失败");
     rotated_gainmap
-        .image_write_prepare()
+        .write_to_memory()
         .expect("旋转 gain map 求值失败");
+}
+
+fn getpoint(image: &vips::VipsImage<'_>, x: i32, y: i32) -> Vec<f64> {
+    let mut values = std::ptr::null_mut();
+    let mut count = 0;
+    vips::code_to_result(unsafe {
+        vips_sys::vips_getpoint(
+            image.as_ptr(),
+            &mut values,
+            &mut count,
+            x,
+            y,
+            std::ptr::null::<i8>(),
+        )
+    })
+    .unwrap();
+    assert!(!values.is_null());
+    let result = unsafe { std::slice::from_raw_parts(values, count as usize).to_vec() };
+    unsafe { vips_sys::g_free(values.cast()) };
+    result
 }
