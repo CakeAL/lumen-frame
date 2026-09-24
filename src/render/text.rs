@@ -369,7 +369,7 @@ fn build_parley_layout(
     // 否则 parley 对缺失字形只输出 gid=0 (.notdef)，导致“ℤ”渲染成空白；
     // 同时避免 fallback 到衬线字体，保证 ℤ 跟整体文字一样是“黑体”风格。
     let family = format!(
-        "{}, Menlo, Geneva, Arial Unicode MS, Fira Code, sans-serif",
+        "{}, Menlo, Arial Unicode MS, Fira Code, sans-serif, Segoe UI Symbol, Cambria",
         params.font
     );
     builder.push_default(StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(
