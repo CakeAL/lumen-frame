@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 //! Lumen Frame：为照片加上边框、阴影与 EXIF 文字水印。
 
 use std::borrow::Cow;
