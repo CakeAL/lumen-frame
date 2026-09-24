@@ -61,6 +61,8 @@ fn ffmpeg_candidates(path: Option<&OsStr>) -> Vec<PathBuf> {
     } else {
         "ffmpeg"
     };
+
+    #[allow(unused)]
     let mut candidates = path
         .into_iter()
         .flat_map(env::split_paths)

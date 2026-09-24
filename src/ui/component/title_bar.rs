@@ -1,6 +1,5 @@
 //! 主窗口标题栏与页面导航。
 
-use gpui_kit::Context;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Sizable as _, TitleBar,
@@ -9,11 +8,12 @@ use gpui_kit::component::{
     tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
+use gpui_kit::{Context, div};
 
 use super::super::{AppPage, AppView};
 
 impl AppView {
-    /// 主窗口的原生标题栏承载应用级导航；内容工作区不再拥有第二套侧栏导航。
+    /// 标题栏承载导航，交互控件需遮挡底层的窗口拖动命中区。
     pub(in crate::ui::app) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         TitleBar::new().child(self.render_title_bar_navigation(cx))
     }
@@ -39,16 +39,19 @@ impl AppView {
                     })
                     .child(
                         Tab::new()
+                            .occlude()
                             .prefix(Icon::new(IconName::Frame).left_2())
                             .label("边框水印"),
                     )
                     .child(
                         Tab::new()
+                            .occlude()
                             .prefix(Icon::new(IconName::Images).left_2())
                             .label("预览Gainmap"),
                     )
                     .child(
                         Tab::new()
+                            .occlude()
                             .prefix(Icon::new(IconName::Palette).left_2())
                             .label("小工具"),
                     )
@@ -63,14 +66,22 @@ impl AppView {
                     })),
             )
             .child(
-                Button::new("app-settings")
-                    .icon(IconName::Settings)
-                    .label("设置")
-                    .outline()
-                    .small()
-                    .tooltip("设置")
-                    .accessibility_label("设置")
-                    .on_click(cx.listener(|this, _, _, cx| this.go_to(AppPage::Settings, cx))),
+                div()
+                    .id("app-settings-hitbox")
+                    .debug_selector(|| "app-settings-hitbox".into())
+                    .child(
+                        Button::new("app-settings")
+                            .occlude()
+                            .icon(IconName::Settings)
+                            .label("设置")
+                            .outline()
+                            .small()
+                            .tooltip("设置")
+                            .accessibility_label("设置")
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.go_to(AppPage::Settings, cx)),
+                            ),
+                    ),
             )
     }
 }

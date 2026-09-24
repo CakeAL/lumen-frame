@@ -217,7 +217,11 @@ fn dropping_files_on_the_workspace_enqueues_them(cx: &mut TestAppContext) {
 fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
 
-    view.update_in(cx, |view, _, cx| view.go_to(AppPage::Settings, cx));
+    cx.run_until_parked();
+    let settings_button = cx
+        .debug_bounds("app-settings-hitbox")
+        .expect("设置按钮没有渲染");
+    cx.simulate_click(settings_button.center(), Default::default());
     cx.run_until_parked();
 
     let preferences = cx
