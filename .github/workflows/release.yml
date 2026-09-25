@@ -16,7 +16,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate version
         id: version
         shell: bash
@@ -24,8 +24,8 @@ jobs:
           set -euo pipefail
           version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
           tag="v${version}"
-          if [[ "$GITHUB_REF_TYPE" != tag || "$GITHUB_REF_NAME" != "$tag" ]]; then
-            echo "Release must run from tag $tag (current ref: $GITHUB_REF)" >&2
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo.toml version $version" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -50,7 +50,7 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = '${{ matrix.arch }}'
           bash script/bundle-macos.sh '${{ matrix.arch }}'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bundle-macos-${{ matrix.arch }}
           path: |
@@ -78,9 +78,11 @@ jobs:
     env:
       VCPKGRS_DYNAMIC: '1'
       VCPKGRS_TRIPLET: x64-windows
+      # The overlay port reads this path after vcpkg isolates its build environment.
+      VCPKG_KEEP_ENV_VARS: VIPS_DEV_ROOT
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -125,12 +127,15 @@ jobs:
       - name: Install libvips through local vcpkg overlay
         shell: pwsh
         run: |
+          if (-not $env:VIPS_DEV_ROOT -or -not (Test-Path -LiteralPath (Join-Path $env:VIPS_DEV_ROOT 'lib\libvips.lib'))) {
+            throw 'VIPS_DEV_ROOT 未指向已解压的 libvips 开发包'
+          }
           & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install vips:x64-windows "--overlay-ports=$env:GITHUB_WORKSPACE\vcpkg-overlay"
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg 安装 libvips 失败' }
       - name: Build and verify Windows package
         shell: pwsh
         run: ./script/bundle-windows.ps1 -VipsDir $env:VIPS_DEV_ROOT -Variant web -CreateZip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bundle-windows-x86_64
           path: dist/Lumen-Frame-${{ needs.metadata.outputs.version }}-Windows-x86_64.zip
@@ -138,6 +143,7 @@ jobs:
           retention-days: 7
 
   draft:
+    if: github.ref_type == 'tag'
     needs: [metadata, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
@@ -147,8 +153,8 @@ jobs:
       RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
         with:
           pattern: bundle-*
           merge-multiple: true

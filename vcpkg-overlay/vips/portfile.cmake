@@ -6,7 +6,7 @@ endif()
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 
 if(NOT DEFINED ENV{VIPS_DEV_ROOT} OR "$ENV{VIPS_DEV_ROOT}" STREQUAL "")
-    message(FATAL_ERROR "Set VIPS_DEV_ROOT to the extracted x64 libvips development directory")
+    message(FATAL_ERROR "Set VIPS_DEV_ROOT to the extracted x64 libvips development directory and VCPKG_KEEP_ENV_VARS=VIPS_DEV_ROOT")
 endif()
 file(TO_CMAKE_PATH "$ENV{VIPS_DEV_ROOT}" VIPS_DEV_ROOT)
 if(NOT EXISTS "${VIPS_DEV_ROOT}/lib/libvips.lib" OR NOT EXISTS "${VIPS_DEV_ROOT}/bin/libvips-42.dll")

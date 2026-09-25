@@ -138,9 +138,13 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 # VIPS_DEV_ROOT 指向解压后的开发包根目录（下面有 include、lib、bin）。
 $env:VCPKG_ROOT = 'C:\path\to\vcpkg'
 $env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-x64-web-8.18.6'
+$env:VCPKG_KEEP_ENV_VARS = 'VIPS_DEV_ROOT'
 & "$env:VCPKG_ROOT\vcpkg.exe" install vips:x64-windows --overlay-ports=./vcpkg-overlay
 cargo build --release
 ```
+
+vcpkg 默认清理 port 的构建环境变量；`VCPKG_KEEP_ENV_VARS` 让本地 overlay 的
+`portfile.cmake` 能读取 `VIPS_DEV_ROOT`。
 
 ### 打包
 
@@ -172,9 +176,10 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 
 ## GitHub Actions Release 草稿
 
-`.github/workflows/release.yml` 在推送 `v<版本>` 标签，或对同一标签手动触发时运行
+`.github/workflows/release.yml` 在推送 `v<版本>` 标签，或手动触发时运行。
+手动从分支触发只构建并上传产物，可用于验证打包；从版本标签触发才创建 Release 草稿
 （例如 `gh workflow run release.yml --ref v1.0.0`）。
-它会核对标签与 `Cargo.toml` 的版本，并通过 `mindsers/changelog-reader-action`
+它会核对版本标签与 `Cargo.toml` 的版本，并通过 `mindsers/changelog-reader-action`
 读取 `CHANGELOG.md` 的对应章节，
 再分别用 macOS Apple Silicon、macOS Intel 与 Windows x86-64 runner 打包。
 三个构建都成功后，工作流将两个 DMG、两个 macOS 更新 ZIP 和一个 Windows ZIP
