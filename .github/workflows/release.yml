@@ -76,7 +76,6 @@ jobs:
     needs: metadata
     runs-on: windows-2025
     env:
-      VCPKG_ROOT: ${{ runner.temp }}\vcpkg
       VCPKGRS_DYNAMIC: '1'
       VCPKGRS_TRIPLET: x64-windows
       GH_TOKEN: ${{ github.token }}
@@ -89,6 +88,8 @@ jobs:
       - name: Install vcpkg
         shell: pwsh
         run: |
+          $env:VCPKG_ROOT = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          "VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
           git clone --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
           if ($LASTEXITCODE -ne 0) { throw '克隆 vcpkg 失败' }
           & (Join-Path $env:VCPKG_ROOT 'bootstrap-vcpkg.bat') -disableMetrics
