@@ -10,6 +10,7 @@
 # 不传参数时构建当前 Mac 的架构。产物：
 #   dist/Lumen-Frame-<版本>-macOS-arm64.dmg
 #   dist/Lumen-Frame-<版本>-macOS-x86_64.dmg
+#   dist/Lumen-Frame-<版本>-<Rust 目标三元组>.zip（供应用内更新）
 
 set -euo pipefail
 
@@ -77,7 +78,7 @@ esac
 [ -f "$APP_ICON" ] || die "找不到应用图标：$APP_ICON"
 [ -f "$DMG_BACKGROUND" ] || die "找不到 DMG 背景：$DMG_BACKGROUND"
 
-for required_command in cargo rustup dylibbundler create-dmg otool install_name_tool codesign lipo; do
+for required_command in cargo rustup dylibbundler create-dmg otool install_name_tool codesign lipo ditto; do
     command -v "$required_command" >/dev/null 2>&1 \
         || die "找不到 ${required_command}，请先安装后再打包"
 done
@@ -128,7 +129,7 @@ require_arch() {
 bundle_arch() {
     local arch="$1" target brew_bin vips_prefix glib_prefix gettext_prefix
     local arch_dist app contents macos_dir frameworks vips_lib_dir vips_module_dir binary
-    local source_module target_module lib_count problems file rpaths dep relative dmg
+    local source_module target_module lib_count problems file rpaths dep relative dmg archive
     local -a module_targets bundler_target_args
 
     case "$arch" in
@@ -202,6 +203,8 @@ bundle_arch() {
 </plist>
 PLIST
 
+    # ---------------------------------------------------------------- 3. 收集并重写动态库
+
     module_targets=()
     bundler_target_args=(-x "$macos_dir/$EXECUTABLE")
     for module in "${VIPS_MODULES[@]}"; do
@@ -213,8 +216,6 @@ PLIST
         module_targets+=("$target_module")
         bundler_target_args+=(-x "$target_module")
     done
-
-    # ---------------------------------------------------------------- 3. 收集并重写动态库
 
     say "用 dylibbundler 收集并重写 $arch 动态库"
     # -x 同时包含主程序和运行期加载的 vips 模块；否则模块自身的依赖仍会指向构建机。
@@ -283,7 +284,15 @@ PLIST
     fi
     say "  依赖全部指向包内"
 
-    # ---------------------------------------------------------------- 6. DMG
+    # ---------------------------------------------------------------- 6. 应用内更新包
+
+    archive="$DIST/Lumen-Frame-$APP_VERSION-$target.zip"
+    say "生成应用内更新包 $(basename "$archive")"
+    rm -f "$archive"
+    ditto -c -k --sequesterRsrc --keepParent "$app" "$archive"
+    [ -s "$archive" ] || die "没有生成应用内更新包：$archive"
+
+    # ---------------------------------------------------------------- 7. DMG
 
     dmg="$DIST/Lumen-Frame-$APP_VERSION-macOS-$arch.dmg"
     say "使用 create-dmg 和 assets/bg.svg 生成 $(basename "$dmg")"
@@ -304,6 +313,7 @@ PLIST
 
     [ -f "$dmg" ] || die "create-dmg 完成但没有生成：$dmg"
     say "完成：$dmg"
+    say "完成：$archive"
     printf '  架构：%s\n' "$arch"
     printf '  DMG 体积：%s\n' "$(du -sh "$dmg" | cut -f1)"
     printf '  App 体积：%s\n' "$(du -sh "$app" | cut -f1)"

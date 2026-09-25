@@ -569,7 +569,7 @@ impl AppView {
                                             .text_sm()
                                             .text_color(cx.theme().foreground)
                                             .child(format!(
-                                                "Lumen Frame {}",
+                                                "Lumen Frame v{}",
                                                 env!("CARGO_PKG_VERSION")
                                             )),
                                     )

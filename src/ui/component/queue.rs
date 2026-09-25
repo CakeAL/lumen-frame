@@ -20,10 +20,14 @@ use crate::workspace::QueuedPhoto;
 ///
 /// 不直接读 libvips 支持的格式列表：这里同时是给用户的提示——拖入非图片文件时会被
 /// 安静地忽略，而不是排进队列后在预览里报错。
+// macOS 随包使用完整的 Homebrew libvips；Windows web 包不包含 HEIC/AVIF/RAW。
+#[cfg(target_os = "macos")]
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "tif", "tiff", "heic", "heif", "avif", "bmp", "gif", "raf",
     "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "pef", "srw",
 ];
+#[cfg(not(target_os = "macos"))]
+const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif"];
 
 pub(in crate::ui::app) fn is_supported_image(path: &std::path::Path) -> bool {
     path.extension()
@@ -208,5 +212,51 @@ impl AppView {
                     })
                     .child(name),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_supported_image;
+    use std::path::Path;
+
+    #[test]
+    fn photo_queue_accepts_common_formats() {
+        for name in [
+            "photo.jpg",
+            "photo.PNG",
+            "photo.webp",
+            "photo.tiff",
+            "photo.bmp",
+            "photo.gif",
+        ] {
+            assert!(is_supported_image(Path::new(name)), "{name}");
+        }
+        assert!(!is_supported_image(Path::new("photo.txt")));
+    }
+
+    #[test]
+    fn photo_queue_matches_platform_format_support() {
+        for name in [
+            "photo.heic",
+            "photo.heif",
+            "photo.avif",
+            "photo.raf",
+            "photo.cr2",
+            "photo.cr3",
+            "photo.nef",
+            "photo.arw",
+            "photo.dng",
+            "photo.orf",
+            "photo.rw2",
+            "photo.pef",
+            "photo.srw",
+        ] {
+            assert_eq!(
+                is_supported_image(Path::new(name)),
+                cfg!(target_os = "macos"),
+                "{name}"
+            );
+        }
     }
 }

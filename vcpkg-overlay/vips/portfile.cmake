@@ -5,9 +5,12 @@ endif()
 # The upstream development archive ships one release build of each binary.
 set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 
-set(VIPS_DEV_ROOT "C:/Users/CakeAL/Desktop/vsc/lumen-frame/vips-dev-8.18")
+if(NOT DEFINED ENV{VIPS_DEV_ROOT} OR "$ENV{VIPS_DEV_ROOT}" STREQUAL "")
+    message(FATAL_ERROR "Set VIPS_DEV_ROOT to the extracted x64 libvips development directory")
+endif()
+file(TO_CMAKE_PATH "$ENV{VIPS_DEV_ROOT}" VIPS_DEV_ROOT)
 if(NOT EXISTS "${VIPS_DEV_ROOT}/lib/libvips.lib" OR NOT EXISTS "${VIPS_DEV_ROOT}/bin/libvips-42.dll")
-    message(FATAL_ERROR "libvips 8.18.6 development files not found at ${VIPS_DEV_ROOT}")
+    message(FATAL_ERROR "libvips 8.18.6 x64 development files not found at ${VIPS_DEV_ROOT}")
 endif()
 
 file(COPY "${VIPS_DEV_ROOT}/include/" DESTINATION "${CURRENT_PACKAGES_DIR}/include")

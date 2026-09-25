@@ -13,13 +13,17 @@
 .PARAMETER Variant
     用于提示格式支持差异：web（默认，体积小、无 HEIC/AVIF 与相机 RAW）或 all。
 
+.PARAMETER CreateZip
+    同时生成可上传到 GitHub Releases 的带版本号 ZIP。
+
 .EXAMPLE
     .\script\bundle-windows.ps1 -VipsDir C:\vips\vips-dev-w64-web-8.18.6
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$VipsDir,
-    [ValidateSet('web', 'all')][string]$Variant = 'web'
+    [ValidateSet('web', 'all')][string]$Variant = 'web',
+    [switch]$CreateZip
 )
 
 $ErrorActionPreference = 'Stop'
@@ -178,4 +182,19 @@ if ($Variant -eq 'web') {
     if (-not (Test-Path (Join-Path $outDir 'libraw.dll'))) {
         Write-Host '  本包未包含 libraw，不支持相机 RAW。' -ForegroundColor Yellow
     }
+}
+
+if ($CreateZip) {
+    $manifest = Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw
+    if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+        throw '无法从 Cargo.toml 读取应用版本'
+    }
+    $archive = Join-Path $distRoot ("Lumen-Frame-{0}-Windows-x86_64.zip" -f $Matches[1])
+    if (Test-Path -LiteralPath $archive) {
+        Remove-Item -LiteralPath $archive -Force
+    }
+    # self_update 默认从 ZIP 根目录读取 lumen-frame.exe，不能再包一层 lumen-frame/。
+    Compress-Archive -Path (Join-Path $outDir '*') -DestinationPath $archive -CompressionLevel Optimal
+    if (-not (Test-Path -LiteralPath $archive)) { throw "未生成发布包：$archive" }
+    Say "发布包：$archive"
 }

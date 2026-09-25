@@ -16,9 +16,10 @@
 ## macOS
 
 ```bash
-brew install dylibbundler create-dmg
+brew install vips glib gettext dylibbundler create-dmg
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
+# 每个架构在对应的 Mac 上分别构建。
 script/bundle-macos.sh arm64    # Apple Silicon DMG
 script/bundle-macos.sh x86_64   # Intel DMG
 script/bundle-macos.sh all      # 两套环境齐全时依次构建二者
@@ -27,24 +28,27 @@ script/bundle-macos.sh all      # 两套环境齐全时依次构建二者
 不传架构时构建当前 Mac 对应的版本。两种架构保持为独立安装包，不会合并成 Universal Binary：
 
 ```
-dist/Lumen-Frame-0.1.0-macOS-arm64.dmg
-dist/Lumen-Frame-0.1.0-macOS-x86_64.dmg
+dist/Lumen-Frame-<版本>-macOS-arm64.dmg
+dist/Lumen-Frame-<版本>-macOS-x86_64.dmg
+dist/Lumen-Frame-<版本>-aarch64-apple-darwin.zip
+dist/Lumen-Frame-<版本>-x86_64-apple-darwin.zip
 ```
 
 脚本使用 `create-dmg` 排列应用与 Applications 快捷方式，并直接将 660×400 的
 `assets/bg.svg` 设为 Finder 背景。
+同架构 ZIP 包含 `Lumen Frame.app`，供应用内的 `self_update` 使用；手动安装仍使用 DMG。
 
 每个架构必须链接同架构的 Homebrew/libvips。默认查找位置是 Apple Silicon 的
 `/opt/homebrew/bin/brew` 和 Intel 的 `/usr/local/bin/brew`，也可以用 `BREW_ARM64`、
 `BREW_X86_64` 指定其它位置。若在 Apple Silicon 机器交叉构建 Intel 版本，需要另外安装
 Rosetta 2 和 x86_64 Homebrew，并由后者安装 `vips`、`glib`、`gettext`。脚本会用 `lipo`
-检查主程序、vips 模块及所有随附动态库，架构混用会立即报错，不会生成伪装成 Intel 的 DMG。
+检查主程序、vips 模块及所有随附动态库，架构混用会立即报错。CI 分别在两个原生 runner 构建。
 
-脚本做七件事：
+脚本做八件事：
 
 1. 按所选架构执行 `cargo build --release --target …`
 2. 建 `.app` 骨架 + `Info.plist`，并复制 `assets/app-icon/LumenFrame.icns` 作为兼容图标
-3. 复制需要运行期加载的 vips 格式模块，并将主程序和这些模块一并传给 `dylibbundler`
+3. 复制运行期加载的 `vips-heif` 模块，并将主程序和模块一并传给 `dylibbundler`
 4. `dylibbundler` 递归收集非系统动态库到 `Contents/Frameworks/`，并将引用改为
    `@executable_path/../Frameworks/…`；对模块使用同一个路径是安全的，因为
    `@executable_path` 始终相对于主程序的 `Contents/MacOS/`
@@ -54,54 +58,25 @@ Rosetta 2 和 x86_64 Homebrew，并由后者安装 `vips`、`glib`、`gettext`�
    `install_name_tool` 也会让原签名失效，Apple Silicon 上不重签根本加载不了
 6. 校验：包内所有 Mach-O 都是目标架构；任何漏网的绝对路径依赖、或无法在包内解析的
    `@executable_path` / `@loader_path` 都**报错退出**
-7. 使用 `assets/bg.svg` 和 `create-dmg` 生成带 Applications 拖放入口的 DMG
+7. 用 `ditto` 生成保留 `.app` 结构的 ZIP 更新包
+8. 使用 `assets/bg.svg` 和 `create-dmg` 生成带 Applications 拖放入口的 DMG
 
-`dylibbundler` 通过 Homebrew 安装。脚本将 vips、glib 与 gettext 的 `lib/` 目录作为搜索路径，
-因为 Homebrew 库的依赖可能是 `@rpath` 形式。需要新增其它运行期插件时，要把该插件也加入
-脚本的 `VIPS_MODULES`，让 `dylibbundler` 同时处理它的依赖。
+`dylibbundler` 通过 Homebrew 安装。脚本将 vips、glib 与 gettext
+的 `lib/` 目录作为搜索路径，因为 Homebrew 库的依赖可能是 `@rpath` 形式。
 
 ### vips 的格式模块
 
-libvips 把 HEIC/AVIF 这类可选格式做成了运行期 `g_module_open` 的模块，查找路径来自
-**编译期写死的 libdir**。Homebrew 的 bottle 里那个路径是构建机的：
-
-```
-VIPS-INFO: libdir = /Users/runner/work/sharp-libvips/sharp-libvips/target/lib
-```
-
-在谁的机器上都不存在。所以打包时模块放在 `Contents/lib/vips-modules-8.18/`，
-`src/main.rs` 的 `point_vips_at_bundled_modules()` 在 `vips_init` 之前把 `VIPS_LIBDIR`
-指到 `Contents/lib`。未打包时该目录不存在，函数不做任何事。
+libvips 把 HEIC/AVIF 等可选格式做成运行期模块，查找路径来自编译期 libdir，
+但 Homebrew bottle 中的路径可能指向构建机。脚本将 `vips-heif` 放在
+`Contents/lib/vips-modules-8.18/`，`src/main.rs` 在初始化前将 `VIPS_LIBDIR`
+指向此处。新增其它可选模块时，也要复制模块并交给 `dylibbundler` 处理依赖。
+macOS 包使用完整 Homebrew libvips；具体 HEIC/AVIF/RAW 解码能力仍需用真实样张验证。
 
 ### 体积
 
-打包后约 **71 MB**：
-
-| 部分 | 体积 | 说明 |
-| --- | --- | --- |
-| 主程序 | 22.7 MB | GPUI 本身占大头；`Cargo.toml` 里 `strip = true` 已经压过 |
-| Frameworks | 约 47 MB | 70 个库 |
-| vips 模块 | 168 KB | `vips-heif` |
-
-Frameworks 里各块的归属：
-
-| 功能 | 体积 | 要不要 |
-| --- | --- | --- |
-| SVG（librsvg + cairo/pango/harfbuzz/freetype/fontconfig…，31 个库） | 17.9 MB | **必需**：`{Logo}` 和圆角/阴影遮罩都走 `svgload_buffer` |
-| HEIC/AVIF（libheif + libx265 + libaom） | 14.7 MB | 看需求；libx265 是**编码器**，我们只读不写 |
-| MATLAB（matio） | 4.5 MB | 用不到 |
-| HDF5 | 4.1 MB | 用不到 |
-| EXR（openexr + Imath + Iex + IlmThread） | 2.7 MB | 用不到 |
-| 相机 RAW（libraw） | 2.5 MB | 支持 cr2/cr3/nef/arw/dng 需要 |
-| FITS（cfitsio） | 1.2 MB | 用不到 |
-
-**注意：这些（除了已去掉的 JXL）是 libvips 的硬依赖（`LC_LOAD_DYLIB`），
-删文件会让 dyld 拒绝加载 libvips。** 要减只能换一个 feature 更少的 libvips 构建。
-
-已经拿到的两处（零代码改动，81 → 71 MB）：
-
-- `strip = true`：主程序 29.2 → 22.7 MB
-- 不打包 `vips-jxl`：libvips 自己并不链 libjxl，去掉模块后那 7 个库（3.3 MB）整棵子树都不进包
+本机 arm64 实测：完整 Homebrew libvips 包的 `.app` 约 89 MB，DMG 约 36 MB
+（38,152,157 字节），包含约 70 个动态库和 `vips-heif` 模块；Intel 与 CI 产物可能不同。
+不能直接从完整包中删除 libheif/libraw 等依赖，否则 dyld 可能拒绝启动。
 
 ### 还想更小的话
 
@@ -109,16 +84,10 @@ Frameworks 里各块的归属：
    把 26 个品牌标志在构建期预渲染成 PNG（`include_bytes!` 嵌入），圆角/阴影遮罩改成
    「预生成一张小尺寸圆角 PNG，运行时 resize」。之后 `svgload_buffer` 不再被调用，
    就可以用不带 librsvg 的 libvips 构建。代价是改代码 + 遮罩质量需要比对。
-2. **换成 feature 更少的 libvips 构建（省约 12 MB）**
-   自己用 meson 构建，关掉用不到的格式：
-   ```
-   meson setup build -Dmatio=disabled -Dhdf5=disabled -Dopenexr=disabled \
-                     -Dcfitsio=disabled -Dpoppler=disabled -Dmagick=disabled \
-                     -Dopenslide=disabled -Djxl=disabled -Dfftw=disabled
-   ```
-3. **去掉 HEIC/AVIF（省约 15 MB）**
-   关掉 `-Dheif=disabled`，同时把这两个扩展名从界面的支持列表和文件过滤里去掉。
-4. 正式分发还需要 **Developer ID 签名 + 公证**（notarization），否则别人第一次打开会被
+2. **使用精简版 libvips**
+   可以从源码关闭不需要的格式，但会增加两种 macOS 架构的构建与维护成本。
+   当前发布流程优先使用 Homebrew 的现成包。
+3. 正式分发还需要 **Developer ID 签名 + 公证**（notarization），否则别人第一次打开会被
    Gatekeeper 拦下。现在的 ad-hoc 签名只适合自己人之间传。
 
 ---
@@ -130,10 +99,14 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 
 ### 准备 libvips
 
-从 [libvips releases](https://github.com/libvips/libvips/releases) 下载预编译包并解压：
+从 [build-win64-mxe v8.18.6](https://github.com/libvips/build-win64-mxe/releases/tag/v8.18.6)
+下载预编译包并解压。Windows x86-64 应选择 `vips-dev-x64-web-8.18.6.zip`；
+`vips-dev-arm64-web-8.18.6.zip` 是 Windows ARM64 包，不能用于本项目的 x86-64 构建。
 
-- `vips-dev-w64-web-x.y.z.zip` —— 体积小，格式少
-- `vips-dev-w64-all-x.y.z.zip` —— 体积大，格式全
+上游提供两种变体：
+
+- `vips-dev-x64-web-x.y.z.zip` —— 体积小，格式少
+- `vips-dev-x64-all-x.y.z.zip` —— 体积大，格式全
 
 这是 [libvips 官方安装说明](https://www.libvips.org/install.html)推荐的 Windows 安装方式，
 由 [build-win64-mxe](https://github.com/libvips/build-win64-mxe) 用 MinGW-w64 容器化构建。
@@ -149,8 +122,8 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 | **相机 RAW（cr2/nef/arw/dng…）** | ❌ | ✅ |
 | MATLAB / HDF5 / FITS / EXR / PDF / WSI | ❌ | ✅ |
 
-`web` 没有 libheif 和 libraw。如果选 `web`，**要同时把对应扩展名从
-`src/ui/component/queue.rs` 的 `SUPPORTED_EXTENSIONS` 里去掉**，否则文件选择器会接受打不开的格式。
+`web` 没有 libheif 和 libraw。`src/ui/component/queue.rs` 在 Windows 上不接受
+HEIC、AVIF 和相机 RAW，避免文件进入队列后才解码失败；macOS 继续接受这些格式。
 
 ### 构建
 
@@ -159,18 +132,22 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 因此资源管理器、任务栏和快捷方式可以各自选择合适分辨率。
 
 ```powershell
-# 本项目的 .cargo/config.toml 会从同级 ../vcpkg 找 vips:x64-windows。
-# 如果 vcpkg 不在该位置，请先设置 VCPKG_ROOT。
+# 设置 VCPKG_ROOT 和 VIPS_DEV_ROOT，再用本地 overlay 安装 vips:x64-windows。
+# VIPS_DEV_ROOT 指向解压后的开发包根目录（下面有 include、lib、bin）。
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+$env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-x64-web-8.18.6'
+& "$env:VCPKG_ROOT\vcpkg.exe" install vips:x64-windows --overlay-ports=./vcpkg-overlay
 cargo build --release
 ```
 
 ### 打包
 
 ```powershell
-.\script\bundle-windows.ps1 -VipsDir .\vips-dev-8.18 -Variant web
+.\script\bundle-windows.ps1 -VipsDir $env:VIPS_DEV_ROOT -Variant web -CreateZip
 ```
 
-产物是 `dist\lumen-frame\`，直接整个目录发出去即可 —— 里面的 exe 和 DLL 并排放着，
+产物是 `dist\lumen-frame\` 和 `dist\Lumen-Frame-<版本>-Windows-x86_64.zip`。
+ZIP 用于 Release 和应用内更新，解压后 exe 与 DLL 并排放着，
 Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重签名。
 
 脚本会扫描 exe、随附 DLL 和 vips 格式插件的导入表（`dumpbin /dependents` 或 `objdump -p`），
@@ -187,7 +164,22 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 - 配置和预设走 `dirs::config_dir()`，Windows 上是 `%APPDATA%\lumen-frame\presets`，
   代码不需要改。
 - 已验证打包程序可在不包含 vcpkg 或开发包路径的 PATH 下启动；发布前仍应手动检查
-  设置、照片预览、导出，以及 HEIC/AVIF 等所宣称支持的格式。
+  设置、常见格式的照片预览和导出。
+
+---
+
+## GitHub Actions Release 草稿
+
+`.github/workflows/release.yml` 在推送 `v<版本>` 标签或手动触发时运行。
+它会核对标签与 `Cargo.toml` 的版本，并通过 `mindsers/changelog-reader-action`
+读取 `CHANGELOG.md` 的对应章节，
+再分别用 macOS Apple Silicon、macOS Intel 与 Windows x86-64 runner 打包。
+三个构建都成功后，工作流将两个 DMG、两个 macOS 更新 ZIP 和一个 Windows ZIP
+上传至同一个 **GitHub Release 草稿**，草稿正文取自该版本的 Changelog。
+重跑时只更新已有草稿；若该版本已经正式发布，工作流会拒绝覆盖。
+
+工作流需要仓库允许 GitHub Actions 创建 Release（`contents: write`）；
+它不会自动把草稿发布。发布前仍须检查产物，macOS 正式分发还需 Developer ID 签名与公证。
 
 ---
 
@@ -199,5 +191,5 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 - [ ] 在一台**没装 Homebrew / vips** 的机器上启动一次
 - [ ] 拖入一张照片，确认预览出现（这一步才真正跑通 libvips 管线）
 - [ ] 导出一次，确认输出文件正常
-- [ ] 如果宣称支持 HEIC/AVIF 或 RAW，各拿一张真实样张试
+- [ ] macOS 用真实样张验证 HEIC/AVIF/RAW；Windows 确认这些格式不会进入队列
 - [ ] 打开「设置」确认配置目录可写（预设保存）
