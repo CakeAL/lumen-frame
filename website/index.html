@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07080a" />
+    <meta name="description" content="Lumen Frame 是一款桌面照片边框与水印工具。自由排版 EXIF 文字、批量处理照片，并保留 Ultra HDR Gain Map。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Lumen Frame — 让照片以自己的方式呈现" />
+    <meta property="og:description" content="边框、文字、EXIF、批量导出与 Ultra HDR，尽在一款原生桌面工具。" />
+    <meta property="og:image" content="https://cakeal.github.io/lumen-frame/assets/1.png" />
+    <meta property="og:url" content="https://cakeal.github.io/lumen-frame/" />
+    <link rel="canonical" href="https://cakeal.github.io/lumen-frame/" />
+    <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="main.js" defer></script>
+    <title>Lumen Frame — 照片边框与水印工具</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <header class="site-header">
+      <nav class="nav wrap" aria-label="主导航">
+        <a class="brand" href="#top" aria-label="Lumen Frame 首页">
+          <img src="assets/icon.svg" width="32" height="32" alt="" />
+          <span>Lumen Frame</span>
+        </a>
+        <button class="menu-toggle" type="button" aria-controls="nav-links" aria-expanded="false" aria-label="打开导航菜单"><span></span><span></span></button>
+        <div class="nav-links" id="nav-links">
+          <a href="#showcase">效果展示</a>
+          <a href="#features">功能</a>
+          <a href="#download">下载</a>
+          <a href="#connect">联系作者</a>
+        </div>
+        <a class="button button-light nav-cta" href="#download">获取应用 <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-stripes" aria-hidden="true"></div>
+        <div class="wrap hero-content">
+          <p class="eyebrow"><span class="eyebrow-line"></span> 为摄影作品收好最后一道光</p>
+          <h1 id="hero-title">让照片以自己的<br /><span>方式呈现。</span></h1>
+          <p class="hero-description">Lumen Frame 是一款桌面照片边框与水印工具。自由安排留白、文字和拍摄信息，让每张照片都带着自己的故事出场。</p>
+          <div class="hero-actions">
+            <a class="button button-light" href="#download">免费下载 <span aria-hidden="true">↗</span></a>
+            <a class="button button-quiet" href="#showcase">看看能做什么 <span aria-hidden="true">↓</span></a>
+          </div>
+          <p class="hero-platforms">适用于 macOS 与 Windows · 开源项目</p>
+          <div class="hero-shot">
+            <img src="assets/1.png" width="1280" height="861" alt="Lumen Frame 的边框水印编辑界面，正在预览一张带 EXIF 水印的烟花照片" fetchpriority="high" />
+          </div>
+        </div>
+      </section>
+
+      <section class="section showcase" id="showcase" aria-labelledby="showcase-title">
+        <div class="wrap">
+          <div class="section-heading">
+            <p class="eyebrow">01 / 效果展示</p>
+            <h2 id="showcase-title">同一张照片，<br />不止一种表达。</h2>
+            <p>从克制的白边，到自由构图的宽画幅。所见即所得的预览，让微调成为创作的一部分。</p>
+          </div>
+          <div class="showcase-grid">
+            <figure class="image-panel image-panel-light">
+              <img src="assets/2.png" width="1280" height="861" loading="lazy" alt="白色边框样式在 Lumen Frame 中的预览" />
+              <figcaption><span>01 / 经典边框</span><strong>把目光留给画面</strong></figcaption>
+            </figure>
+            <figure class="image-panel">
+              <img src="assets/5.png" width="1280" height="785" loading="lazy" alt="十六比九画幅、左侧竖排文字与右侧日期地点信息的预览" />
+              <figcaption><span>02 / 自由排版</span><strong>让信息有自己的位置</strong></figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section features" id="features" aria-labelledby="features-title">
+        <div class="wrap">
+          <div class="section-heading section-heading-centered">
+            <p class="eyebrow">02 / 创作工具</p>
+            <h2 id="features-title">照片的最后一步，<br />交给你。</h2>
+            <p>一组足够细致的工具，装进简洁的桌面工作流。</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature-card">
+              <span class="feature-index">01</span>
+              <div class="feature-mark" aria-hidden="true">▣</div>
+              <h3>边框与画布</h3>
+              <p>调节四边留白、圆角、阴影和背景，也能指定 16:9 等宽高比与照片位置。</p>
+            </article>
+            <article class="feature-card">
+              <span class="feature-index">02</span>
+              <div class="feature-mark" aria-hidden="true">≡</div>
+              <h3>灵活的文字水印</h3>
+              <p>文字组可放在照片四周。拍摄参数、时间、地点与相机品牌标志，都能组成自己的版式。</p>
+            </article>
+            <article class="feature-card">
+              <span class="feature-index">03</span>
+              <div class="feature-mark" aria-hidden="true">◫</div>
+              <h3>批量与预设</h3>
+              <p>在照片队列中统一处理作品；内置常用样式，也可保存自己的参数预设。</p>
+            </article>
+            <article class="feature-card">
+              <span class="feature-index">04</span>
+              <div class="feature-mark" aria-hidden="true">✦</div>
+              <h3>为新格式留空间</h3>
+              <p>支持保留 Ultra HDR Gain Map，并提供彩色 Gain Map 和 Motion Photo 制作工具。</p>
+            </article>
+          </div>
+          <div class="utility-grid">
+            <figure class="utility-panel">
+              <img src="assets/3.png" width="1280" height="861" loading="lazy" alt="彩色 Gain Map 工具界面" />
+              <figcaption><span>GAIN MAP</span><strong>让高光继续发光</strong><p>从照片创建“黑白底图 + 彩色 Gain Map”。</p></figcaption>
+            </figure>
+            <figure class="utility-panel">
+              <img src="assets/4.png" width="1280" height="861" loading="lazy" alt="从视频生成 Motion Photo 的工具界面" />
+              <figcaption><span>MOTION PHOTO</span><strong>让瞬间继续流动</strong><p>从 MP4 视频制作 Motion Photo，保留画面之后的几秒。</p></figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="section download" id="download" aria-labelledby="download-title">
+        <div class="wrap">
+          <div class="section-heading section-heading-centered">
+            <p class="eyebrow">03 / 下载</p>
+            <h2 id="download-title">把照片，交还给照片。</h2>
+            <p>选择你的设备，获取最新正式版。<span id="release-version" class="release-version" aria-live="polite"></span></p>
+          </div>
+          <div class="download-grid">
+            <article class="download-card">
+              <div class="platform-icon" aria-hidden="true">⌘</div>
+              <p class="platform-label">macOS</p>
+              <h3>Apple Silicon</h3>
+              <p>M 系列芯片 · DMG 安装包</p>
+              <a class="button button-light asset-link" data-asset="mac-arm" href="https://github.com/CakeAL/lumen-frame/releases/latest" rel="noopener noreferrer">查看最新版本 <span aria-hidden="true">↗</span></a>
+            </article>
+            <article class="download-card">
+              <div class="platform-icon" aria-hidden="true">⌘</div>
+              <p class="platform-label">macOS</p>
+              <h3>Intel</h3>
+              <p>Intel 芯片 · DMG 安装包</p>
+              <a class="button button-light asset-link" data-asset="mac-intel" href="https://github.com/CakeAL/lumen-frame/releases/latest" rel="noopener noreferrer">查看最新版本 <span aria-hidden="true">↗</span></a>
+            </article>
+            <article class="download-card">
+              <div class="platform-icon windows-icon" aria-hidden="true">⊞</div>
+              <p class="platform-label">Windows</p>
+              <h3>x86-64</h3>
+              <p>Windows x86-64 · ZIP 压缩包</p>
+              <a class="button button-light asset-link" data-asset="windows" href="https://github.com/CakeAL/lumen-frame/releases/latest" rel="noopener noreferrer">查看最新版本 <span aria-hidden="true">↗</span></a>
+            </article>
+          </div>
+          <p class="download-note">macOS 首次打开若被系统拦截，请在 Finder 中右键应用并选择“打开”。Windows 请解压整个文件夹后运行 exe。Motion Photo 功能需另装 FFmpeg。<a href="https://github.com/CakeAL/lumen-frame/releases/latest" target="_blank" rel="noopener noreferrer">查看全部版本与说明 ↗</a></p>
+        </div>
+      </section>
+
+      <section class="section connect" id="connect" aria-labelledby="connect-title">
+        <div class="wrap">
+          <div class="section-heading section-heading-centered">
+            <p class="eyebrow">04 / 保持联系</p>
+            <h2 id="connect-title">一起，把它做得更好。</h2>
+            <p>分享作品、交流想法，或支持这个独立开发的工具。</p>
+          </div>
+          <div class="social-grid">
+            <article class="social-card">
+              <div class="qr-frame"><img src="assets/rednote.jpg" width="987" height="1347" loading="lazy" alt="作者的小红书主页二维码" /></div>
+              <div class="social-copy"><span>FOLLOW / 01</span><h3>小红书</h3><p>看看更多作品和开发日常。</p><a href="https://www.xiaohongshu.com/user/profile/64db20ba0000000001006e6c" target="_blank" rel="noopener noreferrer">打开主页 <span aria-hidden="true">↗</span></a></div>
+            </article>
+            <article class="social-card">
+              <div class="qr-frame"><img src="assets/bilibili.jpg" width="1027" height="1459" loading="lazy" alt="作者的 Bilibili 主页二维码" /></div>
+              <div class="social-copy"><span>FOLLOW / 02</span><h3>Bilibili</h3><p>关注视频与功能演示。</p><a href="https://space.bilibili.com/13161874" target="_blank" rel="noopener noreferrer">打开主页 <span aria-hidden="true">↗</span></a></div>
+            </article>
+            <article class="social-card">
+              <div class="qr-frame"><img src="assets/wechat_reward_code.jpg" width="1152" height="1152" loading="lazy" alt="作者的微信赞赏码" /></div>
+              <div class="social-copy"><span>SUPPORT / 03</span><h3>微信赞赏</h3><p>如果 Lumen Frame 帮到了你，欢迎扫码支持。</p><a href="assets/wechat_reward_code.jpg" target="_blank" rel="noopener noreferrer">查看大图 <span aria-hidden="true">↗</span></a></div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap footer-inner">
+        <a class="brand" href="#top"><img src="assets/icon.svg" width="28" height="28" alt="" /><span>Lumen Frame</span></a>
+        <p>为你拍下的每一刻，留下恰好的边框。</p>
+        <div class="footer-links"><a href="https://github.com/CakeAL/lumen-frame" target="_blank" rel="noopener noreferrer">GitHub ↗</a><a href="https://github.com/CakeAL/lumen-frame/issues" target="_blank" rel="noopener noreferrer">反馈建议 ↗</a></div>
+      </div>
+    </footer>
+  </body>
+</html>
