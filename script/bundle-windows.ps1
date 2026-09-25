@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     把 release 构建打成一个自带 libvips 的 Windows 目录包。
 
@@ -11,7 +11,7 @@
     解压好的 libvips Windows 目录，例如 C:\vips\vips-dev-w64-web-8.18.6。
 
 .PARAMETER Variant
-    用于提示格式支持差异：web（默认，体积小、无 HEIC/AVIF 与相机 RAW）或 all。
+    用于提示格式支持差异：web（默认，体积小、支持 AVIF、无相机 RAW）或 all。
 
 .PARAMETER CreateZip
     同时生成可上传到 GitHub Releases 的带版本号 ZIP。
@@ -175,7 +175,7 @@ Write-Host ('  文件：{0} 个' -f (Get-ChildItem $outDir -Recurse -File).Count
 if ($Variant -eq 'web') {
     Write-Host ''
     if (Test-Path (Join-Path $outDir 'libheif.dll')) {
-        Write-Host '  本包包含 libheif；HEIC/AVIF 加载器还需用真实样张验证。' -ForegroundColor Yellow
+        Write-Host '  本包包含 libheif；AVIF 已在 8.18.6 web 包验证，HEIC 仍需用真实样张验证。' -ForegroundColor Yellow
     } else {
         Write-Host '  本包未包含 libheif，不支持 HEIC/AVIF。' -ForegroundColor Yellow
     }

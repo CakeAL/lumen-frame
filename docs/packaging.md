@@ -118,12 +118,14 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 | JPEG / PNG / WebP / TIFF / GIF | ✅ | ✅ |
 | **SVG（librsvg）** | ✅ | ✅ |
 | EXIF / lcms | ✅ | ✅ |
-| **HEIC / AVIF** | ❌ | ✅ |
+| **AVIF** | ✅ | ✅ |
+| **HEIC / HEIF** | 未验证 | 未验证 |
 | **相机 RAW（cr2/nef/arw/dng…）** | ❌ | ✅ |
 | MATLAB / HDF5 / FITS / EXR / PDF / WSI | ❌ | ✅ |
 
-`web` 没有 libheif 和 libraw。`src/ui/component/queue.rs` 在 Windows 上不接受
-HEIC、AVIF 和相机 RAW，避免文件进入队列后才解码失败；macOS 继续接受这些格式。
+`web` 包含 libheif 和 AOM，已用 8.18.6 包验证 AVIF 编码与解码；它不含 libraw。
+`src/ui/component/queue.rs` 在 Windows 上接受 AVIF，但暂不接受 HEIC 和相机 RAW，
+避免尚未验证的文件进入队列后才解码失败；macOS 继续接受这些格式。
 
 ### 构建
 
@@ -170,7 +172,8 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 
 ## GitHub Actions Release 草稿
 
-`.github/workflows/release.yml` 在推送 `v<版本>` 标签或手动触发时运行。
+`.github/workflows/release.yml` 在推送 `v<版本>` 标签，或对同一标签手动触发时运行
+（例如 `gh workflow run release.yml --ref v1.0.0`）。
 它会核对标签与 `Cargo.toml` 的版本，并通过 `mindsers/changelog-reader-action`
 读取 `CHANGELOG.md` 的对应章节，
 再分别用 macOS Apple Silicon、macOS Intel 与 Windows x86-64 runner 打包。
@@ -191,5 +194,5 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 - [ ] 在一台**没装 Homebrew / vips** 的机器上启动一次
 - [ ] 拖入一张照片，确认预览出现（这一步才真正跑通 libvips 管线）
 - [ ] 导出一次，确认输出文件正常
-- [ ] macOS 用真实样张验证 HEIC/AVIF/RAW；Windows 确认这些格式不会进入队列
+- [ ] macOS 用真实样张验证 HEIC/AVIF/RAW；Windows 用真实照片验证 AVIF，并确认 HEIC/RAW 不会进入队列
 - [ ] 打开「设置」确认配置目录可写（预设保存）

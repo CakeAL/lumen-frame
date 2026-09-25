@@ -12,8 +12,3 @@
 - 借助用户安装的 FFmpeg，从视频片段生成 Motion Photo。
 - 提供 macOS Apple Silicon、macOS Intel 和 Windows x86-64 独立安装包。
 
-### 使用提示
-
-- Motion Photo 功能需要另行安装 FFmpeg。
-- macOS 使用 Homebrew 的完整 libvips；Windows web 包不支持 HEIC、AVIF 和相机 RAW。
-- macOS 应用目前采用临时签名，首次运行可能需要在 Finder 中右键选择“打开”。

@@ -20,14 +20,16 @@ use crate::workspace::QueuedPhoto;
 ///
 /// 不直接读 libvips 支持的格式列表：这里同时是给用户的提示——拖入非图片文件时会被
 /// 安静地忽略，而不是排进队列后在预览里报错。
-// macOS 随包使用完整的 Homebrew libvips；Windows web 包不包含 HEIC/AVIF/RAW。
+// macOS 随包使用完整的 Homebrew libvips；Windows web 包已验证 AVIF，HEIC 和相机 RAW 尚未支持。
 #[cfg(target_os = "macos")]
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "tif", "tiff", "heic", "heif", "avif", "bmp", "gif", "raf",
     "cr2", "cr3", "nef", "arw", "dng", "orf", "rw2", "pef", "srw",
 ];
 #[cfg(not(target_os = "macos"))]
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "tif", "tiff", "avif", "bmp", "gif",
+];
 
 pub(in crate::ui::app) fn is_supported_image(path: &std::path::Path) -> bool {
     path.extension()
@@ -227,6 +229,7 @@ mod tests {
             "photo.PNG",
             "photo.webp",
             "photo.tiff",
+            "photo.avif",
             "photo.bmp",
             "photo.gif",
         ] {
@@ -240,7 +243,6 @@ mod tests {
         for name in [
             "photo.heic",
             "photo.heif",
-            "photo.avif",
             "photo.raf",
             "photo.cr2",
             "photo.cr3",
