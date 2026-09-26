@@ -3,7 +3,7 @@
 Lumen Frame 是一款添加边框水印的工具。  
 它还提供 Ultra HDR Gain Map 查看、黑白底图与彩色 Gain Map 生成，以及从视频制作 Motion Photo 的小工具。
 
-产品介绍与下载：[Lumen Frame 网站](https://cakeal.github.io/lumen-frame/)。网站源码位于 `website/`，推送到 `main` 后由 GitHub Actions 发布到 GitHub Pages。
+产品介绍与下载：[Lumen Frame 网站](https://cakeal.github.io/lumen-frame/)。
 
 ## 特色
 
