@@ -52,14 +52,54 @@ pub fn cal_size(margin: &Margin, img_w: i32, img_h: i32, params: &WatermarkParam
     let mut canvas_h = img_h + margin.top + margin.bottom;
     let mut canvas_w = img_w + margin.left + margin.right;
     if let Some(aspect_ratio) = params.aspect_ratio {
-        let new_h = (canvas_w as f64 / aspect_ratio.0 * aspect_ratio.1).round() as i32;
-        if new_h < canvas_w {
-            canvas_w = (canvas_h as f64 / aspect_ratio.1 * aspect_ratio.0).round() as i32;
+        let new_h = (canvas_w as f64 / aspect_ratio.0 * aspect_ratio.1).ceil() as i32;
+        if new_h < canvas_h {
+            canvas_w = (canvas_h as f64 / aspect_ratio.1 * aspect_ratio.0).ceil() as i32;
         } else {
             canvas_h = new_h;
         }
     }
     (canvas_w, canvas_h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Margin, cal_size};
+    use crate::{render::image, watermark::WatermarkParams};
+
+    #[test]
+    fn aspect_ratio_expands_canvas_without_clipping_panorama() {
+        let params = WatermarkParams {
+            aspect_ratio: Some((16.0, 9.0)),
+            border_equal: true,
+            border_ratio: (0.05, 0.05, 0.05, 0.05),
+            ..Default::default()
+        };
+        let (img_w, img_h) = (3000, 1000);
+        let margin = Margin::cal_margin(img_w, img_h, &params);
+        let (canvas_w, canvas_h) = cal_size(&margin, img_w, img_h, &params);
+        let (img_x, img_y) =
+            image::cal_coordinates(&margin, canvas_w, canvas_h, img_w, img_h, &params);
+
+        assert_eq!(canvas_w, img_w + margin.left + margin.right);
+        assert_eq!(canvas_h, 1744);
+        assert_eq!(img_x, margin.left);
+        assert!(img_y >= margin.top);
+        assert!(canvas_w - img_x - img_w >= margin.right);
+        assert!(canvas_h - img_y - img_h >= margin.bottom);
+    }
+
+    #[test]
+    fn aspect_ratio_expands_canvas_width_for_tall_images() {
+        let params = WatermarkParams {
+            aspect_ratio: Some((16.0, 9.0)),
+            border_ratio: (0.0, 0.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        let margin = Margin::cal_margin(1000, 2000, &params);
+
+        assert_eq!(cal_size(&margin, 1000, 2000, &params), (3556, 2000));
+    }
 }
 
 /// 生成画布
