@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use lumen_frame::persistence::settings::{
     AppSettings, AppearanceMode, load_at, save_at, settings_path,
 };
+use lumen_frame::watermark::DEFAULT_FONT;
 
 fn scratch_file(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("lumen-frame-settings-{tag}"));
@@ -18,6 +19,7 @@ fn scratch_file(tag: &str) -> PathBuf {
 fn default_appearance_follows_the_system() {
     // 新装的应用没有偏好文件，这时应该跟随系统，而不是自作主张选一个明暗。
     assert_eq!(AppSettings::default().appearance, AppearanceMode::System);
+    assert_eq!(AppSettings::default().default_font, DEFAULT_FONT);
     assert_eq!(
         AppSettings::default().preview_background,
         [0x9a, 0xa7, 0xb1]
@@ -64,6 +66,7 @@ fn theme_slots_round_trip() {
         preview_max_edge: Some(800),
         preview_background: [0x24, 0x32, 0x4a],
         output_folder: Some(PathBuf::from("/tmp/lumen-frame-output")),
+        default_font: "Menlo".to_owned(),
     };
     save_at(&path, &settings).unwrap();
     assert_eq!(load_at(&path), settings);
@@ -79,6 +82,20 @@ fn theme_slots_round_trip() {
     );
     assert_eq!(loaded.preview_background, [0x9a, 0xa7, 0xb1]);
     assert_eq!(loaded.preview_max_edge, None);
+    assert_eq!(loaded.default_font, DEFAULT_FONT);
+
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+#[test]
+fn old_settings_without_a_font_use_the_default() {
+    let path = scratch_file("old-settings");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "appearance = \"Dark\"\n").unwrap();
+
+    let loaded = load_at(&path);
+    assert_eq!(loaded.appearance, AppearanceMode::Dark);
+    assert_eq!(loaded.default_font, DEFAULT_FONT);
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

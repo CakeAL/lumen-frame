@@ -24,6 +24,9 @@ pub struct WatermarkParams {
     /// 输出文件夹。这是本机环境状态，不写入预设。
     #[serde(skip)]
     pub output_folder: Option<PathBuf>,
+    /// 本机默认字体，由应用设置提供，不写入预设。
+    #[serde(skip, default = "default_font")]
+    pub default_font: String,
     /// 边框比例（上、下、左、右）。
     pub border_ratio: (f64, f64, f64, f64),
     pub border_equal: bool,
@@ -43,6 +46,7 @@ impl Default for WatermarkParams {
     fn default() -> Self {
         Self {
             output_folder: dirs::picture_dir().map(|path| path.join("watermark")),
+            default_font: default_font(),
             border_ratio: (0.05, 0.05, 0.05, 0.05),
             border_equal: false,
             aspect_ratio: None,
@@ -60,6 +64,11 @@ impl Default for WatermarkParams {
 }
 
 pub const DEFAULT_TIME_FORMAT: &str = "%Y/%m/%d";
+pub const DEFAULT_FONT: &str = "Arial";
+
+fn default_font() -> String {
+    DEFAULT_FONT.to_owned()
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextGroup {
@@ -97,6 +106,8 @@ pub enum TextDirection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextParams {
+    /// 空字符串表示继承应用的默认字体。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub font: String,
     pub size: f64,
     pub line_spacing: f64,
@@ -109,7 +120,7 @@ pub struct TextParams {
 impl Default for TextParams {
     fn default() -> Self {
         Self {
-            font: "Arial".to_string(),
+            font: String::new(),
             size: 0.03,
             line_spacing: 1.3,
             color: None,
@@ -117,6 +128,38 @@ impl Default for TextParams {
             bold: false,
             align: TextAlign::default(),
         }
+    }
+}
+
+impl TextParams {
+    pub(crate) fn resolved_font<'a>(&'a self, default_font: &'a str) -> &'a str {
+        if self.font.trim().is_empty() {
+            if default_font.trim().is_empty() {
+                DEFAULT_FONT
+            } else {
+                default_font
+            }
+        } else {
+            &self.font
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_FONT, TextParams};
+
+    #[test]
+    fn text_font_uses_global_default_only_when_unspecified() {
+        let inherited = TextParams::default();
+        assert_eq!(inherited.resolved_font("Menlo"), "Menlo");
+        assert_eq!(inherited.resolved_font(""), DEFAULT_FONT);
+
+        let explicit = TextParams {
+            font: "Times New Roman".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(explicit.resolved_font("Menlo"), "Times New Roman");
     }
 }
 

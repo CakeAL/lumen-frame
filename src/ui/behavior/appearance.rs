@@ -4,6 +4,7 @@ use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Context, SharedString, Window, WindowAppearance};
 
 use crate::persistence::settings::{self as settings_store, AppearanceMode};
+use crate::watermark::DEFAULT_FONT;
 
 use super::super::{AppView, page::settings};
 
@@ -46,6 +47,16 @@ impl AppView {
         }
     }
 
+    pub(in crate::ui::app) fn set_default_font(&mut self, font: String, cx: &mut Context<Self>) {
+        if self.params.default_font == font {
+            return;
+        }
+        self.params.default_font = font;
+        self.persist_settings_inner();
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
     pub(in crate::ui::app) fn apply_theme_slots(&self, cx: &mut App) {
         for name in [&self.light_theme, &self.dark_theme].into_iter().flatten() {
             if let Some(config) = crate::theme::find(name, cx) {
@@ -67,6 +78,7 @@ impl AppView {
             preview_max_edge: Some(self.preview_max_edge),
             preview_background: self.preview_background,
             output_folder: self.params.output_folder.clone(),
+            default_font: self.params.default_font.clone(),
         };
         self.settings_feedback = settings_store::save(&settings)
             .err()
@@ -80,6 +92,7 @@ impl AppView {
         self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;
         self.preview_max_edge = settings::DEFAULT_PREVIEW_MAX_EDGE;
         self.preview_background = settings_store::DEFAULT_PREVIEW_BACKGROUND;
+        self.params.default_font = DEFAULT_FONT.to_owned();
         let (light, dark) = {
             let registry = ThemeRegistry::global(cx);
             (
@@ -96,6 +109,10 @@ impl AppView {
         self.settings.dark_theme.update(cx, |state, cx| {
             state.set_selected_value(&dark_name, window, cx)
         });
+        let default_font = SharedString::from(self.params.default_font.clone());
+        self.settings.default_font.update(cx, |state, cx| {
+            state.set_selected_value(&default_font, window, cx)
+        });
         self.settings
             .preview_background
             .sync(self.preview_background, window, cx);
@@ -105,7 +122,8 @@ impl AppView {
         settings::apply_interface_scale(self.interface_scale, window, cx);
         self.apply_appearance(window, cx);
         self.persist_settings(cx);
-        self.settings_feedback = Some("已恢复默认外观。".into());
+        self.settings_feedback = Some("已恢复默认设置。".into());
+        self.refresh_preview(cx);
         cx.notify();
     }
 

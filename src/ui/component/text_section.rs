@@ -81,6 +81,8 @@ pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
 pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
+const INHERIT_FONT_LABEL: &str = "跟随默认字体";
+
 fn group_aligns(position: Placement) -> &'static [(&'static str, TextAlign)] {
     match position {
         Placement::Left | Placement::Right => VERTICAL_GROUP_ALIGNS,
@@ -170,9 +172,16 @@ impl TextLine {
         let line_spacing =
             NumberField::new(params.line_spacing, 1.0, 2.5, 0.05, 2, 1.0, "", window, cx);
 
-        let configured = SharedString::from(params.font.clone());
-        let mut font_items = Vec::with_capacity(fonts.len() + 1);
-        if !fonts.iter().any(|font| font == &configured) {
+        let configured = if params.font.trim().is_empty() {
+            SharedString::from(INHERIT_FONT_LABEL)
+        } else {
+            SharedString::from(params.font.clone())
+        };
+        let mut font_items = Vec::with_capacity(fonts.len() + 2);
+        font_items.push(INHERIT_FONT_LABEL.into());
+        if configured.as_ref() != INHERIT_FONT_LABEL
+            && !fonts.iter().any(|font| font == &configured)
+        {
             font_items.push(configured.clone());
         }
         font_items.extend(fonts.iter().cloned());
@@ -233,15 +242,20 @@ impl TextLine {
     }
 
     fn to_params(&self, cx: &App) -> TextParams {
+        let selected_font = self
+            .font
+            .read(cx)
+            .selected_values()
+            .first()
+            .cloned()
+            .unwrap_or_default()
+            .to_string();
         TextParams {
-            font: self
-                .font
-                .read(cx)
-                .selected_values()
-                .first()
-                .cloned()
-                .unwrap_or_default()
-                .to_string(),
+            font: if selected_font == INHERIT_FONT_LABEL {
+                String::new()
+            } else {
+                selected_font
+            },
             size: self.size.value(cx),
             line_spacing: self.line_spacing.value(cx),
             color: if self.auto_color {

@@ -33,7 +33,7 @@ use crate::persistence::{
     presets::{self, WatermarkPreset},
     settings::{self as settings_store, AppearanceMode},
 };
-use crate::watermark::{TextGroup, WatermarkParams};
+use crate::watermark::{DEFAULT_FONT, TextGroup, WatermarkParams};
 use crate::workspace::{PhotoId, PhotoWorkspace, QueuedPhoto};
 
 use super::image::{PreviewJob, export_colour_gainmap, export_gainmap, render_thumbnail};
@@ -142,6 +142,11 @@ impl AppView {
         if let Some(folder) = settings.output_folder.clone() {
             params.output_folder = Some(folder);
         }
+        params.default_font = if settings.default_font.trim().is_empty() {
+            DEFAULT_FONT.to_owned()
+        } else {
+            settings.default_font.clone()
+        };
         let text_group = TextGroup::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
@@ -176,6 +181,8 @@ impl AppView {
             settings::preview_max_edge_from_settings(settings.preview_max_edge),
             settings.light_theme.as_deref(),
             settings.dark_theme.as_deref(),
+            &params.default_font,
+            &font_names,
             window,
             cx,
         );
@@ -927,10 +934,12 @@ impl AppView {
             });
         }
 
-        // 输出文件夹是这台机器的环境设置，不跟着预设走。
+        // 输出文件夹和默认字体是这台机器的环境设置，不跟着预设走。
         let output_folder = self.params.output_folder.clone();
+        let default_font = self.params.default_font.clone();
         self.params = preset.params;
         self.params.output_folder = output_folder;
+        self.params.default_font = default_font;
 
         let text_groups = if preset.text_groups.is_empty() {
             vec![TextGroup::default()]

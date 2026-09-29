@@ -26,6 +26,7 @@ use gpui_kit::{
 
 use crate::persistence::settings::AppearanceMode;
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
+use crate::watermark::DEFAULT_FONT;
 
 use super::super::component::field::{ColorField, NumberField, field};
 use super::super::{AppView, UpdateState};
@@ -56,13 +57,14 @@ pub(in crate::ui::app) fn apply_interface_scale(scale: f32, window: &mut Window,
     window.refresh();
 }
 
-/// 配色下拉的选项类型。
-type ThemeSelect = SelectState<Vec<SharedString>>;
+/// 设置页中可搜索的名称下拉。
+type NameSelect = SelectState<Vec<SharedString>>;
 
 /// 设置页上的控件状态。
 pub(in crate::ui::app) struct SettingsControls {
-    pub light_theme: Entity<ThemeSelect>,
-    pub dark_theme: Entity<ThemeSelect>,
+    pub light_theme: Entity<NameSelect>,
+    pub dark_theme: Entity<NameSelect>,
+    pub default_font: Entity<NameSelect>,
     pub preview_background: ColorField,
     pub preview_max_edge: NumberField,
     sponsor_open: bool,
@@ -76,11 +78,14 @@ impl SettingsControls {
         preview_max_edge: i32,
         saved_light_theme: Option<&str>,
         saved_dark_theme: Option<&str>,
+        saved_default_font: &str,
+        font_names: &[SharedString],
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> (Self, Vec<Subscription>) {
         let light_theme = make_theme_select(ThemeMode::Light, saved_light_theme, window, cx);
         let dark_theme = make_theme_select(ThemeMode::Dark, saved_dark_theme, window, cx);
+        let default_font = make_font_select(saved_default_font, font_names, window, cx);
         let preview_background = ColorField::new(preview_background_rgb, window, cx);
         let preview_max_edge = NumberField::new(
             f64::from(preview_max_edge),
@@ -111,6 +116,14 @@ impl SettingsControls {
                 this.set_theme_slot(ThemeMode::Dark, name.clone(), window, cx);
             }),
         );
+        subscriptions.push(
+            cx.subscribe_in(&default_font, window, |this, _, event, _, cx| {
+                let SelectEvent::Confirm(Some(name)) = event else {
+                    return;
+                };
+                this.set_default_font(name.to_string(), cx);
+            }),
+        );
         subscriptions.extend(preview_background.subscribe(window, cx, |this, rgb| {
             this.set_preview_background(rgb);
         }));
@@ -122,6 +135,7 @@ impl SettingsControls {
             Self {
                 light_theme,
                 dark_theme,
+                default_font,
                 preview_background,
                 preview_max_edge,
                 sponsor_open: false,
@@ -133,12 +147,33 @@ impl SettingsControls {
     }
 }
 
+fn make_font_select(
+    saved_font: &str,
+    font_names: &[SharedString],
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> Entity<NameSelect> {
+    let selected_font = SharedString::from(saved_font.to_owned());
+    let mut names = font_names.to_vec();
+    if !names.iter().any(|name| name.as_ref() == DEFAULT_FONT) {
+        names.insert(0, DEFAULT_FONT.into());
+    }
+    if !names.iter().any(|name| name == &selected_font) {
+        names.insert(0, selected_font.clone());
+    }
+    let selected = names
+        .iter()
+        .position(|name| name == &selected_font)
+        .map(IndexPath::new);
+    cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
+}
+
 fn make_theme_select(
     mode: ThemeMode,
     saved_name: Option<&str>,
     window: &mut Window,
     cx: &mut Context<AppView>,
-) -> Entity<ThemeSelect> {
+) -> Entity<NameSelect> {
     let names = crate::theme::themes_for(mode, cx);
     let selected = theme_index(&names, mode, saved_name);
     cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
@@ -412,6 +447,22 @@ impl AppView {
                             )
                             .child(
                                 GroupBox::new()
+                                    .id("settings-watermark-text")
+                                    .title("水印文字")
+                                    .child(field(
+                                        "默认字体",
+                                        Select::new(&self.settings.default_font).w_full(),
+                                        cx,
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("未单独指定字体的文字行会使用此字体；预览立即更新，后续导出也会使用。"),
+                                    ),
+                            )
+                            .child(
+                                GroupBox::new()
                                     .id("settings-appearance")
                                     .title("外观")
                                     .child(
@@ -491,7 +542,7 @@ impl AppView {
                                                             cx.theme().muted_foreground,
                                                         )
                                                         .child(
-                                                            "恢复为跟随系统、默认配色、标准缩放与默认预览分辨率；不影响水印参数和预设。",
+                                                            "恢复为跟随系统、默认配色、标准缩放、默认预览分辨率与默认字体；不影响预设。",
                                                         ),
                                                     ),
                                             )

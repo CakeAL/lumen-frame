@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::watermark::DEFAULT_FONT;
+
 pub fn settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("lumen-frame").join("settings.toml"))
 }
@@ -26,6 +28,8 @@ pub struct AppSettings {
     pub interface_scale: Option<f32>,
     pub preview_max_edge: Option<i32>,
     pub output_folder: Option<PathBuf>,
+    #[serde(default = "default_font")]
+    pub default_font: String,
     #[serde(default = "default_preview_background")]
     pub preview_background: [u8; 3],
 }
@@ -34,6 +38,10 @@ pub const DEFAULT_PREVIEW_BACKGROUND: [u8; 3] = [0x9a, 0xa7, 0xb1];
 
 fn default_preview_background() -> [u8; 3] {
     DEFAULT_PREVIEW_BACKGROUND
+}
+
+fn default_font() -> String {
+    DEFAULT_FONT.to_owned()
 }
 
 impl Default for AppSettings {
@@ -45,6 +53,7 @@ impl Default for AppSettings {
             interface_scale: None,
             preview_max_edge: None,
             output_folder: None,
+            default_font: default_font(),
             preview_background: DEFAULT_PREVIEW_BACKGROUND,
         }
     }

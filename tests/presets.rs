@@ -34,6 +34,7 @@ fn colourful_preset() -> WatermarkPreset {
             blur_sigma: 88.0,
             quality: 82,
             output_folder: Some(PathBuf::from("/should/not/be/saved")),
+            default_font: "Menlo".to_owned(),
             ..Default::default()
         },
         text_groups: vec![TextGroup {
@@ -100,14 +101,16 @@ fn output_folder_is_not_part_of_a_preset() {
     assert!(
         !document.contains("output_folder")
             && !document.contains("should/not/be/saved")
-            && !document.contains("version ="),
-        "输出文件夹属于本机环境，不该写进预设：\n{document}"
+            && !document.contains("version =")
+            && !document.contains("default_font"),
+        "本机环境设置不该写进预设：\n{document}"
     );
 
     // 载入回来的是结构体默认值，所以载入方必须显式保留当前值。
     // `AppView::apply_preset` 就是这么做的。
     let loaded = load_in(&dir, "no-folder").unwrap();
     assert_ne!(loaded.params.output_folder, preset.params.output_folder);
+    assert_ne!(loaded.params.default_font, preset.params.default_font);
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -128,6 +131,34 @@ fn bundled_presets_load_from_assets() {
             .iter()
             .all(|(_, preset)| !preset.text_groups.is_empty())
     );
+    assert!(
+        presets
+            .iter()
+            .flat_map(|(_, preset)| &preset.text_groups)
+            .all(|group| {
+                group
+                    .text
+                    .text_params
+                    .iter()
+                    .all(|line| line.font.is_empty())
+            })
+    );
+}
+
+#[test]
+fn inherited_and_explicit_fonts_round_trip() {
+    let dir = scratch_dir("fonts");
+    let mut preset = colourful_preset();
+    preset.text_groups[0].text.text_params[1].font = "Menlo".to_owned();
+    let path = save_in(&dir, "fonts", &preset).unwrap();
+    let document = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(document.matches("font =").count(), 1);
+
+    let loaded = load_in(&dir, "fonts").unwrap();
+    assert!(loaded.text_groups[0].text.text_params[0].font.is_empty());
+    assert_eq!(loaded.text_groups[0].text.text_params[1].font, "Menlo");
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

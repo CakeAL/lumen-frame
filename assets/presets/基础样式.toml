@@ -35,7 +35,6 @@ template = [
 ]
 
 [[text_groups.text.text_params]]
-font = "Arial"
 size = 0.03
 line_spacing = 1.2999999523162842
 italic = false
@@ -43,7 +42,6 @@ bold = true
 align = "Center"
 
 [[text_groups.text.text_params]]
-font = "Arial"
 size = 0.02200000047683716
 line_spacing = 1.2999999523162842
 italic = false
