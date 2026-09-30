@@ -1,5 +1,6 @@
 //! 媒体文件与第三方解码库的基础设施适配层。
 
+pub(crate) mod jpeg;
 mod metadata;
 pub(crate) mod vips;
 

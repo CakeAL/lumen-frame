@@ -7,7 +7,7 @@ use crate::{
     gainmap as gain_map,
     media::{
         ExifInfo, ensure_vips, load_base_image,
-        vips::{VipsImage, image_metadata_string, image_op},
+        vips::{VipsImage, from_owned_ptr, image_metadata_string, image_op},
     },
     render::{canvas, image},
     watermark::{Placement, TextAlign, TextGroup, WatermarkParams},
@@ -266,6 +266,13 @@ impl Photo {
                     .resize(scale, None, None)
                     .context("resize for UHDR limit failed")?;
             }
+
+            // thumbnail_image 会以小块请求上游像素，直接遍历合成管线会让模糊、阴影等
+            // 操作非常慢。先一次性求值成片，缩略图与 JPEG 编码共用这份 RGB 像素。
+            flattened =
+                unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(flattened.as_ptr())) }
+                    .context("准备导出像素失败")?;
+            crate::media::jpeg::update_thumbnail(&mut flattened)?;
 
             // 保留源图的 ICC（如 Display P3），让照片保持原色域。
             // profile: None 表示不要用 libvips 默认的 sRGB profile 覆盖它。
