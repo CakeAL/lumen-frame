@@ -1,4 +1,7 @@
-use crate::media::vips::{VipsImage, from_owned_ptr, image_op};
+use crate::media::{
+    ensure_vips,
+    vips::{VipsImage, from_owned_ptr, image_op},
+};
 use vips::Result;
 
 use crate::{
@@ -32,6 +35,7 @@ pub fn cal_coordinates(
 
 /// 为图片添加圆角
 pub fn add_round_corner(img: VipsImage, border_radius: f64) -> Result<VipsImage> {
+    ensure_vips();
     let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let radius = (img_h as f64 * border_radius).round() as i32;
     // 使用svg生成圆角遮罩
@@ -58,34 +62,79 @@ pub fn add_round_corner(img: VipsImage, border_radius: f64) -> Result<VipsImage>
     let svg_image = vips::VipsImage::from_buffer(svg.as_bytes())?;
     let mask = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(svg_image.as_ptr()))? };
 
-    // SVG 可能产生 RGB / RGBA，确保最终只有一个 alpha mask。
+    // SVG 的 RGB 在半透明边缘仍是纯白，必须取 alpha 才能保留圆角抗锯齿。
     let mask = if mask.bands() > 1 {
         image_op(|out| unsafe {
-            vips_sys::vips_extract_band(mask.as_ptr(), out, 0, std::ptr::null::<i8>())
+            vips_sys::vips_extract_band(
+                mask.as_ptr(),
+                out,
+                mask.bands() as i32 - 1,
+                std::ptr::null::<i8>(),
+            )
         })?
     } else {
         mask
     };
 
-    // 原图转成 RGBA，然后把 mask 作为 alpha。
-    let img = if img.bands() == 4 {
-        let img_rgb = image_op(|out| unsafe {
+    // 原图已有透明度时与圆角覆盖率相乘，不能用圆角遮罩覆盖它。
+    let has_alpha = unsafe { vips_sys::vips_image_hasalpha(img.as_ptr()) } != 0;
+    let mask = if has_alpha {
+        let alpha = alpha_mask(&img)?;
+        let multiplied = image_op(|out| unsafe {
+            vips_sys::vips_multiply(alpha.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
+        })?;
+        image_op(|out| unsafe {
+            vips_sys::vips_linear(
+                multiplied.as_ptr(),
+                out,
+                [1.0 / 255.0].as_ptr(),
+                [0.0].as_ptr(),
+                1,
+                c"uchar".as_ptr(),
+                1_i32,
+                std::ptr::null::<i8>(),
+            )
+        })?
+    } else {
+        mask
+    };
+    let colour = if has_alpha {
+        image_op(|out| unsafe {
             vips_sys::vips_extract_band(
                 img.as_ptr(),
                 out,
                 0,
                 c"n".as_ptr(),
-                3_i32,
+                img.bands() as i32 - 1,
                 std::ptr::null::<i8>(),
             )
-        })?;
-        image_op(|out| unsafe {
-            vips_sys::vips_bandjoin2(img_rgb.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
         })?
     } else {
-        image_op(|out| unsafe {
-            vips_sys::vips_bandjoin2(img.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
-        })?
+        img
     };
-    Ok(img)
+    image_op(|out| unsafe {
+        vips_sys::vips_bandjoin2(colour.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
+    })
+}
+
+/// 获取照片的真实覆盖率，供投影使用；无 alpha 的照片视为完全不透明。
+pub(crate) fn alpha_mask(img: &VipsImage) -> Result<VipsImage> {
+    if unsafe { vips_sys::vips_image_hasalpha(img.as_ptr()) } != 0 {
+        image_op(|out| unsafe {
+            vips_sys::vips_extract_band(
+                img.as_ptr(),
+                out,
+                img.bands() as i32 - 1,
+                std::ptr::null::<i8>(),
+            )
+        })
+    } else {
+        unsafe {
+            from_owned_ptr(vips_sys::vips_image_new_from_image(
+                img.as_ptr(),
+                [255.0].as_ptr(),
+                1,
+            ))
+        }
+    }
 }

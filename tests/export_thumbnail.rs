@@ -52,8 +52,9 @@ fn check_export_thumbnail(source: &str, hdr: bool, rotation: Rotation) {
         border_ratio: (0.2, 0.2, 0.2, 0.2),
         solid_background: true,
         background: [220, 30, 40],
-        border_radius: 0.0,
-        shadow_size: 0.0,
+        border_radius: 0.015,
+        shadow_size: 0.105,
+        shadow_density: 2.0,
         rotation,
         ..Default::default()
     };
