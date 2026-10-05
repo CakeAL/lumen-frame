@@ -114,8 +114,8 @@ pub(in crate::ui::app) enum AspectRatioChoice {
 pub(in crate::ui::app) const ASPECT_RATIOS: &[(&str, AspectRatioChoice)] = &[
     ("不限制", AspectRatioChoice::Free),
     ("1:1", AspectRatioChoice::Preset(1.0, 1.0)),
-    ("4:5", AspectRatioChoice::Preset(4.0, 5.0)),
-    ("5:4", AspectRatioChoice::Preset(5.0, 4.0)),
+    ("3:4", AspectRatioChoice::Preset(3.0, 4.0)),
+    ("4:3", AspectRatioChoice::Preset(4.0, 3.0)),
     ("3:2", AspectRatioChoice::Preset(3.0, 2.0)),
     ("2:3", AspectRatioChoice::Preset(2.0, 3.0)),
     ("16:9", AspectRatioChoice::Preset(16.0, 9.0)),
