@@ -23,7 +23,7 @@ use crate::{
 };
 
 use super::super::AppView;
-use super::field::{field, hint, warning};
+use super::field::{description, field, warning};
 
 const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -250,9 +250,8 @@ impl Render for ExifEditor {
             .w_full()
             .gap_6()
             .pb_4()
-            .child(hint(
+            .child(description(
                 "修改后的值只覆盖当前队列照片，并用于 EXIF 文字水印的预览和导出；不会改写原始文件。清空输入框即可移除对应值。",
-                cx,
             ))
             .when_some(self.feedback.clone(), |this, feedback| {
                 this.child(warning(feedback, cx))

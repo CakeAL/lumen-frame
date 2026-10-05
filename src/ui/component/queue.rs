@@ -17,6 +17,7 @@ use gpui_kit::{
 };
 
 use super::super::{AppView, Thumbnail};
+use super::field::description;
 use crate::workspace::QueuedPhoto;
 
 gpui_kit::actions!(photo_queue, [PreviousPhoto, NextPhoto]);
@@ -183,15 +184,9 @@ impl AppView {
             .overflow_x_scroll()
             .track_scroll(&self.queue_scroll)
             .when(self.photos().is_empty(), |this| {
-                this.child(
-                    div()
-                        .w_full()
-                        .py_6()
-                        .text_center()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("拖入照片，或用「添加照片」选择；一次可以拖入多张"),
-                )
+                this.child(div().w_full().py_6().text_center().child(description(
+                    "拖入照片，或用「添加照片」选择；一次可以拖入多张",
+                )))
             })
             .when(!self.photos().is_empty(), |this| {
                 this.children(

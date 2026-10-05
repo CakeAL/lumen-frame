@@ -14,7 +14,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{Context, FontWeight, ObjectFit, RenderImage, SharedString, Task, div, img};
 
 use super::super::AppView;
-use super::field::rgb_to_hsla;
+use super::field::{description, rgb_to_hsla};
 use crate::ui::image::{PreviewJob, render_preview};
 
 /// 参数连续变化时先攒一会儿再算。
@@ -240,11 +240,7 @@ impl AppView {
                 .gap_3()
                 .text_color(cx.theme().muted_foreground)
                 .child(Icon::new(IconName::Frame).with_size(Size::Large))
-                .child(
-                    div()
-                        .text_sm()
-                        .child("把照片拖到这里，或用下方的「添加照片」选择"),
-                )
+                .child(description("把照片拖到这里，或用下方的「添加照片」选择"))
                 .into_any_element(),
             PreviewState::Failed(message) => div()
                 .v_flex()

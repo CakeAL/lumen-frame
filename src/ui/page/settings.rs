@@ -10,6 +10,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, IndexPath, Theme, ThemeMode,
     button::{Button, ButtonVariants as _},
     collapsible::Collapsible,
+    form::Field,
     group_box::GroupBox,
     h_flex,
     link::Link,
@@ -29,7 +30,7 @@ use crate::persistence::settings::AppearanceMode;
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
 use crate::watermark::DEFAULT_FONT;
 
-use super::super::component::field::{ColorField, NumberField, field};
+use super::super::component::field::{ColorField, NumberField, description, field};
 use super::super::{AppView, UpdateState};
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
@@ -411,54 +412,40 @@ impl AppView {
                                 GroupBox::new()
                                     .id("settings-preview")
                                     .title("预览")
-                                            .child(
-                                                v_flex()
-                                                    .w_full()
-                                                    .gap_2()
-                                                    .child(
-                                                        self.settings.preview_max_edge.render(
-                                                            "预览底图长边上限",
-                                                            false,
-                                                            cx,
-                                                        ),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(cx.theme().muted_foreground)
-                                                            .child(
-                                                                "该值会影响预览渲染速度；数值越小越快，且不影响导出图片。",
-                                                            ),
-                                                    ),
-                                            )
+                                    .child(
+                                        Field::new()
+                                            .w_full()
+                                            .flex_initial()
+                                            .child(self.settings.preview_max_edge.render(
+                                                "预览底图长边上限",
+                                                false,
+                                                cx,
+                                            ))
+                                            .description("该值会影响预览渲染速度；数值越小越快，且不影响导出图片。"),
+                                    )
+                                    .child(
+                                        Field::new()
+                                            .w_full()
+                                            .flex_initial()
                                             .child(self.settings.preview_background.render(
                                                 "照片展示背景",
                                                 false,
                                                 cx,
                                             ))
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "只影响照片展示区域，不影响预览生成结果或导出。",
-                                                    ),
-                                            ),
+                                            .description("只影响照片展示区域，不影响预览生成结果或导出。"),
+                                    ),
                             )
                             .child(
                                 GroupBox::new()
                                     .id("settings-watermark-text")
                                     .title("水印文字")
-                                    .child(field(
-                                        "默认字体",
-                                        Select::new(&self.settings.default_font).w_full(),
-                                        cx,
-                                    ))
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("未单独指定字体的文字行会使用此字体；预览立即更新，后续导出也会使用。"),
+                                        field(
+                                            "默认字体",
+                                            Select::new(&self.settings.default_font).w_full(),
+                                            cx,
+                                        )
+                                        .description("未单独指定字体的文字行会使用此字体；预览立即更新，后续导出也会使用。"),
                                     ),
                             )
                             .child(
@@ -470,59 +457,48 @@ impl AppView {
                                             .w_full()
                                             .gap_2()
                                             .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(cx.theme().foreground)
-                                                    .child("主题"),
+                                                field(
+                                                    "主题",
+                                                    RadioGroup::horizontal("settings-mode")
+                                                        .children(
+                                                            APPEARANCES
+                                                                .iter()
+                                                                .map(|(label, _)| *label)
+                                                                .collect::<Vec<_>>(),
+                                                        )
+                                                        .selected_index(appearance_index)
+                                                        .on_click(cx.listener(
+                                                            |this, index: &usize, window, cx| {
+                                                                let Some((_, mode)) =
+                                                                    APPEARANCES.get(*index)
+                                                                else {
+                                                                    return;
+                                                                };
+                                                                this.set_appearance_mode(
+                                                                    *mode, window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                    cx,
+                                                )
+                                                .description("跟随系统时会随操作系统的浅色/深色自动切换。"),
                                             )
                                             .child(
-                                                RadioGroup::horizontal("settings-mode")
-                                                    .children(
-                                                        APPEARANCES
-                                                            .iter()
-                                                            .map(|(label, _)| *label)
-                                                            .collect::<Vec<_>>(),
-                                                    )
-                                                    .selected_index(appearance_index)
-                                                    .on_click(cx.listener(
-                                                        |this, index: &usize, window, cx| {
-                                                            let Some((_, mode)) =
-                                                                APPEARANCES.get(*index)
-                                                            else {
-                                                                return;
-                                                            };
-                                                            this.set_appearance_mode(
-                                                                *mode, window, cx,
-                                                            );
-                                                        },
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "跟随系统时会随操作系统的浅色/深色自动切换。",
-                                                    ),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .child(self.render_theme_slot(ThemeMode::Light, cx))
-                                                    .gap_2()
-                                                    .child(self.render_theme_slot(ThemeMode::Dark, cx))
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "浅色与深色各选一套配色；切换明暗时用对应的那一套。",
-                                                    ),
-                                            )
-                                            .child(
-                                                v_flex()
+                                                Field::new()
                                                     .w_full()
-                                                    .gap_2()
+                                                    .flex_initial()
+                                                    .child(
+                                                        h_flex()
+                                                            .child(self.render_theme_slot(ThemeMode::Light, cx))
+                                                            .gap_2()
+                                                            .child(self.render_theme_slot(ThemeMode::Dark, cx)),
+                                                    )
+                                                    .description("浅色与深色各选一套配色；切换明暗时用对应的那一套。"),
+                                            )
+                                            .child(
+                                                Field::new()
+                                                    .w_full()
+                                                    .flex_initial()
                                                     .pt_2()
                                                     .child(
                                                         Button::new("settings-reset")
@@ -537,14 +513,7 @@ impl AppView {
                                                                 },
                                                             )),
                                                     )
-                                                    .child(
-                                                        div().text_xs().text_color(
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                        .child(
-                                                            "恢复为跟随系统、默认配色、标准缩放、默认预览分辨率与默认字体；不影响预设。",
-                                                        ),
-                                                    ),
+                                                    .description("恢复为跟随系统、默认配色、标准缩放、默认预览分辨率与默认字体；不影响预设。"),
                                             )
                                             .when_some(
                                                 self.settings_feedback.clone(),
@@ -559,40 +528,25 @@ impl AppView {
                                             ),
                                     )
                                     .child(
-                                        v_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(cx.theme().foreground)
-                                                    .child("界面缩放"),
-                                            )
-                                            .child(
-                                                RadioGroup::horizontal("settings-scale")
-                                                    .children(
-                                                        INTERFACE_SCALES
-                                                            .iter()
-                                                            .map(|(label, _)| *label)
-                                                            .collect::<Vec<_>>(),
-                                                    )
-                                                    .selected_index(scale_index)
-                                                    .on_click(cx.listener(
-                                                        |this, index: &usize, window, cx| {
-                                                            let (_, size) =
-                                                                INTERFACE_SCALES[*index];
-                                                            this.set_interface_scale(
-                                                                size, window, cx,
-                                                            );
-                                                        },
-                                                    )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child("缩放会同时改变字号、间距与控件尺寸。"),
-                                            ),
+                                        field(
+                                            "界面缩放",
+                                            RadioGroup::horizontal("settings-scale")
+                                                .children(
+                                                    INTERFACE_SCALES
+                                                        .iter()
+                                                        .map(|(label, _)| *label)
+                                                        .collect::<Vec<_>>(),
+                                                )
+                                                .selected_index(scale_index)
+                                                .on_click(cx.listener(
+                                                    |this, index: &usize, window, cx| {
+                                                        let (_, size) = INTERFACE_SCALES[*index];
+                                                        this.set_interface_scale(size, window, cx);
+                                                    },
+                                                )),
+                                            cx,
+                                        )
+                                        .description("缩放会同时改变字号、间距与控件尺寸。"),
                                     ),
                             ),
                     )
@@ -625,17 +579,12 @@ impl AppView {
                                             )),
                                     )
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(
-                                                "基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。",
-                                            ),
+                                        description("基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。"),
                                     )
                                     .child(
-                                        v_flex()
+                                        Field::new()
                                             .w_full()
-                                            .gap_2()
+                                            .flex_initial()
                                             .pt_2()
                                             .child(
                                                 Button::new("settings-check-update")
@@ -648,12 +597,7 @@ impl AppView {
                                                         },
                                                     )),
                                             )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(update_status),
-                                            ),
+                                            .description(update_status),
                                     ),
                             )
                             .child(
@@ -662,10 +606,7 @@ impl AppView {
                                     .w_full()
                                     .title("许愿池")
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("许愿新功能 / 反馈 Bug"),
+                                        description("许愿新功能 / 反馈 Bug"),
                                     )
                                     .child(
                                         Button::new("settings-open-issues")

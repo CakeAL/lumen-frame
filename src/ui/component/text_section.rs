@@ -30,8 +30,8 @@ use crate::watermark::{Placement, Text, TextAlign, TextDirection, TextGroup, Tex
 
 use super::super::AppView;
 use super::field::{
-    Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, select_state,
-    warning,
+    Choice, ColorField, NumberField, choices, description, field, index_of, muted_text, on_select,
+    select_state, warning,
 };
 use super::inspector::POSITIONS;
 
@@ -443,13 +443,13 @@ impl AppView {
         GroupBox::new()
             .id("text-section")
             .title("EXIF 文字水印")
-            .child(hint("每个文字组可独立设置位置、方向和多行文字。", cx))
+            .child(description("每个文字组可独立设置位置、方向和多行文字。"))
             .child(
                 v_flex()
                     .w_full()
                     .gap_2()
                     .when(self.text_groups.is_empty(), |this| {
-                        this.child(hint("还没有文字组。", cx))
+                        this.child(muted_text("还没有文字组。", cx))
                     })
                     .children(self.text_groups.iter().enumerate().map(|(ix, group)| {
                         self.render_text_group_row(ix, group, view.clone(), cx)
@@ -519,7 +519,7 @@ impl AppView {
                             ),
                     ),
             )
-            .child(hint(summary, cx))
+            .child(muted_text(summary, cx))
             .child(
                 Button::new(("text-group-edit", id))
                     .label("编辑…")
@@ -748,7 +748,7 @@ impl AppView {
                             ),
                     )
                     .when(group.lines.is_empty(), |this| {
-                        this.child(hint("这个文字组还没有文字行。", cx))
+                        this.child(muted_text("这个文字组还没有文字行。", cx))
                     })
                     .when(!group.lines.is_empty(), |this| {
                         this.child(lines.on_toggle_click(move |open: &[usize], _, cx| {
@@ -828,7 +828,7 @@ impl AppView {
                 if resolved.is_empty() {
                     warning("当前模板解析结果为空，这一行不会渲染。", cx)
                 } else {
-                    hint(format!("解析结果：{resolved}"), cx)
+                    muted_text(format!("解析结果：{resolved}"), cx)
                 }
             }
         };

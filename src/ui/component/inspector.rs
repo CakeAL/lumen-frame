@@ -31,8 +31,8 @@ use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, Watermark
 
 use super::super::{AppView, ExportState, PresetScope};
 use super::field::{
-    Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, rgb_to_hsla,
-    select_state, warning,
+    Choice, ColorField, NumberField, choices, description, field, index_of, muted_text, on_select,
+    rgb_to_hsla, select_state, warning,
 };
 
 fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
@@ -480,14 +480,11 @@ impl AppView {
                     .gap_6()
                     .p_4()
                     .overflow_y_scroll()
-                    .child(hint(
-                        if self.selected_photo_id().is_some() {
-                            "参数与文字水印仅修改当前照片"
-                        } else {
-                            "当前配置用于后续导入的照片"
-                        },
-                        cx,
-                    ))
+                    .child(description(if self.selected_photo_id().is_some() {
+                        "参数与文字水印仅修改当前照片"
+                    } else {
+                        "当前配置用于后续导入的照片"
+                    }))
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))
@@ -580,41 +577,42 @@ impl AppView {
                     .flex_shrink_0()
                     .gap_2()
                     .p_4()
-                    .child(field(
-                        "预设应用范围",
-                        TabBar::new("preset-scope")
-                            .segmented()
-                            .w_full()
-                            .children([
-                                Tab::new().label("当前照片").flex_1(),
-                                Tab::new().label("全部照片").flex_1(),
-                            ])
-                            .selected_index(if self.preset_scope == PresetScope::AllPhotos {
-                                1
-                            } else {
-                                0
-                            })
-                            .on_click(cx.listener(|this, index: &usize, _, cx| {
-                                this.preset_scope = if *index == 1 {
-                                    PresetScope::AllPhotos
+                    .child(
+                        field(
+                            "预设应用范围",
+                            TabBar::new("preset-scope")
+                                .segmented()
+                                .w_full()
+                                .children([
+                                    Tab::new().label("当前照片").flex_1(),
+                                    Tab::new().label("全部照片").flex_1(),
+                                ])
+                                .selected_index(if self.preset_scope == PresetScope::AllPhotos {
+                                    1
                                 } else {
-                                    PresetScope::CurrentPhoto
-                                };
-                                this.preset_feedback = None;
-                                cx.notify();
-                            })),
-                        cx,
-                    ))
-                    .child(hint(
-                        if self.preset_scope == PresetScope::AllPhotos {
-                            "选择预设将覆盖全部照片，并用于后续导入。手动调整仅修改当前照片。"
-                        } else if self.selected_photo_id().is_some() {
-                            "选择预设仅修改当前照片。"
-                        } else {
-                            "尚未导入照片，选择预设将设置新照片的默认配置。"
-                        },
-                        cx,
-                    ))
+                                    0
+                                })
+                                .on_click(cx.listener(|this, index: &usize, _, cx| {
+                                    this.preset_scope = if *index == 1 {
+                                        PresetScope::AllPhotos
+                                    } else {
+                                        PresetScope::CurrentPhoto
+                                    };
+                                    this.preset_feedback = None;
+                                    cx.notify();
+                                })),
+                            cx,
+                        )
+                        .description(
+                            if self.preset_scope == PresetScope::AllPhotos {
+                                "选择预设将覆盖全部照片，并用于后续导入。手动调整仅修改当前照片。"
+                            } else if self.selected_photo_id().is_some() {
+                                "选择预设仅修改当前照片。"
+                            } else {
+                                "尚未导入照片，选择预设将设置新照片的默认配置。"
+                            },
+                        ),
+                    )
                     .child(
                         h_flex()
                             .w_full()
@@ -636,7 +634,7 @@ impl AppView {
                         this.child(if self.preset_feedback_is_error {
                             warning(feedback, cx)
                         } else {
-                            hint(feedback, cx)
+                            muted_text(feedback, cx)
                         })
                     }),
             )
@@ -675,7 +673,7 @@ impl AppView {
                                             .focus_visible(|this| {
                                                 this.border_color(cx.theme().ring)
                                             })
-                                            .child(hint("内置预设", cx))
+                                            .child(muted_text("内置预设", cx))
                                             .child(
                                                 Icon::new(if self.builtin_presets_collapsed {
                                                     IconName::ChevronRight
@@ -726,7 +724,7 @@ impl AppView {
                                 h_flex()
                                     .flex_wrap()
                                     .gap_1()
-                                    .child(hint("拖动卡片排序，或按", cx))
+                                    .child(description("拖动卡片排序，或按"))
                                     .child(Kbd::new(
                                         Keystroke::parse("alt-up").expect("有效的排序快捷键"),
                                     ))
@@ -800,7 +798,7 @@ impl AppView {
             .preset_previews
             .get(&name)
             .map(|preset| self.render_preset_preview(preset, cx))
-            .unwrap_or_else(|| hint("预览不可用", cx));
+            .unwrap_or_else(|| muted_text("预览不可用", cx));
 
         v_flex()
             .relative()
@@ -1047,7 +1045,7 @@ impl AppView {
             // 组件默认铺满父级高度，在自动高度的分组里显式交回去。
             .h_auto()
             .item(|item| {
-                item.title(hint(
+                item.title(muted_text(
                     format!(
                         "上 {:.1}% · 下 {:.1}% · 左 {:.1}% · 右 {:.1}%",
                         self.params.border_ratio.0 * 100.0,
@@ -1096,11 +1094,12 @@ impl AppView {
                     )
                     .child(border_items),
             )
-            .child(field(
-                "宽高比",
-                Select::new(&controls.aspect_ratio).w_full(),
-                cx,
-            ))
+            .child(
+                field("宽高比", Select::new(&controls.aspect_ratio).w_full(), cx)
+                    .when(self.aspect_choice == AspectRatioChoice::Free, |this| {
+                        this.description("不限制：画布尺寸只跟照片和边框有关。")
+                    }),
+            )
             .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
                 this.child(
                     h_flex()
@@ -1126,9 +1125,6 @@ impl AppView {
                                 .child(Input::new(&controls.aspect_height)),
                         ),
                 )
-            })
-            .when(self.aspect_choice == AspectRatioChoice::Free, |this| {
-                this.child(hint("不限制：画布尺寸只跟照片和边框有关。", cx))
             })
             .child(field(
                 "图片位置",
@@ -1249,13 +1245,12 @@ impl AppView {
                     .disabled(total == 0 || matches!(self.export, ExportState::Running { .. }))
                     .on_click(cx.listener(|this, _, window, cx| this.export_all(window, cx))),
             )
-            .when(!status.is_empty(), |this| this.child(hint(status, cx)))
-            .child(hint(
-                match &self.params.output_folder {
-                    Some(folder) => format!("导出到 {}", folder.display()),
-                    None => "先填写输出文件夹".to_string(),
-                },
-                cx,
-            ))
+            .when(!status.is_empty(), |this| {
+                this.child(muted_text(status, cx))
+            })
+            .child(description(match &self.params.output_folder {
+                Some(folder) => format!("导出到 {}", folder.display()),
+                None => "先填写输出文件夹".to_string(),
+            }))
     }
 }

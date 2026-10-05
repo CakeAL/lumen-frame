@@ -6,6 +6,7 @@
 use gpui_kit::component::{
     ActiveTheme as _, IndexPath, Sizable as _,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+    form::Field,
     h_flex,
     input::{Input, InputEvent, InputState},
     searchable_list::SearchableListItem,
@@ -348,22 +349,32 @@ pub(in crate::ui::app) fn field(
     label: impl Into<SharedString>,
     control: impl IntoElement,
     cx: &App,
-) -> AnyElement {
-    v_flex()
-        .w_full()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(label.into()),
-        )
-        .child(control)
+) -> Field {
+    Field::new().w_full().flex_initial().child(
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .child(label.into()),
+            )
+            .child(control),
+    )
+}
+
+/// 不依附于单个控件的说明，复用表单字段的描述样式。
+pub(in crate::ui::app) fn description(text: impl Into<SharedString>) -> AnyElement {
+    Field::new()
+        .flex_initial()
+        .gap_0()
+        .description(text.into())
         .into_any_element()
 }
 
-/// 一段说明性文字。
-pub(super) fn hint(text: impl Into<SharedString>, cx: &App) -> AnyElement {
+/// 摘要、状态和标签等次要文字。
+pub(super) fn muted_text(text: impl Into<SharedString>, cx: &App) -> AnyElement {
     div()
         .text_xs()
         .text_color(cx.theme().muted_foreground)

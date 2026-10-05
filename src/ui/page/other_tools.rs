@@ -26,7 +26,7 @@ use super::super::AppView;
 use super::super::component::colour_gainmap_preview::{
     ColourGainMapPreview, ColourGainMapPreviewState,
 };
-use super::super::component::field::rgb_to_hsla;
+use super::super::component::field::{description, rgb_to_hsla};
 use super::super::component::motion_photo_preview::{
     MotionPhotoPreview, MotionPhotoPreviewRequest, MotionPhotoPreviewState,
 };
@@ -639,12 +639,7 @@ impl AppView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("生成黑白 + 彩色 Gain Map"),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("预览黑白底图和对应的彩色恢复 Gain Map。"),
-                    ),
+                    .child(description("预览黑白底图和对应的彩色恢复 Gain Map。")),
             )
             .child(
                 v_flex()
@@ -666,12 +661,7 @@ impl AppView {
                                 cx.listener(|this, _, _, cx| this.pick_colour_gainmap_photo(cx)),
                             ),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("也可以把一张照片直接拖入页面。"),
-                    ),
+                    .child(description("也可以把一张照片直接拖入页面。")),
             )
             .child(
                 v_flex()
@@ -692,12 +682,7 @@ impl AppView {
                                 this.other_tools.rotate_colour_photo(cx)
                             })),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("导出包含黑白底图与彩色 Gain Map 的 JPEG。"),
-                    )
+                    .child(description("导出包含黑白底图与彩色 Gain Map 的 JPEG。"))
                     .child(
                         Button::new("colour-gainmap-export")
                             .label(if self.other_tools.is_exporting() {
@@ -859,12 +844,7 @@ impl AppView {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("生成 Motion Photo"),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("选择视频片段与封面帧，然后导出为实况照片。"),
-                            ),
+                            .child(description("选择视频片段与封面帧，然后导出为实况照片。")),
                     )
                     .child(self.render_motion_ffmpeg_section(cx))
                     .child(
@@ -887,26 +867,16 @@ impl AppView {
                                         this.pick_motion_photo_video(window, cx)
                                     })),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("支持 MP4 容器中的 H.264、HEVC 或 AV1 视频。"),
-                            ),
+                            .child(description("支持 MP4 容器中的 H.264、HEVC 或 AV1 视频。")),
                     )
                     .child(
                         v_flex()
                             .w_full()
                             .gap_4()
                             .child(section_title("时间范围"))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "滑块覆盖整段视频，输入框可精确填写秒数；片段最长 10 秒。",
-                                    ),
-                            )
+                            .child(description(
+                                "滑块覆盖整段视频，输入框可精确填写秒数；片段最长 10 秒。",
+                            ))
                             .child(self.other_tools.motion_start_field.render(
                                 "入点",
                                 self.other_tools.video_path().is_none(),
@@ -943,12 +913,9 @@ impl AppView {
                                         this.other_tools.rotate_motion_photo(cx)
                                     })),
                             )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("FFmpeg 会在编码前按封面与视频的总大小控制码率。"),
-                            )
+                            .child(description(
+                                "FFmpeg 会在编码前按封面与视频的总大小控制码率。",
+                            ))
                             .child(
                                 Button::new("motion-photo-export")
                                     .label(if self.other_tools.is_motion_exporting() {
@@ -1036,10 +1003,7 @@ impl AppView {
                     ),
             )
             .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("需要 FFmpeg、ffprobe 与 libx264。可自动检测应用 PATH 与常见安装位置，或手动填写可执行文件路径。"),
+                description("需要 FFmpeg、ffprobe 与 libx264。可自动检测应用 PATH 与常见安装位置，或手动填写可执行文件路径。"),
             )
     }
 
