@@ -14,6 +14,7 @@ use gpui_kit::component::{
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
+    kbd::Kbd,
     select::{Select, SelectState},
     switch::Switch,
     tab::{Tab, TabBar},
@@ -22,8 +23,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, Entity, EntityId, FontWeight, Hsla, IntoElement,
-    KeyDownEvent, Role, SharedString, Subscription, Window, black, div, linear_color_stop,
-    linear_gradient, relative, rgba, white,
+    KeyDownEvent, Keystroke, Role, SharedString, Subscription, Window, black, div,
+    linear_color_stop, linear_gradient, relative, rgba, white,
 };
 
 use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, WatermarkParams};
@@ -734,14 +735,18 @@ impl AppView {
                             .iter()
                             .any(|name| !self.builtin_preset_names.contains(name)),
                         |this| {
-                            this.child(preset_section_label("我的预设", cx)).child(hint(
-                                if cfg!(target_os = "macos") {
-                                    "拖动卡片排序，或按 ⌥↑ / ⌥↓"
-                                } else {
-                                    "拖动卡片排序，或按 Alt+↑ / Alt+↓"
-                                },
-                                cx,
-                            ))
+                            this.child(preset_section_label("我的预设", cx)).child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_1()
+                                    .child(hint("拖动卡片排序，或按", cx))
+                                    .child(Kbd::new(
+                                        Keystroke::parse("alt-up").expect("有效的排序快捷键"),
+                                    ))
+                                    .child(Kbd::new(
+                                        Keystroke::parse("alt-down").expect("有效的排序快捷键"),
+                                    )),
+                            )
                         },
                     )
                     .children(

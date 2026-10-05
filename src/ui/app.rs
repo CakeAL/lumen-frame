@@ -23,8 +23,8 @@ use std::sync::Arc;
 use gpui_kit::component::{Root, Theme, WindowExt as _, notification::Notification};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, PathPromptOptions, RenderImage, SharedString, Subscription, Window,
-    WindowHandle,
+    App, Context, Entity, FocusHandle, PathPromptOptions, RenderImage, ScrollHandle, SharedString,
+    Subscription, Window, WindowHandle,
 };
 
 use crate::features::motion_photo::{MotionPhotoOptions, export_motion_photo};
@@ -85,6 +85,9 @@ pub struct AppView {
     page: AppPage,
     /// 无 UI 依赖的照片队列、稳定身份和选择策略。
     workspace: PhotoWorkspace,
+    /// 队列键盘操作与滚动位置属于界面状态，不进入照片工作区模型。
+    queue_focus: FocusHandle,
+    queue_scroll: ScrollHandle,
     /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
     thumbnails: HashMap<PhotoId, Thumbnail>,
     /// 当前照片的编辑真值，供预览与导出使用。
@@ -164,6 +167,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        component::queue::init(cx);
         let settings = settings_path
             .as_deref()
             .map(settings_store::load_at)
@@ -233,6 +237,8 @@ impl AppView {
         let mut view = Self {
             page: AppPage::Watermark,
             workspace: PhotoWorkspace::default(),
+            queue_focus: cx.focus_handle(),
+            queue_scroll: ScrollHandle::new(),
             thumbnails: HashMap::new(),
             params,
             photo_watermarks: HashMap::new(),

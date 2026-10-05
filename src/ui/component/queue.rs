@@ -7,14 +7,30 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    kbd::Kbd,
     spinner::Spinner,
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, FontWeight, KeyDownEvent, ObjectFit, Role, div, img};
+use gpui_kit::{
+    App, Context, FontWeight, KeyBinding, KeyDownEvent, Keystroke, ObjectFit, Role, Window, div,
+    img,
+};
 
 use super::super::{AppView, Thumbnail};
 use crate::workspace::QueuedPhoto;
+
+gpui_kit::actions!(photo_queue, [PreviousPhoto, NextPhoto]);
+
+const PREVIOUS_PHOTO_KEY: &str = "left";
+const NEXT_PHOTO_KEY: &str = "right";
+
+pub(in crate::ui::app) fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new(PREVIOUS_PHOTO_KEY, PreviousPhoto, Some("PhotoQueue")),
+        KeyBinding::new(NEXT_PHOTO_KEY, NextPhoto, Some("PhotoQueue")),
+    ]);
+}
 
 /// 队列接受的图片扩展名。
 ///
@@ -41,13 +57,51 @@ pub(in crate::ui::app) fn is_supported_image(path: &std::path::Path) -> bool {
 impl AppView {
     pub(in crate::ui::app) fn render_queue_pane(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
+            .id("photo-queue")
+            .track_focus(&self.queue_focus)
+            .tab_index(0)
+            .key_context("PhotoQueue")
+            .role(Role::Region)
+            .aria_label("照片队列，使用左右方向键切换照片")
+            .on_action(cx.listener(|this, _: &PreviousPhoto, window, cx| {
+                this.select_adjacent_photo(true, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextPhoto, window, cx| {
+                this.select_adjacent_photo(false, window, cx);
+            }))
             .w_full()
             .flex_shrink_0()
             .bg(cx.theme().background)
             .border_t_1()
             .border_color(cx.theme().border)
+            .focus_visible(|this| this.border_color(cx.theme().ring))
             .child(self.render_queue_header(cx))
             .child(self.render_queue_strip(cx))
+    }
+
+    fn select_adjacent_photo(
+        &mut self,
+        previous: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .photos()
+            .iter()
+            .position(|photo| Some(photo.id()) == self.selected_photo_id())
+        else {
+            return;
+        };
+        let next = if previous {
+            index.checked_sub(1)
+        } else {
+            index.checked_add(1)
+        };
+        if let Some(next) = next.filter(|next| *next < self.photos().len()) {
+            self.select_photo_at(next, window, cx);
+            self.queue_scroll.scroll_to_item(next);
+            window.focus(&self.queue_focus, cx);
+        }
     }
 
     fn render_queue_header(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -73,6 +127,16 @@ impl AppView {
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("{} 张", self.photos().len())),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(Kbd::new(
+                                Keystroke::parse(PREVIOUS_PHOTO_KEY).expect("有效的方向键"),
+                            ))
+                            .child(Kbd::new(
+                                Keystroke::parse(NEXT_PHOTO_KEY).expect("有效的方向键"),
+                            )),
                     ),
             )
             .child(
@@ -118,6 +182,7 @@ impl AppView {
             .pb_3()
             .min_h_0()
             .overflow_x_scroll()
+            .track_scroll(&self.queue_scroll)
             .when(self.photos().is_empty(), |this| {
                 this.child(
                     div()
@@ -190,7 +255,10 @@ impl AppView {
             .aria_label(name.clone())
             .hover(|this| this.bg(cx.theme().muted))
             .focus_visible(|this| this.border_color(cx.theme().ring))
-            .on_click(cx.listener(move |this, _, window, cx| this.select_photo(id, window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select_photo(id, window, cx);
+                window.focus(&this.queue_focus, cx);
+            }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     cx.stop_propagation();
@@ -223,8 +291,77 @@ impl AppView {
 
 #[cfg(test)]
 mod tests {
-    use super::is_supported_image;
-    use std::path::Path;
+    use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Entity, Focusable as _, TestAppContext};
+    use std::{cell::RefCell, path::Path, rc::Rc};
+
+    #[gpui_kit::test]
+    fn arrow_keys_switch_photos_only_in_the_queue(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let view = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let view = view.clone();
+            move |window, cx| {
+                let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+                view.borrow_mut().replace(app.clone());
+                Root::new(app, window, cx)
+            }
+        });
+        let view: Entity<AppView> = view.borrow().clone().unwrap();
+        view.update_in(cx, |view, window, cx| window.focus(&view.queue_focus, cx));
+        cx.update(|window, cx| window.press("right", cx));
+        assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
+
+        let first = Path::new("test_images/DSC_4587.jpg").to_path_buf();
+        let second = Path::new("test_images/ultra_hdr.jpg").to_path_buf();
+        view.update_in(cx, |view, window, cx| {
+            view.add_photos(vec![first.clone(), second.clone()], cx);
+            view.params.rotation = crate::rotation::Rotation::Clockwise90;
+            window.focus(&view.queue_focus, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.press("left", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.selected_path().map(Path::to_path_buf)),
+            Some(first.clone())
+        );
+        cx.update(|window, cx| window.press("right", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.selected_path().map(Path::to_path_buf)),
+            Some(second.clone())
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.params.rotation.degrees()),
+            0
+        );
+        cx.update(|window, cx| window.press("right", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.selected_path().map(Path::to_path_buf)),
+            Some(second)
+        );
+        cx.update(|window, cx| window.press("left", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.selected_path().map(Path::to_path_buf)),
+            Some(first.clone())
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.params.rotation.degrees()),
+            90
+        );
+
+        view.update_in(cx, |view, window, cx| {
+            view.controls
+                .preset_name
+                .update(cx, |input, cx| window.focus(&input.focus_handle(cx), cx));
+        });
+        cx.update(|window, cx| window.press("right", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.selected_path().map(Path::to_path_buf)),
+            Some(first)
+        );
+    }
 
     #[test]
     fn photo_queue_accepts_common_formats() {

@@ -804,7 +804,10 @@ mod tests {
         );
         cx.executor().advance_clock(Duration::from_millis(300));
         cx.run_until_parked();
-        cx.update(|window, cx| window.press("enter", cx));
+        cx.update(|window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
         assert_eq!(
             font.read_with(cx, |font, _| font.selected_value().cloned()),
             Some("Academy Engraved LET".into())
