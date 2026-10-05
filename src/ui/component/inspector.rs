@@ -655,6 +655,7 @@ impl AppView {
                             .child(
                                 AccordionItem::new()
                                     .open(!self.builtin_presets_collapsed)
+                                    // GPUI 的 Button 角色已将 Enter/Space 转为点击，统一走 on_change。
                                     .header(AccordionHeader::new(
                                         AccordionTrigger::new("builtin-presets-toggle")
                                             .aria_label("内置预设")
@@ -674,20 +675,6 @@ impl AppView {
                                             .focus_visible(|this| {
                                                 this.border_color(cx.theme().ring)
                                             })
-                                            .on_key_down(cx.listener(
-                                                |this, event: &KeyDownEvent, _, cx| {
-                                                    if matches!(
-                                                        event.keystroke.key.as_str(),
-                                                        "enter" | "space"
-                                                    ) {
-                                                        cx.stop_propagation();
-                                                        this.set_builtin_presets_collapsed(
-                                                            !this.builtin_presets_collapsed,
-                                                            cx,
-                                                        );
-                                                    }
-                                                },
-                                            ))
                                             .child(hint("内置预设", cx))
                                             .child(
                                                 Icon::new(if self.builtin_presets_collapsed {
@@ -858,10 +845,6 @@ impl AppView {
                             this.preset_drop_target = None;
                             cx.notify();
                             return;
-                        }
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            cx.stop_propagation();
-                            this.load_preset(&for_keyboard, window, cx);
                         }
                     }))
                     .when(!builtin, |card| {

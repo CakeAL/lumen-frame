@@ -20,11 +20,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui_kit::component::{Root, Theme, WindowExt as _, notification::Notification};
+use gpui_kit::component::{Theme, WindowExt as _, notification::Notification};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, FocusHandle, PathPromptOptions, RenderImage, ScrollHandle, SharedString,
-    Subscription, Window, WindowHandle,
+    AnyWindowHandle, App, Context, Entity, FocusHandle, PathPromptOptions, RenderImage,
+    ScrollHandle, SharedString, Subscription, Window,
 };
 
 use crate::features::motion_photo::{MotionPhotoOptions, export_motion_photo};
@@ -100,7 +100,7 @@ pub struct AppView {
     /// 每个文字组各自持有组级控件与文字行；稳定 id 不随增删其它组改变。
     text_groups: Vec<TextGroupEditor>,
     /// 每个文字组最多打开一个独立编辑窗口；已关闭的句柄会在下次打开时清理。
-    text_editor_windows: HashMap<u64, WindowHandle<Root>>,
+    text_editor_windows: HashMap<u64, AnyWindowHandle>,
     /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
     opening_text_editor_ids: HashSet<u64>,
     /// 左侧预设面板可以收起，为照片预览腾出更多空间。
@@ -1513,7 +1513,7 @@ mod preset_tests {
         assert!(settings_store::load_at(&path).builtin_presets_collapsed);
 
         // 折叠入口保持键盘可操作。
-        cx.update(|window, cx| window.press("space", cx));
+        cx.update(|window, cx| window.press("enter", cx));
         assert!(!view.read_with(cx, |app, _| app.builtin_presets_collapsed));
         assert!(cx.debug_bounds("preset-card-16_9").is_some());
         assert!(!settings_store::load_at(&path).builtin_presets_collapsed);

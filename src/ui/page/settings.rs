@@ -53,8 +53,7 @@ pub(in crate::ui::app) fn preview_max_edge_from_settings(max_edge: Option<i32>) 
 ///
 /// 基础字号是像素锚点，这一处 `px` 是刻意的例外：它定义其余相对刻度的基准。
 pub(in crate::ui::app) fn apply_interface_scale(scale: f32, window: &mut Window, cx: &mut App) {
-    Theme::global_mut(cx).font_size = px(scale);
-    Theme::sync_base(cx);
+    Theme::update(cx, |theme| theme.font_size = px(scale));
     window.refresh();
 }
 

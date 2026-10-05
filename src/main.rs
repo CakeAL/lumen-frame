@@ -106,21 +106,16 @@ fn main() {
         // 组件内置文案（取色器、日历等）跟随应用语言。
         gpui_kit::component::set_locale("zh-CN");
 
-        cx.spawn(async move |cx| {
-            cx.open_window(
-                WindowOptions {
-                    // 预设、工作区与参数面板都需要保留可用宽度。
-                    window_min_size: Some(size(px(1180.), px(680.))),
-                    ..TitleBar::window_options()
-                },
-                |window, cx| {
-                    let view = cx.new(|cx| AppView::new(window, cx));
-                    cx.new(|cx| Root::new(view, window, cx))
-                },
-            )
-            .expect("Failed to open window");
-        })
-        .detach();
+        gpui_kit::open_window(
+            WindowOptions {
+                // 预设、工作区与参数面板都需要保留可用宽度。
+                window_min_size: Some(size(px(1180.), px(680.))),
+                ..TitleBar::window_options()
+            },
+            cx,
+            |window, cx| cx.new(|cx| AppView::new(window, cx)),
+        )
+        .expect("无法打开主窗口");
     });
 }
 

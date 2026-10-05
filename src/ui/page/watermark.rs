@@ -1,23 +1,19 @@
 //! 应用窗口框架与页面布局。
 
-use gpui_kit::component::{ActiveTheme as _, Root, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, ExternalPaths, Window};
 
 use super::super::{AppPage, AppView};
 
 impl Render for AppView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(self.render_page_body(cx))
-            // 叠加层必须由应用的第一个视图渲染一次，`Root` 只负责协调它们。
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_sheet_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
     }
 }
 

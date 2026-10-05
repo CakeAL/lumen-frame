@@ -131,6 +131,10 @@ fn exif_editor_opens_for_the_selected_photo(cx: &mut TestAppContext) {
         window.click("preview-exif", cx);
         window.render_frame(cx);
         assert!(window.has_active_sheet(cx));
+        assert!(window.try_find("exif-apply").is_some());
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(!window.has_active_sheet(cx));
     });
 }
 

@@ -26,7 +26,7 @@ parley = "0.11"
 swash = "0.2"
 peniko = "0.6"
 # ui
-gpui-kit = "0.6.6"
+gpui-kit = "0.7.1"
 # FFmpeg sidecar
 ffmpeg-sidecar = "2.5.2"
 # 从 GitHub Releases 检查并安装新版本。分发包支持 zip 和 tar.gz。
@@ -39,7 +39,7 @@ self_update = { version = "1.3.0", features = [
 
 [dev-dependencies]
 # GPUI 的测试上下文（TestAppContext / VisualTestContext）由这个 feature 提供。
-gpui-kit = { version = "0.6.6", features = ["test-support"] }
+gpui-kit = { version = "0.7.1", features = ["test-support"] }
 
 [build-dependencies]
 # 只在 Windows 目标构建时把多尺寸 ICO 嵌入 exe。

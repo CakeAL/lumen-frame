@@ -13,8 +13,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, FontWeight, KeyBinding, KeyDownEvent, Keystroke, ObjectFit, Role, Window, div,
-    img,
+    App, Context, FontWeight, KeyBinding, Keystroke, ObjectFit, Role, Window, div, img,
 };
 
 use super::super::{AppView, Thumbnail};
@@ -258,12 +257,6 @@ impl AppView {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_photo(id, window, cx);
                 window.focus(&this.queue_focus, cx);
-            }))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    cx.stop_propagation();
-                    this.select_photo(id, window, cx);
-                }
             }))
             .child(
                 div()

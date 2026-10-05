@@ -58,11 +58,16 @@ impl AppView {
     }
 
     pub(in crate::ui::app) fn apply_theme_slots(&self, cx: &mut App) {
-        for name in [&self.light_theme, &self.dark_theme].into_iter().flatten() {
-            if let Some(config) = crate::theme::find(name, cx) {
-                Theme::global_mut(cx).apply_config(&config);
+        let configs: Vec<_> = [&self.light_theme, &self.dark_theme]
+            .into_iter()
+            .flatten()
+            .filter_map(|name| crate::theme::find(name, cx))
+            .collect();
+        Theme::update(cx, |theme| {
+            for config in configs {
+                theme.apply_config(&config);
             }
-        }
+        });
     }
 
     fn persist_settings(&mut self, _: &App) {
@@ -106,8 +111,10 @@ impl AppView {
                 registry.default_dark_theme().clone(),
             )
         };
-        Theme::global_mut(cx).apply_config(&light);
-        Theme::global_mut(cx).apply_config(&dark);
+        Theme::update(cx, |theme| {
+            theme.apply_config(&light);
+            theme.apply_config(&dark);
+        });
         let (light_name, dark_name) = (light.name.clone(), dark.name.clone());
         self.settings.light_theme.update(cx, |state, cx| {
             state.set_selected_value(&light_name, window, cx)

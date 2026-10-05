@@ -4,7 +4,7 @@
 //! 实体，并把组级参数与文字行分列展示，因此调整参数时主窗口中的照片预览仍然可见。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, IndexPath, Root, Sizable as _, TitleBar,
+    ActiveTheme as _, IconName, IndexPath, Sizable as _, TitleBar,
     accordion::{Accordion, AccordionItem},
     button::{Button, ButtonVariants as _},
     combobox::{Combobox, ComboboxEvent, ComboboxState},
@@ -116,7 +116,7 @@ impl TextGroupWindow {
 }
 
 impl Render for TextGroupWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content =
             self.app
                 .read(cx)
@@ -135,9 +135,6 @@ impl Render for TextGroupWindow {
             // 这里明确建立一个有限高度的视口，右栏才有可滚动的剩余空间；外层只裁切，
             // 滚动所有权仍然属于具体的「文字行」栏。
             .child(div().flex_1().min_h_0().overflow_hidden().child(content))
-            .children(Root::render_dialog_layer(window, cx))
-            .children(Root::render_sheet_layer(window, cx))
-            .children(Root::render_notification_layer(window, cx))
     }
 }
 
@@ -577,22 +574,21 @@ impl AppView {
             let bounds = Bounds::centered(None, size(px(960.), px(720.)), cx);
             let editor_view = view.clone();
             let editor_title = title.clone();
-            let result = cx.open_window(
+            let result = gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(760.), px(560.))),
                     ..TitleBar::window_options()
                 },
-                move |window, cx| {
-                    let editor =
-                        cx.new(|cx| TextGroupWindow::new(group_id, editor_title, editor_view, cx));
-                    cx.new(|cx| Root::new(editor, window, cx))
+                cx,
+                move |_, cx| {
+                    cx.new(|cx| TextGroupWindow::new(group_id, editor_title, editor_view, cx))
                 },
             );
             view.update(cx, |this, cx| {
                 this.opening_text_editor_ids.remove(&group_id);
                 match result {
-                    Ok(handle) => {
+                    Ok((handle, _)) => {
                         this.text_editor_windows.insert(group_id, handle);
                     }
                     Err(error) => {
