@@ -55,6 +55,13 @@ fn settle(cx: &mut VisualTestContext, ready: impl Fn(&mut VisualTestContext) -> 
 /// 预设卡片是应用自绘元素，按已渲染的边界点击。
 fn click_preset(cx: &mut VisualTestContext, id: &'static str) {
     cx.run_until_parked();
+    // 开发机可能保存了收起状态，先通过界面展开再选择内置预设。
+    if cx.debug_bounds(id).is_none() {
+        cx.update(|window, cx| {
+            window.click("builtin-presets-toggle", cx);
+            window.render_frame(cx);
+        });
+    }
     let bounds = cx.debug_bounds(id).expect("预设卡片没有渲染");
     cx.simulate_click(bounds.center(), Default::default());
     cx.run_until_parked();

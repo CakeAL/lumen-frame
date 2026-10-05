@@ -79,8 +79,14 @@ impl AppView {
             preview_background: self.preview_background,
             output_folder: self.params.output_folder.clone(),
             default_font: self.params.default_font.clone(),
+            builtin_presets_collapsed: self.builtin_presets_collapsed,
+            preset_order: self.preset_order.clone(),
         };
-        self.settings_feedback = settings_store::save(&settings)
+        let Some(path) = self.settings_path.as_deref() else {
+            self.settings_feedback = Some("找不到系统的配置目录，偏好未能保存。".into());
+            return;
+        };
+        self.settings_feedback = settings_store::save_at(path, &settings)
             .err()
             .map(|error| format!("偏好没能保存：{error:#}").into());
     }

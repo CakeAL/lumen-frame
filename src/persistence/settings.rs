@@ -32,6 +32,10 @@ pub struct AppSettings {
     pub default_font: String,
     #[serde(default = "default_preview_background")]
     pub preview_background: [u8; 3],
+    /// 内置预设分组是否收起。
+    pub builtin_presets_collapsed: bool,
+    /// 用户预设的显示顺序，以预设名作为稳定身份。
+    pub preset_order: Vec<String>,
 }
 
 pub const DEFAULT_PREVIEW_BACKGROUND: [u8; 3] = [0x9a, 0xa7, 0xb1];
@@ -55,6 +59,8 @@ impl Default for AppSettings {
             output_folder: None,
             default_font: default_font(),
             preview_background: DEFAULT_PREVIEW_BACKGROUND,
+            builtin_presets_collapsed: false,
+            preset_order: Vec::new(),
         }
     }
 }

@@ -120,6 +120,11 @@ pub struct AppView {
     export: ExportState,
 
     preset_names: Vec<SharedString>,
+    builtin_presets_collapsed: bool,
+    /// 只包含用户预设；新增项追加，删除项在目录刷新时清理。
+    preset_order: Vec<String>,
+    /// 拖动落点的预设名与前/后位置，不写入配置。
+    preset_drop_target: Option<(SharedString, bool)>,
     /// 预设卡片使用的轻量视觉快照，避免在每一帧渲染时读取磁盘。
     preset_previews: HashMap<SharedString, WatermarkPreset>,
     /// 编译进应用的预设名称；用于禁止覆盖与删除，并在卡片上标明来源。
@@ -141,6 +146,8 @@ pub struct AppView {
     preview_background: [u8; 3],
     settings: SettingsControls,
     settings_feedback: Option<SharedString>,
+    /// 由持久化层提供的配置路径，载入与保存始终使用同一个位置。
+    settings_path: Option<PathBuf>,
     update_state: UpdateState,
 
     /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
@@ -149,7 +156,18 @@ pub struct AppView {
 
 impl AppView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = settings_store::load();
+        Self::new_with_settings_path(settings_store::settings_path(), window, cx)
+    }
+
+    fn new_with_settings_path(
+        settings_path: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let settings = settings_path
+            .as_deref()
+            .map(settings_store::load_at)
+            .unwrap_or_default();
         let mut params = WatermarkParams::default();
         if let Some(folder) = settings.output_folder.clone() {
             params.output_folder = Some(folder);
@@ -185,7 +203,9 @@ impl AppView {
             cx,
         )];
 
-        let (preset_names, preset_previews, builtin_preset_names) = preset_catalog();
+        let (preset_names, preset_previews, builtin_preset_names) =
+            preset_catalog(&settings.preset_order);
+        let preset_order = user_preset_order(&preset_names, &builtin_preset_names);
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
@@ -233,6 +253,9 @@ impl AppView {
             other_tools,
             export: ExportState::Idle,
             preset_names,
+            builtin_presets_collapsed: settings.builtin_presets_collapsed,
+            preset_order,
+            preset_drop_target: None,
             preset_previews,
             builtin_preset_names,
             preset_feedback: None,
@@ -247,6 +270,7 @@ impl AppView {
             preview_background: settings.preview_background,
             settings: settings_controls,
             settings_feedback: None,
+            settings_path,
             update_state: UpdateState::Idle,
             _subscriptions: subscriptions,
         };
@@ -941,6 +965,76 @@ impl AppView {
 
     // MARK: 预设
 
+    pub(in crate::ui::app) fn set_builtin_presets_collapsed(
+        &mut self,
+        collapsed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.builtin_presets_collapsed == collapsed {
+            return;
+        }
+        self.builtin_presets_collapsed = collapsed;
+        self.preset_feedback = None;
+        self.persist_preset_preferences();
+        cx.notify();
+    }
+
+    /// 按名字移动预设，避免拖动过程中目录变化让下标指向另一项。
+    pub(in crate::ui::app) fn move_preset(
+        &mut self,
+        source: &str,
+        target: &str,
+        before: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.preset_drop_target = None;
+        if self.builtin_preset_names.contains(source)
+            || self.builtin_preset_names.contains(target)
+            || !move_preset_name(&mut self.preset_names, source, target, before)
+        {
+            cx.notify();
+            return;
+        }
+        self.preset_order = user_preset_order(&self.preset_names, &self.builtin_preset_names);
+        self.preset_feedback = None;
+        self.persist_preset_preferences();
+        cx.notify();
+    }
+
+    pub(in crate::ui::app) fn move_preset_by(
+        &mut self,
+        name: &str,
+        earlier: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .preset_order
+            .iter()
+            .position(|candidate| candidate == name)
+        else {
+            return;
+        };
+        let target_index = if earlier {
+            index.checked_sub(1)
+        } else {
+            index.checked_add(1)
+        };
+        if let Some(target) = target_index
+            .and_then(|index| self.preset_order.get(index))
+            .cloned()
+        {
+            self.move_preset(name, &target, earlier, cx);
+        }
+    }
+
+    fn persist_preset_preferences(&mut self) {
+        self.persist_settings_inner();
+        if let Some(error) = self.settings_feedback.clone() {
+            self.preset_feedback = Some(error);
+            self.preset_feedback_is_error = true;
+        }
+    }
+
     /// 把当前配置按输入框里的名字保存成预设。
     pub(super) fn save_preset(&mut self, cx: &mut Context<Self>) {
         let name = self
@@ -959,13 +1053,14 @@ impl AppView {
             Ok(path) => {
                 self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());
                 self.preset_feedback_is_error = false;
+                self.refresh_preset_names();
+                self.persist_preset_preferences();
             }
             Err(error) => {
                 self.preset_feedback = Some(format!("{error:#}").into());
                 self.preset_feedback_is_error = true;
             }
         }
-        self.refresh_preset_names();
         cx.notify();
     }
 
@@ -1183,13 +1278,14 @@ impl AppView {
             Ok(()) => {
                 self.preset_feedback = Some(format!("已删除「{name}」").into());
                 self.preset_feedback_is_error = false;
+                self.refresh_preset_names();
+                self.persist_preset_preferences();
             }
             Err(error) => {
                 self.preset_feedback = Some(format!("{error:#}").into());
                 self.preset_feedback_is_error = true;
             }
         }
-        self.refresh_preset_names();
         cx.notify();
     }
 
@@ -1215,14 +1311,17 @@ impl AppView {
     }
 
     fn refresh_preset_names(&mut self) {
-        let (names, previews, builtins) = preset_catalog();
+        let (names, previews, builtins) = preset_catalog(&self.preset_order);
+        self.preset_order = user_preset_order(&names, &builtins);
         self.preset_names = names;
         self.preset_previews = previews;
         self.builtin_preset_names = builtins;
     }
 }
 
-fn preset_catalog() -> (
+fn preset_catalog(
+    order: &[String],
+) -> (
     Vec<SharedString>,
     HashMap<SharedString, WatermarkPreset>,
     HashSet<SharedString>,
@@ -1241,7 +1340,9 @@ fn preset_catalog() -> (
         previews.insert(name, preset);
     }
 
-    for name in presets::list().unwrap_or_default() {
+    let mut user_names = presets::list().unwrap_or_default();
+    sort_preset_names(&mut user_names, order);
+    for name in user_names {
         let name = SharedString::from(name);
         if builtin_names.contains(&name) {
             continue;
@@ -1253,6 +1354,49 @@ fn preset_catalog() -> (
     }
 
     (names, previews, builtin_names)
+}
+
+fn user_preset_order(names: &[SharedString], builtins: &HashSet<SharedString>) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !builtins.contains(*name))
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// 稳定排序让未保存过顺序的新项留在末尾，并保留目录原有的字母顺序。
+fn sort_preset_names(names: &mut [String], order: &[String]) {
+    names.sort_by_key(|name| {
+        order
+            .iter()
+            .position(|saved| saved == name)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+fn move_preset_name(
+    names: &mut Vec<SharedString>,
+    source: &str,
+    target: &str,
+    before: bool,
+) -> bool {
+    if source == target {
+        return false;
+    }
+    let Some(source_index) = names.iter().position(|name| name.as_ref() == source) else {
+        return false;
+    };
+    let Some(target_index) = names.iter().position(|name| name.as_ref() == target) else {
+        return false;
+    };
+    let slot = target_index + usize::from(!before);
+    let destination = slot - usize::from(source_index < slot);
+    if destination == source_index {
+        return false;
+    }
+    let name = names.remove(source_index);
+    names.insert(destination, name);
+    true
 }
 
 /// 由参数推出宽高比下拉该选哪一项。
@@ -1284,5 +1428,148 @@ fn format_ratio(value: f64) -> String {
         format!("{value:.0}")
     } else {
         format!("{value:.2}")
+    }
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{TestAppContext, VisualTestContext, point, px};
+    use std::{cell::RefCell, rc::Rc};
+
+    fn workspace<'a>(
+        tag: &str,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<AppView>, &'a mut VisualTestContext, PathBuf) {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "lumen-frame-preset-ui-{}-{tag}",
+                std::process::id()
+            ))
+            .join("settings.toml");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        cx.update(gpui_kit::init);
+        let view = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let view_slot = view.clone();
+            let path = path.clone();
+            move |window, cx| {
+                let app = cx.new(|cx| AppView::new_with_settings_path(Some(path), window, cx));
+                view_slot.borrow_mut().replace(app.clone());
+                Root::new(app, window, cx)
+            }
+        });
+        let app = view.borrow().clone().unwrap();
+        app.update_in(cx, |app, _, cx| {
+            // 只替换目录展示数据，不写入用户的预设目录。
+            app.preset_names
+                .retain(|name| app.builtin_preset_names.contains(name));
+            for name in ["test-a", "test-b", "test-c"] {
+                app.preset_names.push(name.into());
+                app.preset_previews
+                    .insert(name.into(), preset_of(&WatermarkParams::default(), &[]));
+            }
+            app.preset_order = user_preset_order(&app.preset_names, &app.builtin_preset_names);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        (app, cx, path)
+    }
+
+    #[test]
+    fn saved_order_survives_removed_and_new_presets() {
+        let mut names = vec![
+            "a".to_owned(),
+            "b".to_owned(),
+            "c".to_owned(),
+            "new".to_owned(),
+        ];
+        sort_preset_names(
+            &mut names,
+            &["gone".into(), "c".into(), "a".into(), "c".into()],
+        );
+        assert_eq!(names, ["c", "a", "b", "new"]);
+    }
+
+    #[gpui_kit::test]
+    fn builtin_group_can_collapse_and_remember_its_state(cx: &mut TestAppContext) {
+        let (view, cx, path) = workspace("collapse", cx);
+        assert!(cx.debug_bounds("preset-card-16_9").is_some());
+        cx.update(|window, cx| {
+            window.click("builtin-presets-toggle", cx);
+            window.render_frame(cx);
+        });
+        assert!(view.read_with(cx, |app, _| app.builtin_presets_collapsed));
+        assert!(cx.debug_bounds("preset-card-16_9").is_none());
+        assert!(cx.debug_bounds("preset-card-test-a").is_some());
+        assert!(settings_store::load_at(&path).builtin_presets_collapsed);
+
+        // 折叠入口保持键盘可操作。
+        cx.update(|window, cx| window.press("space", cx));
+        assert!(!view.read_with(cx, |app, _| app.builtin_presets_collapsed));
+        assert!(cx.debug_bounds("preset-card-16_9").is_some());
+        assert!(!settings_store::load_at(&path).builtin_presets_collapsed);
+        cx.update(|window, cx| window.press("space", cx));
+        cx.update(|window, cx| {
+            let restored =
+                cx.new(|cx| AppView::new_with_settings_path(Some(path.clone()), window, cx));
+            assert!(restored.read(cx).builtin_presets_collapsed);
+        });
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[gpui_kit::test]
+    fn dragging_personal_presets_reorders_and_saves_without_loading(cx: &mut TestAppContext) {
+        let (view, cx, path) = workspace("reorder", cx);
+        view.update_in(cx, |app, _, cx| app.set_builtin_presets_collapsed(true, cx));
+        cx.run_until_parked();
+        let source = cx.debug_bounds("preset-card-test-a").unwrap();
+        let target = cx.debug_bounds("preset-card-test-c").unwrap();
+        cx.update(|window, cx| {
+            window.drag(
+                source.center(),
+                point(target.center().x, target.bottom() - px(8.0)),
+                cx,
+            );
+            window.render_frame(cx);
+        });
+        let order = view.read_with(cx, |app, _| {
+            assert!(app.preset_feedback.is_none(), "拖动不应触发载入预设");
+            app.preset_order.clone()
+        });
+        assert_eq!(order, ["test-b", "test-c", "test-a"]);
+        assert_eq!(settings_store::load_at(&path).preset_order, order);
+
+        // 向前拖动插入到目标上方。
+        let source = cx.debug_bounds("preset-card-test-a").unwrap();
+        let target = cx.debug_bounds("preset-card-test-b").unwrap();
+        cx.update(|window, cx| {
+            window.drag(
+                source.center(),
+                point(target.center().x, target.top() + px(8.0)),
+                cx,
+            );
+            window.render_frame(cx);
+        });
+        assert_eq!(
+            settings_store::load_at(&path).preset_order,
+            ["test-a", "test-b", "test-c"]
+        );
+
+        // 拖动后卡片保持焦点，可直接用键盘再移动一项。
+        cx.update(|window, cx| window.press("alt-down", cx));
+        assert_eq!(
+            settings_store::load_at(&path).preset_order,
+            ["test-b", "test-a", "test-c"]
+        );
+        let names_before = view.read_with(cx, |app, _| app.preset_names.clone());
+        view.update_in(cx, |app, _, cx| app.move_preset("test-a", "16_9", true, cx));
+        assert_eq!(
+            view.read_with(cx, |app, _| app.preset_names.clone()),
+            names_before
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

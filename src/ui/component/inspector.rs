@@ -4,22 +4,26 @@
 //! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样预览、
 //! 导出、界面读数永远来自同一份数据。
 
+use gpui_kit::base::{
+    Accordion as BaseAccordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger,
+};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     accordion::Accordion,
     button::{Button, ButtonVariants as _},
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    radio::RadioGroup,
     select::{Select, SelectState},
     switch::Switch,
+    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, FontWeight, Hsla, IntoElement, KeyDownEvent, Role, SharedString,
-    Subscription, Window, black, div, linear_color_stop, linear_gradient, relative, rgba, white,
+    AnyElement, Context, DragMoveEvent, Entity, EntityId, FontWeight, Hsla, IntoElement,
+    KeyDownEvent, Role, SharedString, Subscription, Window, black, div, linear_color_stop,
+    linear_gradient, relative, rgba, white,
 };
 
 use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, WatermarkParams};
@@ -89,6 +93,8 @@ fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
 fn preset_section_label(label: &'static str, cx: &Context<AppView>) -> impl IntoElement {
     div()
         .mt_2()
+        .border_1()
+        .border_color(cx.theme().transparent)
         .text_xs()
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().muted_foreground)
@@ -99,6 +105,31 @@ fn preset_section_label(label: &'static str, cx: &Context<AppView>) -> impl Into
 ///
 /// 再往上 blur 的耗时涨得比效果快，实际也很难看出差别，所以界面上就收在 150。
 const BLUR_MAX: f64 = 150.0;
+
+/// 拖动携带预设名与工作台身份，不能跨工作台修改另一份顺序。
+#[derive(Clone)]
+struct DraggedPreset {
+    name: SharedString,
+    owner: EntityId,
+}
+
+impl Render for DraggedPreset {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w(gpui_kit::rems(15.0))
+            .gap_2()
+            .px_3()
+            .py_2()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .shadow_md()
+            .child(Icon::new(gpui_kit::assets::IconName::GripVertical).small())
+            .child(div().min_w_0().truncate().child(self.name.clone()))
+    }
+}
 
 /// 宽高比的选项：不限制、常用比例、自定义。
 ///
@@ -550,14 +581,19 @@ impl AppView {
                     .p_4()
                     .child(field(
                         "预设应用范围",
-                        RadioGroup::horizontal("preset-scope")
-                            .children(vec!["当前照片", "全部照片"])
-                            .selected_index(Some(if self.preset_scope == PresetScope::AllPhotos {
+                        TabBar::new("preset-scope")
+                            .segmented()
+                            .w_full()
+                            .children([
+                                Tab::new().label("当前照片").flex_1(),
+                                Tab::new().label("全部照片").flex_1(),
+                            ])
+                            .selected_index(if self.preset_scope == PresetScope::AllPhotos {
                                 1
                             } else {
                                 0
-                            }))
-                            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                            })
+                            .on_click(cx.listener(|this, index: &usize, _, cx| {
                                 this.preset_scope = if *index == 1 {
                                     PresetScope::AllPhotos
                                 } else {
@@ -611,18 +647,102 @@ impl AppView {
                     .gap_3()
                     .p_4()
                     .overflow_y_scroll()
-                    .child(preset_section_label("内置预设", cx))
-                    .children(
-                        self.preset_names
-                            .iter()
-                            .filter(|name| self.builtin_preset_names.contains(*name))
-                            .map(|name| self.render_preset_card(name.clone(), true, cx)),
+                    .child(
+                        BaseAccordion::new("builtin-presets")
+                            .w_full()
+                            .flex_shrink_0()
+                            .child(
+                                AccordionItem::new()
+                                    .open(!self.builtin_presets_collapsed)
+                                    .header(AccordionHeader::new(
+                                        AccordionTrigger::new("builtin-presets-toggle")
+                                            .aria_label("内置预设")
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .w_full()
+                                            .justify_between()
+                                            .py_1p5()
+                                            .rounded(cx.theme().radius)
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .border_1()
+                                            .border_color(cx.theme().transparent)
+                                            .focusable()
+                                            .tab_index(0)
+                                            .hover(|this| this.bg(cx.theme().muted))
+                                            .focus_visible(|this| {
+                                                this.border_color(cx.theme().ring)
+                                            })
+                                            .on_key_down(cx.listener(
+                                                |this, event: &KeyDownEvent, _, cx| {
+                                                    if matches!(
+                                                        event.keystroke.key.as_str(),
+                                                        "enter" | "space"
+                                                    ) {
+                                                        cx.stop_propagation();
+                                                        this.set_builtin_presets_collapsed(
+                                                            !this.builtin_presets_collapsed,
+                                                            cx,
+                                                        );
+                                                    }
+                                                },
+                                            ))
+                                            .child(hint("内置预设", cx))
+                                            .child(
+                                                Icon::new(if self.builtin_presets_collapsed {
+                                                    IconName::ChevronRight
+                                                } else {
+                                                    IconName::ChevronDown
+                                                })
+                                                .xsmall()
+                                                .text_color(cx.theme().muted_foreground),
+                                            )
+                                            .on_change({
+                                                let on_change =
+                                                    cx.listener(|this, open: &bool, _, cx| {
+                                                        this.set_builtin_presets_collapsed(
+                                                            !open, cx,
+                                                        );
+                                                    });
+                                                move |open, _, window, cx| {
+                                                    on_change(&open, window, cx)
+                                                }
+                                            }),
+                                    ))
+                                    .panel(
+                                        AccordionPanel::new().child(
+                                            v_flex().pt_3().gap_3().children(
+                                                self.preset_names
+                                                    .iter()
+                                                    .filter(|name| {
+                                                        self.builtin_preset_names.contains(*name)
+                                                    })
+                                                    .map(|name| {
+                                                        self.render_preset_card(
+                                                            name.clone(),
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    }),
+                                            ),
+                                        ),
+                                    ),
+                            ),
                     )
                     .when(
                         self.preset_names
                             .iter()
                             .any(|name| !self.builtin_preset_names.contains(name)),
-                        |this| this.child(preset_section_label("我的预设", cx)),
+                        |this| {
+                            this.child(preset_section_label("我的预设", cx)).child(hint(
+                                if cfg!(target_os = "macos") {
+                                    "拖动卡片排序，或按 ⌥↑ / ⌥↓"
+                                } else {
+                                    "拖动卡片排序，或按 Alt+↑ / Alt+↓"
+                                },
+                                cx,
+                            ))
+                        },
                     )
                     .children(
                         self.preset_names
@@ -668,6 +788,22 @@ impl AppView {
         let for_keyboard = name.clone();
         let for_delete = name.clone();
         let card_id = format!("preset-card-{name}");
+        let for_move = name.clone();
+        let for_drop = name.clone();
+        let for_drop_style = name.clone();
+        let for_can_drop = name.clone();
+        let owner = cx.entity_id();
+        let drag_owner = cx.entity().downgrade();
+        let dragged = DraggedPreset {
+            name: name.clone(),
+            owner,
+        };
+        let drop_before = self
+            .preset_drop_target
+            .as_ref()
+            .filter(|(target, _)| target == &name)
+            .map(|(_, before)| *before)
+            .unwrap_or(true);
         let preview = self
             .preset_previews
             .get(&name)
@@ -705,11 +841,90 @@ impl AppView {
                         this.load_preset(&for_load, window, cx)
                     }))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        if !builtin
+                            && event.keystroke.modifiers.alt
+                            && matches!(event.keystroke.key.as_str(), "up" | "down")
+                        {
+                            cx.stop_propagation();
+                            this.move_preset_by(&for_keyboard, event.keystroke.key == "up", cx);
+                            return;
+                        }
+                        if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
+                            this.preset_drop_target = None;
+                            cx.notify();
+                            return;
+                        }
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                             cx.stop_propagation();
                             this.load_preset(&for_keyboard, window, cx);
                         }
                     }))
+                    .when(!builtin, |card| {
+                        card.on_drag(dragged, move |dragged, _, _, cx| {
+                            let _ = drag_owner.update(cx, |this, cx| {
+                                this.preset_drop_target = None;
+                                cx.notify();
+                            });
+                            cx.new(|_| dragged.clone())
+                        })
+                        .can_drop(move |value, _, _| {
+                            value
+                                .downcast_ref::<DraggedPreset>()
+                                .is_some_and(|dragged| {
+                                    dragged.owner == owner && dragged.name != for_can_drop
+                                })
+                        })
+                        .drag_over::<DraggedPreset>(move |style, dragged, _, cx| {
+                            if dragged.owner != owner || dragged.name == for_drop_style {
+                                return style;
+                            }
+                            if drop_before {
+                                style.border_t_2().border_color(cx.theme().primary)
+                            } else {
+                                style.border_b_2().border_color(cx.theme().primary)
+                            }
+                        })
+                        .on_drag_move(cx.listener(
+                            move |this, event: &DragMoveEvent<DraggedPreset>, _, cx| {
+                                let dragged = event.drag(cx);
+                                if dragged.owner != cx.entity_id() {
+                                    return;
+                                }
+                                if event.bounds.contains(&event.event.position)
+                                    && dragged.name != for_move
+                                {
+                                    let target = (
+                                        for_move.clone(),
+                                        event.event.position.y < event.bounds.center().y,
+                                    );
+                                    if this.preset_drop_target.as_ref() != Some(&target) {
+                                        this.preset_drop_target = Some(target);
+                                        cx.notify();
+                                    }
+                                } else if this
+                                    .preset_drop_target
+                                    .as_ref()
+                                    .is_some_and(|(target, _)| target == &for_move)
+                                {
+                                    this.preset_drop_target = None;
+                                    cx.notify();
+                                }
+                            },
+                        ))
+                        .on_drop(cx.listener(
+                            move |this, dragged: &DraggedPreset, _, cx| {
+                                if dragged.owner != cx.entity_id() {
+                                    return;
+                                }
+                                if let Some((target, before)) = this.preset_drop_target.take()
+                                    && target == for_drop
+                                {
+                                    cx.stop_propagation();
+                                    this.move_preset(&dragged.name, &target, before, cx);
+                                }
+                            },
+                        ))
+                    })
                     .child(
                         v_flex()
                             .w_24()
@@ -727,9 +942,16 @@ impl AppView {
                                     .child(name),
                             )
                             .child(
-                                div()
+                                h_flex()
+                                    .gap_1()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
+                                    .when(!builtin, |row| {
+                                        row.child(
+                                            Icon::new(gpui_kit::assets::IconName::GripVertical)
+                                                .xsmall(),
+                                        )
+                                    })
                                     .child(if builtin { "内置" } else { "我的预设" }),
                             )
                             .when(!builtin, |this| this.pr_8()),

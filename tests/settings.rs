@@ -67,6 +67,8 @@ fn theme_slots_round_trip() {
         preview_background: [0x24, 0x32, 0x4a],
         output_folder: Some(PathBuf::from("/tmp/lumen-frame-output")),
         default_font: "Menlo".to_owned(),
+        builtin_presets_collapsed: true,
+        preset_order: vec!["我的预设二".to_owned(), "我的预设一".to_owned()],
     };
     save_at(&path, &settings).unwrap();
     assert_eq!(load_at(&path), settings);
@@ -83,6 +85,8 @@ fn theme_slots_round_trip() {
     assert_eq!(loaded.preview_background, [0x9a, 0xa7, 0xb1]);
     assert_eq!(loaded.preview_max_edge, None);
     assert_eq!(loaded.default_font, DEFAULT_FONT);
+    assert!(!loaded.builtin_presets_collapsed);
+    assert!(loaded.preset_order.is_empty());
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
@@ -96,6 +100,8 @@ fn old_settings_without_a_font_use_the_default() {
     let loaded = load_at(&path);
     assert_eq!(loaded.appearance, AppearanceMode::Dark);
     assert_eq!(loaded.default_font, DEFAULT_FONT);
+    assert!(!loaded.builtin_presets_collapsed);
+    assert!(loaded.preset_order.is_empty());
 
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
