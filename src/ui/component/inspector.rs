@@ -11,6 +11,7 @@ use gpui_kit::component::{
     group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
+    radio::RadioGroup,
     select::{Select, SelectState},
     switch::Switch,
     v_flex,
@@ -23,7 +24,7 @@ use gpui_kit::{
 
 use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, WatermarkParams};
 
-use super::super::{AppView, ExportState};
+use super::super::{AppView, ExportState, PresetScope};
 use super::field::{
     Choice, ColorField, NumberField, choices, field, hint, index_of, on_select, rgb_to_hsla,
     select_state, warning,
@@ -447,6 +448,14 @@ impl AppView {
                     .gap_6()
                     .p_4()
                     .overflow_y_scroll()
+                    .child(hint(
+                        if self.selected_photo_id().is_some() {
+                            "参数与文字水印仅修改当前照片"
+                        } else {
+                            "当前配置用于后续导入的照片"
+                        },
+                        cx,
+                    ))
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))
@@ -539,6 +548,36 @@ impl AppView {
                     .flex_shrink_0()
                     .gap_2()
                     .p_4()
+                    .child(field(
+                        "预设应用范围",
+                        RadioGroup::horizontal("preset-scope")
+                            .children(vec!["当前照片", "全部照片"])
+                            .selected_index(Some(if self.preset_scope == PresetScope::AllPhotos {
+                                1
+                            } else {
+                                0
+                            }))
+                            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                                this.preset_scope = if *index == 1 {
+                                    PresetScope::AllPhotos
+                                } else {
+                                    PresetScope::CurrentPhoto
+                                };
+                                this.preset_feedback = None;
+                                cx.notify();
+                            })),
+                        cx,
+                    ))
+                    .child(hint(
+                        if self.preset_scope == PresetScope::AllPhotos {
+                            "选择预设将覆盖全部照片，并用于后续导入。手动调整仅修改当前照片。"
+                        } else if self.selected_photo_id().is_some() {
+                            "选择预设仅修改当前照片。"
+                        } else {
+                            "尚未导入照片，选择预设将设置新照片的默认配置。"
+                        },
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .w_full()
@@ -628,6 +667,7 @@ impl AppView {
         let for_load = name.clone();
         let for_keyboard = name.clone();
         let for_delete = name.clone();
+        let card_id = format!("preset-card-{name}");
         let preview = self
             .preset_previews
             .get(&name)
@@ -641,7 +681,8 @@ impl AppView {
             .child(
                 h_flex()
                     .items_stretch()
-                    .id(format!("preset-card-{name}"))
+                    .id(card_id.clone())
+                    .debug_selector(move || card_id)
                     .w_full()
                     .min_w_0()
                     .gap_3()

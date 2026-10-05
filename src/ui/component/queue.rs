@@ -92,7 +92,9 @@ impl AppView {
                             .ghost()
                             .small()
                             .disabled(self.selected_photo_id().is_none())
-                            .on_click(cx.listener(|this, _, _, cx| this.remove_selected(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.remove_selected(window, cx)),
+                            ),
                     )
                     .child(
                         Button::new("queue-clear")
@@ -100,7 +102,9 @@ impl AppView {
                             .ghost()
                             .small()
                             .disabled(self.photos().is_empty())
-                            .on_click(cx.listener(|this, _, _, cx| this.clear_photos(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.clear_photos(window, cx)),
+                            ),
                     ),
             )
     }
@@ -186,11 +190,11 @@ impl AppView {
             .aria_label(name.clone())
             .hover(|this| this.bg(cx.theme().muted))
             .focus_visible(|this| this.border_color(cx.theme().ring))
-            .on_click(cx.listener(move |this, _, _, cx| this.select_photo(id, cx)))
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| this.select_photo(id, window, cx)))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     cx.stop_propagation();
-                    this.select_photo(id, cx);
+                    this.select_photo(id, window, cx);
                 }
             }))
             .child(

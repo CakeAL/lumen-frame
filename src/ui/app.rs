@@ -74,14 +74,26 @@ pub enum ExportState {
     Finished { succeeded: usize, failed: usize },
 }
 
+/// 预设的应用范围；手动调整参数始终只修改当前照片。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PresetScope {
+    CurrentPhoto,
+    AllPhotos,
+}
+
 pub struct AppView {
     page: AppPage,
     /// 无 UI 依赖的照片队列、稳定身份和选择策略。
     workspace: PhotoWorkspace,
     /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
     thumbnails: HashMap<PhotoId, Thumbnail>,
-    /// 预览与导出共用的唯一一份参数。
+    /// 当前照片的编辑真值，供预览与导出使用。
     params: WatermarkParams,
+    /// 未选中照片的配置快照。选中时移出，离开时写回，避免保存第二份编辑真值。
+    photo_watermarks: HashMap<PhotoId, WatermarkPreset>,
+    /// 全局预设也是后续导入照片的初始配置，不随单张照片的编辑变化。
+    global_watermark: WatermarkPreset,
+    preset_scope: PresetScope,
     /// 每个文字组各自持有组级控件与文字行；稳定 id 不随增删其它组改变。
     text_groups: Vec<TextGroupEditor>,
     /// 每个文字组最多打开一个独立编辑窗口；已关闭的句柄会在下次打开时清理。
@@ -148,6 +160,7 @@ impl AppView {
             settings.default_font.clone()
         };
         let text_group = TextGroup::default();
+        let global_watermark = preset_of(&params, std::slice::from_ref(&text_group));
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let gainmap = GainMapPageState::new(cx);
@@ -202,6 +215,9 @@ impl AppView {
             workspace: PhotoWorkspace::default(),
             thumbnails: HashMap::new(),
             params,
+            photo_watermarks: HashMap::new(),
+            global_watermark,
+            preset_scope: PresetScope::CurrentPhoto,
             text_groups,
             text_editor_windows: HashMap::new(),
             opening_text_editor_ids: HashSet::new(),
@@ -310,13 +326,53 @@ impl AppView {
             .collect()
     }
 
+    fn current_watermark(&self, cx: &App) -> WatermarkPreset {
+        preset_of(&self.params, &self.build_text_groups(cx))
+    }
+
+    /// 导出读取每张照片的配置；本机环境设置始终使用当前值。
+    fn watermark_for_photo(&self, id: PhotoId, cx: &App) -> WatermarkPreset {
+        let mut watermark = if self.selected_photo_id() == Some(id) {
+            self.current_watermark(cx)
+        } else {
+            self.photo_watermarks
+                .get(&id)
+                .unwrap_or(&self.global_watermark)
+                .clone()
+        };
+        watermark.params.output_folder = self.params.output_folder.clone();
+        watermark.params.default_font = self.params.default_font.clone();
+        watermark
+    }
+
+    fn save_current_watermark(&mut self, cx: &App) {
+        let watermark = self.current_watermark(cx);
+        if let Some(id) = self.selected_photo_id() {
+            self.photo_watermarks.insert(id, watermark);
+        } else {
+            self.global_watermark = watermark;
+        }
+    }
+
+    fn restore_selected_watermark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let watermark = self
+            .selected_photo_id()
+            .and_then(|id| self.photo_watermarks.remove(&id))
+            .unwrap_or_else(|| self.global_watermark.clone());
+        self.restore_watermark(watermark, window, cx);
+    }
+
     // MARK: 预览
 
     /// 参数、选中项或文字水印变化后调用：把当前状态打包成一份预览请求。
     ///
     /// 请求本身只是「登记最新意图」，真正算不算、什么时候算由 [`WatermarkPreview`] 决定，
     /// 所以拖动滑块时可以放心地每帧调用。
-    pub(super) fn refresh_preview(&self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_preview(&mut self, cx: &mut Context<Self>) {
+        // 空队列时编辑的是新照片默认配置；导入照片后便各自独立。
+        if self.selected_photo_id().is_none() {
+            self.global_watermark = self.current_watermark(cx);
+        }
         let job = match self.selected_photo() {
             Some(photo) => PreviewJob {
                 path: photo.path().to_path_buf(),
@@ -723,12 +779,17 @@ impl AppView {
     /// 非图片文件和不认识的扩展名会被安静跳过：队列只放能处理的对象，否则用户要等到
     /// 预览报错才知道选错了文件。
     pub fn add_photos(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if self.workspace.is_empty() {
+            self.save_current_watermark(cx);
+        }
         let mut added = Vec::new();
         for path in paths {
             if !is_supported_image(&path) {
                 continue;
             }
             if let Some(id) = self.workspace.add(path.clone()) {
+                self.photo_watermarks
+                    .insert(id, self.global_watermark.clone());
                 self.thumbnails.insert(id, Thumbnail::Pending);
                 added.push((id, path));
             }
@@ -746,46 +807,58 @@ impl AppView {
 
         if self.workspace.selected_id().is_none() {
             self.workspace.select(first);
+            // 空队列时控件本来就在编辑全局默认配置，不必重建。
+            self.photo_watermarks.remove(&first);
             self.refresh_preview(cx);
         }
         cx.notify();
     }
 
-    pub(super) fn select_photo(&mut self, id: PhotoId, cx: &mut Context<Self>) {
-        if !self.workspace.select(id) {
+    pub(super) fn select_photo(
+        &mut self,
+        id: PhotoId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_photo_id() == Some(id) || self.workspace.photo(id).is_none() {
             return;
         }
-        self.refresh_preview(cx);
+        self.save_current_watermark(cx);
+        self.workspace.select(id);
+        self.restore_selected_watermark(window, cx);
+        self.preset_feedback = None;
         cx.notify();
     }
 
     /// 按队列顺序选中第 `index` 张照片。
     ///
     /// 选中项本身由领域 id 标识；这里是按位置操作队列的一条受控通道。
-    pub fn select_photo_at(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.workspace.select_at(index) {
-            return;
+    pub fn select_photo_at(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.workspace.photos().get(index).map(QueuedPhoto::id) {
+            self.select_photo(id, window, cx);
         }
-        self.refresh_preview(cx);
-        cx.notify();
     }
 
-    pub fn remove_selected(&mut self, cx: &mut Context<Self>) {
+    pub fn remove_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.workspace.remove_selected() else {
             return;
         };
         self.thumbnails.remove(&id);
-        self.refresh_preview(cx);
+        self.photo_watermarks.remove(&id);
+        self.restore_selected_watermark(window, cx);
+        self.preset_feedback = None;
         cx.notify();
     }
 
-    pub fn clear_photos(&mut self, cx: &mut Context<Self>) {
+    pub fn clear_photos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.workspace.clear() == 0 {
             return;
         }
         self.thumbnails.clear();
+        self.photo_watermarks.clear();
         self.export = ExportState::Idle;
-        self.refresh_preview(cx);
+        self.restore_selected_watermark(window, cx);
+        self.preset_feedback = None;
         cx.notify();
     }
 
@@ -905,8 +978,18 @@ impl AppView {
         };
         match preset {
             Ok(preset) => {
+                let all = self.preset_scope == PresetScope::AllPhotos;
                 self.apply_preset(preset, window, cx);
-                self.preset_feedback = Some(format!("已载入「{name}」").into());
+                self.preset_feedback = Some(
+                    if all {
+                        format!("已将「{name}」应用到全部照片及后续导入")
+                    } else if self.selected_photo_id().is_some() {
+                        format!("已将「{name}」应用到当前照片")
+                    } else {
+                        format!("新照片将使用「{name}」")
+                    }
+                    .into(),
+                );
                 self.preset_feedback_is_error = false;
             }
             Err(error) => {
@@ -919,6 +1002,27 @@ impl AppView {
 
     /// 用一份预设替换当前配置。
     fn apply_preset(
+        &mut self,
+        mut preset: WatermarkPreset,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if preset.text_groups.is_empty() {
+            preset.text_groups.push(TextGroup::default());
+        }
+        if self.preset_scope == PresetScope::AllPhotos {
+            self.global_watermark = preset.clone();
+            for photo in self.workspace.photos() {
+                if Some(photo.id()) != self.selected_photo_id() {
+                    self.photo_watermarks.insert(photo.id(), preset.clone());
+                }
+            }
+        }
+        self.restore_watermark(preset, window, cx);
+    }
+
+    /// 恢复照片快照，包括用户主动删空的文字组；不能把它当成待初始化的预设。
+    fn restore_watermark(
         &mut self,
         preset: WatermarkPreset,
         window: &mut Window,
@@ -941,11 +1045,7 @@ impl AppView {
         self.params.output_folder = output_folder;
         self.params.default_font = default_font;
 
-        let text_groups = if preset.text_groups.is_empty() {
-            vec![TextGroup::default()]
-        } else {
-            preset.text_groups
-        };
+        let text_groups = preset.text_groups;
         let mut editors = Vec::with_capacity(text_groups.len());
         for text_group in text_groups {
             let id = self.next_text_group_id;
@@ -1038,9 +1138,9 @@ impl AppView {
     /// 直接复用预设那条路径：默认值本来就可以看成一个内置预设，这样控件同步、文字行重建、
     /// 预览重算都不用再写一遍。
     pub(super) fn reset_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // 输出文件夹是这台机器的设置，恢复画面效果不该把它一起清掉（`apply_preset` 会保留）。
+        // 输出文件夹是这台机器的设置，恢复画面效果不该把它一起清掉（`restore_watermark` 会保留）。
         let preset = preset_of(&WatermarkParams::default(), &[TextGroup::default()]);
-        self.apply_preset(preset, window, cx);
+        self.restore_watermark(preset, window, cx);
         cx.notify();
     }
 

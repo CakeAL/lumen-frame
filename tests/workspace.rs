@@ -52,6 +52,14 @@ fn settle(cx: &mut VisualTestContext, ready: impl Fn(&mut VisualTestContext) -> 
     panic!("等待预览渲染完成超时");
 }
 
+/// 预设卡片是应用自绘元素，按已渲染的边界点击。
+fn click_preset(cx: &mut VisualTestContext, id: &'static str) {
+    cx.run_until_parked();
+    let bounds = cx.debug_bounds(id).expect("预设卡片没有渲染");
+    cx.simulate_click(bounds.center(), Default::default());
+    cx.run_until_parked();
+}
+
 #[gpui_kit::test]
 fn dropped_photos_reach_the_queue_and_the_preview(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
@@ -137,13 +145,132 @@ fn switching_photos_recomputes_the_preview(cx: &mut TestAppContext) {
         .expect("第一张照片没有渲染出预览");
 
     // 换到第二张：预览必须换成另一张位图，而不是继续显示上一张。
-    view.update_in(cx, |view, _, cx| view.select_photo_at(1, cx));
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
     settle(cx, |cx| {
         view.read_with(cx, |view, cx| {
             view.preview_image(cx)
                 .is_some_and(|image| image.id != first.id)
         })
     });
+}
+
+/// 预设与旋转通过界面入口修改，切换和删除照片后仍只属于原来的照片。
+#[gpui_kit::test]
+fn photo_presets_and_edits_are_independent(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    view.update_in(cx, |view, _, cx| {
+        view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
+    });
+    let original = view.read_with(cx, |view, _| view.params().clone());
+    click_preset(cx, "preset-card-16_9");
+    cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
+    let first = view.read_with(cx, |view, _| view.params().clone());
+    assert_eq!(first.aspect_ratio, Some((16.0, 9.0)));
+    assert_eq!(first.rotation.degrees(), 90);
+
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().clone()),
+        original
+    );
+    click_preset(cx, "preset-card-基础样式");
+    let second = view.read_with(cx, |view, _| view.params().clone());
+
+    view.update_in(cx, |view, window, cx| view.select_photo_at(0, window, cx));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.params().clone()), first);
+    view.update_in(cx, |view, window, cx| {
+        view.select_photo_at(1, window, cx);
+    });
+    assert_eq!(view.read_with(cx, |view, _| view.params().clone()), second);
+    view.update_in(cx, |view, window, cx| view.remove_selected(window, cx));
+    assert_eq!(view.read_with(cx, |view, _| view.params().clone()), first);
+}
+
+/// 应用范围控件走实际点击路径，全局预设之后的手动编辑仍然只修改当前照片。
+#[gpui_kit::test]
+fn preset_scope_applies_globally_and_can_return_to_current_photo(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    view.update_in(cx, |view, _, cx| {
+        view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.within("preset-scope").click(1_usize, cx);
+        window.render_frame(cx);
+    });
+    click_preset(cx, "preset-card-16_9");
+    cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().aspect_ratio),
+        Some((16.0, 9.0))
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().rotation.degrees()),
+        0
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.within("preset-scope").click(0_usize, cx);
+        window.render_frame(cx);
+    });
+    click_preset(cx, "preset-card-基础样式");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().aspect_ratio),
+        None
+    );
+    view.update_in(cx, |view, window, cx| view.select_photo_at(0, window, cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().aspect_ratio),
+        Some((16.0, 9.0))
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().rotation.degrees()),
+        90
+    );
+}
+
+/// 删空文字组的照片切换后仍应没有文字，且旧编辑窗口不能继续修改新照片。
+#[gpui_kit::test]
+fn empty_photo_text_and_editor_lifetime_survive_switching(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    view.update_in(cx, |view, _, cx| {
+        view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.scroll(
+            "solid-background",
+            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        window.click(("text-group-edit", 0_u64), cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        view.read_with(cx, |view, _| view.text_editor_window_count()),
+        1
+    );
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.text_editor_window_count()),
+        0
+    );
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 1);
+
+    view.update_in(cx, |view, window, cx| view.select_photo_at(0, window, cx));
+    cx.run_until_parked();
+    // 初始组为 0，切换两次后新建的组依次为 1、2。
+    cx.update(|window, cx| window.click(("text-group-remove", 2_u64), cx));
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 0);
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 1);
+    view.update_in(cx, |view, window, cx| view.select_photo_at(0, window, cx));
+    assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 0);
 }
 
 #[gpui_kit::test]
@@ -158,7 +285,7 @@ fn removing_the_last_photo_empties_the_preview(cx: &mut TestAppContext) {
             .is_some()
     });
 
-    view.update_in(cx, |view, _, cx| view.remove_selected(cx));
+    view.update_in(cx, |view, window, cx| view.remove_selected(window, cx));
 
     assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
     assert_eq!(

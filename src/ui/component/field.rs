@@ -311,7 +311,7 @@ impl ColorField {
     pub(in crate::ui::app) fn sync(&self, rgb: [u8; 3], window: &mut Window, cx: &mut App) {
         let color = rgb_to_hsla(rgb);
         self.picker
-            .update(cx, |state, cx| state.update_color(color, window, cx));
+            .update(cx, |state, cx| state.set_value(color, window, cx));
         write_text(&self.hex, hex_string(rgb), window, cx);
     }
 
