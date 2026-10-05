@@ -15,6 +15,7 @@ use gpui_kit::component::{
     link::Link,
     radio::RadioGroup,
     scroll::ScrollableElement as _,
+    searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
@@ -58,7 +59,7 @@ pub(in crate::ui::app) fn apply_interface_scale(scale: f32, window: &mut Window,
 }
 
 /// 设置页中可搜索的名称下拉。
-type NameSelect = SelectState<Vec<SharedString>>;
+type NameSelect = SelectState<SearchableVec<SharedString>>;
 
 /// 设置页上的控件状态。
 pub(in crate::ui::app) struct SettingsControls {
@@ -165,7 +166,7 @@ fn make_font_select(
         .iter()
         .position(|name| name == &selected_font)
         .map(IndexPath::new);
-    cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
+    cx.new(|cx| SelectState::new(SearchableVec::new(names), selected, window, cx).searchable(true))
 }
 
 fn make_theme_select(
@@ -176,7 +177,7 @@ fn make_theme_select(
 ) -> Entity<NameSelect> {
     let names = crate::theme::themes_for(mode, cx);
     let selected = theme_index(&names, mode, saved_name);
-    cx.new(|cx| SelectState::new(names, selected, window, cx).searchable(true))
+    cx.new(|cx| SelectState::new(SearchableVec::new(names), selected, window, cx).searchable(true))
 }
 
 /// 默认选中哪一项：优先默认的那套配色，列表非空时退回第一项。
@@ -714,6 +715,101 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Render, TestAppContext};
+    use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    struct FontSelectHarness {
+        font: Entity<NameSelect>,
+        _owner: Entity<AppView>,
+    }
+
+    impl Render for FontSelectHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            Select::new(&self.font).id("default-font").w_full()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn default_font_search_selects_the_matching_font(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let state = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let state = state.clone();
+            move |window, cx| {
+                let owner = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+                let font = owner.update(cx, |_, cx| {
+                    make_font_select(
+                        "Academy Engraved LET",
+                        &[
+                            "Academy Engraved LET".into(),
+                            "Maple Mono NF CN".into(),
+                            "Menlo".into(),
+                        ],
+                        window,
+                        cx,
+                    )
+                });
+                state.borrow_mut().replace(font.clone());
+                let harness = cx.new(|_| FontSelectHarness {
+                    font,
+                    _owner: owner,
+                });
+                Root::new(harness, window, cx)
+            }
+        });
+        let font = state.borrow().clone().unwrap();
+        cx.update(|window, cx| {
+            window.within("default-font").click("input", cx);
+            window.input("mApLe", cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.press("enter", cx));
+        assert_eq!(
+            font.read_with(cx, |font, _| font.selected_value().cloned()),
+            Some("Maple Mono NF CN".into())
+        );
+
+        // 重新打开后搜索其他字体，避免过滤结果或行号沿用上一次查询。
+        cx.update(|window, cx| {
+            window.within("default-font").click("input", cx);
+            window.input("menlo", cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.press("enter", cx));
+        assert_eq!(
+            font.read_with(cx, |font, _| font.selected_value().cloned()),
+            Some("Menlo".into())
+        );
+
+        // 无匹配时不能误选原列表第一项；修改查询后应从完整字体列表重新过滤。
+        cx.update(|window, cx| {
+            window.within("default-font").click("input", cx);
+            window.input("no-such-font", cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.press("enter", cx);
+            window.press("cmd-a", cx);
+            window.press("backspace", cx);
+            window.input("academy", cx);
+        });
+        assert_eq!(
+            font.read_with(cx, |font, _| font.selected_value().cloned()),
+            Some("Menlo".into())
+        );
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.press("enter", cx));
+        assert_eq!(
+            font.read_with(cx, |font, _| font.selected_value().cloned()),
+            Some("Academy Engraved LET".into())
+        );
+    }
 
     #[test]
     fn saved_theme_is_selected_before_the_default() {
