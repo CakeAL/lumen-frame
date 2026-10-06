@@ -347,6 +347,57 @@ fn dropping_files_on_the_workspace_enqueues_them(cx: &mut TestAppContext) {
     });
 }
 
+/// 文件夹与其中某张照片同时拖入时，只添加一份，并包含深层子文件夹。
+#[gpui_kit::test]
+fn dropping_a_folder_recursively_imports_its_photos(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("lumen-frame-drop-folder-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("nested/deeper")).unwrap();
+    let first = dir.join("first.JPG");
+    let second = dir.join("nested/deeper/second.jpg");
+    std::fs::copy(PHOTO, &first).unwrap();
+    std::fs::copy(OTHER_PHOTO, &second).unwrap();
+    std::fs::write(dir.join("ignored.txt"), "不是照片").unwrap();
+    let (view, cx) = workspace(cx);
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert!(window.try_find("queue-add-folder").is_some());
+        let position = point(px(420.), px(320.));
+        window.dispatch_event(
+            FileDropEvent::Entered {
+                position,
+                paths: ExternalPaths([dir.clone(), first.clone()].into_iter().collect()),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(FileDropEvent::Submit { position }.to_platform_input(), cx);
+    });
+    settle(cx, |cx| {
+        view.read_with(cx, |view, _| view.photo_count()) == 2
+    });
+    assert_eq!(
+        view.read_with(cx, |view, _| view
+            .selected_path()
+            .map(|path| path.to_path_buf())),
+        Some(first)
+    );
+    view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view
+            .selected_path()
+            .map(|path| path.to_path_buf())),
+        Some(second)
+    );
+    view.update_in(cx, |view, _, cx| view.add_photos(vec![dir.clone()], cx));
+    cx.run_until_parked();
+    assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 2);
+    settle(cx, |cx| {
+        view.read_with(cx, |view, cx| view.preview_image(cx))
+            .is_some()
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// 设置页要能渲染，而且切过去再切回来不能出问题。
 ///
 /// 明暗选择是三项单选，索引和 `AppearanceMode` 的对应关系错了会在渲染时暴露出来；

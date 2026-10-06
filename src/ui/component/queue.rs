@@ -77,6 +77,9 @@ impl AppView {
             .focus_visible(|this| this.border_color(cx.theme().ring))
             .child(self.render_queue_header(cx))
             .child(self.render_queue_strip(cx))
+            .when_some(self.photo_import.feedback.clone(), |this, feedback| {
+                this.child(div().px_4().pb_3().child(description(feedback)))
+            })
     }
 
     fn select_adjacent_photo(
@@ -109,6 +112,7 @@ impl AppView {
             .w_full()
             .flex_shrink_0()
             .justify_between()
+            .flex_wrap()
             .gap_3()
             .px_4()
             .py_2()
@@ -128,6 +132,14 @@ impl AppView {
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("{} 张", self.photos().len())),
                     )
+                    .when(self.photo_import.pending > 0, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .child(Spinner::new().small())
+                                .child(description("扫描中…")),
+                        )
+                    })
                     .child(
                         h_flex()
                             .gap_1()
@@ -150,6 +162,14 @@ impl AppView {
                             .on_click(cx.listener(|this, _, _, cx| this.pick_photos(cx))),
                     )
                     .child(
+                        Button::new("queue-add-folder")
+                            .icon(IconName::FolderOpen)
+                            .label("添加文件夹")
+                            .small()
+                            .tooltip("添加文件夹及所有子文件夹中的照片")
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_photo_folder(cx))),
+                    )
+                    .child(
                         Button::new("queue-remove")
                             .icon(IconName::Close)
                             .label("移除")
@@ -165,7 +185,7 @@ impl AppView {
                             .label("清空")
                             .ghost()
                             .small()
-                            .disabled(self.photos().is_empty())
+                            .disabled(self.photos().is_empty() && self.photo_import.pending == 0)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.clear_photos(window, cx)),
                             ),
@@ -185,7 +205,7 @@ impl AppView {
             .track_scroll(&self.queue_scroll)
             .when(self.photos().is_empty(), |this| {
                 this.child(div().w_full().py_6().text_center().child(description(
-                    "拖入照片，或用「添加照片」选择；一次可以拖入多张",
+                    "拖入照片或文件夹，也可点击添加；文件夹包含所有子文件夹",
                 )))
             })
             .when(!self.photos().is_empty(), |this| {

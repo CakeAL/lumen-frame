@@ -240,7 +240,9 @@ impl AppView {
                 .gap_3()
                 .text_color(cx.theme().muted_foreground)
                 .child(Icon::new(IconName::Frame).with_size(Size::Large))
-                .child(description("把照片拖到这里，或用下方的「添加照片」选择"))
+                .child(description(
+                    "把照片或文件夹拖到这里，或用下方的添加按钮选择",
+                ))
                 .into_any_element(),
             PreviewState::Failed(message) => div()
                 .v_flex()

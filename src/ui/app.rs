@@ -121,6 +121,7 @@ pub struct AppView {
     /// 黑白底图 + 彩色恢复 gain map 的独立生成页状态。
     other_tools: OtherToolsState,
     export: ExportState,
+    photo_import: behavior::import::PhotoImportState,
 
     preset_names: Vec<SharedString>,
     builtin_presets_collapsed: bool,
@@ -258,6 +259,7 @@ impl AppView {
             gainmap,
             other_tools,
             export: ExportState::Idle,
+            photo_import: Default::default(),
             preset_names,
             builtin_presets_collapsed: settings.builtin_presets_collapsed,
             preset_order,
@@ -804,11 +806,15 @@ impl AppView {
         self.persist_settings_inner();
     }
 
-    /// 把外部路径加入队列。
+    /// 把外部路径加入队列；文件夹在后台递归扫描后加入其中的照片。
     ///
     /// 非图片文件和不认识的扩展名会被安静跳过：队列只放能处理的对象，否则用户要等到
     /// 预览报错才知道选错了文件。
     pub fn add_photos(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if paths.iter().any(|path| path.is_dir()) {
+            self.import_photo_folders(paths, cx);
+            return;
+        }
         if self.workspace.is_empty() {
             self.save_current_watermark(cx);
         }
@@ -881,7 +887,10 @@ impl AppView {
     }
 
     pub fn clear_photos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.photo_import.revision = self.photo_import.revision.wrapping_add(1);
+        self.photo_import.feedback = None;
         if self.workspace.clear() == 0 {
+            cx.notify();
             return;
         }
         self.thumbnails.clear();
