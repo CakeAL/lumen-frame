@@ -895,7 +895,10 @@ impl AppView {
         }
         self.thumbnails.clear();
         self.photo_watermarks.clear();
-        self.export = ExportState::Idle;
+        // 导出任务拥有冻结的照片快照，清空队列不结束任务，也不能解除重复导出的锁。
+        if !matches!(self.export, ExportState::Running { .. }) {
+            self.export = ExportState::Idle;
+        }
         self.restore_selected_watermark(window, cx);
         self.preset_feedback = None;
         cx.notify();

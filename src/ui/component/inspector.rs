@@ -1218,9 +1218,11 @@ impl AppView {
             .child(self.render_export_footer(cx))
     }
 
-    /// 导出是这一页唯一的提交动作，所以它落在面板最底部，并且是唯一的 primary 按钮。
+    /// 当前照片与全部照片是同一提交动作的两种范围，批量导出保留 primary 强调。
     fn render_export_footer(&self, cx: &Context<Self>) -> impl IntoElement {
         let total = self.photos().len();
+        let unavailable = self.params.output_folder.is_none()
+            || matches!(self.export, ExportState::Running { .. });
         let status = match &self.export {
             ExportState::Running { completed, total } => format!("正在导出 {completed}/{total}"),
             ExportState::Finished {
@@ -1237,13 +1239,34 @@ impl AppView {
             .w_full()
             .gap_2()
             .child(
-                Button::new("export")
-                    .icon(IconName::FolderOpen)
-                    .label("导出全部")
-                    .primary()
+                h_flex()
                     .w_full()
-                    .disabled(total == 0 || matches!(self.export, ExportState::Running { .. }))
-                    .on_click(cx.listener(|this, _, window, cx| this.export_all(window, cx))),
+                    .gap_2()
+                    .child(
+                        Button::new("export-current")
+                            .icon(gpui_kit::assets::IconName::Download)
+                            .label("导出当前")
+                            .outline()
+                            .flex_1()
+                            .min_w_0()
+                            .disabled(unavailable || self.selected_photo_id().is_none())
+                            .tooltip("仅导出当前选中的照片")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.export_current(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("export")
+                            .icon(IconName::FolderOpen)
+                            .label("导出全部")
+                            .primary()
+                            .flex_1()
+                            .min_w_0()
+                            .disabled(unavailable || total == 0 || self.photo_import.pending > 0)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.export_all(window, cx)),
+                            ),
+                    ),
             )
             .when(!status.is_empty(), |this| {
                 this.child(muted_text(status, cx))
