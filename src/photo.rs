@@ -279,11 +279,7 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
     }
 
     fn text(&mut self, group: &TextGroup) -> Result<Option<VipsImage>> {
-        self.exif
-            .map(|exif| group.render_text(exif, self.img.height() as i32, self.params))
-            .transpose()
-            .map(Option::flatten)
-            .map_err(Into::into)
+        Ok(group.render_for_photo(self.exif, self.img.height() as i32, self.params)?)
     }
 
     fn background(&mut self, (w, h): (i32, i32)) -> Result<VipsImage> {

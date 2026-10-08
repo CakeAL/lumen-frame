@@ -85,6 +85,7 @@ struct TextKey {
     background: [u8; 3],
     solid: bool,
     exif: String,
+    custom_text: String,
 }
 
 #[derive(Clone)]
@@ -307,16 +308,21 @@ impl LayerRenderer for CachedRenderer<'_> {
             background: self.job.params.background,
             solid: self.job.params.solid_background,
             exif: format!("{:?}", self.job.exif),
+            custom_text: if group.uses_custom_text() {
+                self.job.params.custom_text.clone()
+            } else {
+                String::new()
+            },
         };
         let image = if let Some((_, image)) = self.cache.texts.iter().find(|(old, _)| *old == key) {
             image.clone()
-        } else if let Some(exif) = &self.job.exif {
+        } else {
             #[cfg(test)]
             {
                 self.cache.builds[4] += 1;
             }
             group
-                .render_text(exif, self.dimensions.1, &self.job.params)?
+                .render_for_photo(self.job.exif.as_ref(), self.dimensions.1, &self.job.params)?
                 .map(|image| {
                     let visible = TextGroupRegion::from_layer(
                         &image,
@@ -331,8 +337,6 @@ impl LayerRenderer for CachedRenderer<'_> {
                     })
                 })
                 .transpose()?
-        } else {
-            None
         };
         self.next_texts.push((key, image.clone()));
         Ok(image)
@@ -529,6 +533,46 @@ mod tests {
         for ix in 0..first.layers.len() {
             assert!(same(&next, &unchanged, ix));
         }
+    }
+
+    #[test]
+    fn custom_text_updates_only_referencing_groups_and_renders_without_exif() {
+        let mut job = job();
+        job.text_groups[0].text.template[0] = "{自定义文本}".into();
+        job.params.custom_text = "First title".into();
+        let mut cache = PreviewLayerCache::default();
+        let first = cache.render(&job).unwrap();
+        let builds = cache.builds;
+        job.params.custom_text = "Second title".into();
+        let edited = cache.render(&job).unwrap();
+        for ix in [0, 1, 2, 4] {
+            assert!(same(&first, &edited, ix));
+        }
+        assert!(!same(&first, &edited, 3));
+        assert_eq!(
+            cache.builds,
+            [builds[0], builds[1], builds[2], builds[3], builds[4] + 1]
+        );
+        let full = super::super::render_preview_with_regions(&job).unwrap();
+        assert_eq!(edited.text_regions, full.text_regions);
+        let error = edited
+            .image()
+            .as_bytes(0)
+            .unwrap()
+            .iter()
+            .zip(full.image.as_bytes(0).unwrap())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(error <= 2);
+        job.exif = None;
+        let no_exif = cache.render(&job).unwrap();
+        assert_eq!(no_exif.text_regions.len(), 1);
+        assert_eq!(no_exif.text_regions[0].group_ix, 0);
+        let full = super::super::render_preview_with_regions(&job).unwrap();
+        assert_eq!(no_exif.text_regions, full.text_regions);
+        job.params.custom_text.clear();
+        assert!(cache.render(&job).unwrap().text_regions.is_empty());
     }
 
     #[test]

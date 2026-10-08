@@ -144,7 +144,7 @@ impl Text {
             .template
             .iter()
             .take(line_count)
-            .map(|t| parse_template(t, exif, time_format))
+            .map(|t| parse_template(t, exif, time_format, &watermark_params.custom_text))
             .collect();
 
         // 计算每一行的字号
@@ -216,6 +216,29 @@ impl Text {
 }
 
 impl TextGroup {
+    pub(crate) fn uses_custom_text(&self) -> bool {
+        self.text
+            .template
+            .iter()
+            .any(|line| line.contains("{自定义文本}"))
+    }
+
+    /// 自定义文本不依赖 EXIF；没有元数据的照片仍可使用这个字段。
+    pub(crate) fn render_for_photo(
+        &self,
+        exif: Option<&ExifInfo>,
+        img_h: i32,
+        params: &WatermarkParams,
+    ) -> Result<Option<VipsImage>> {
+        if let Some(exif) = exif {
+            self.render_text(exif, img_h, params)
+        } else if self.uses_custom_text() {
+            self.render_text(&ExifInfo::default(), img_h, params)
+        } else {
+            Ok(None)
+        }
+    }
+
     /// 渲染整组文字。竖排是对完成组内排版后的位图整体旋转，因此不会改变每行自己的
     /// `TextParams::align` 语义。
     pub fn render_text(
@@ -307,14 +330,24 @@ enum Segment {
 }
 
 /// 把模板中的 `{Logo}` 识别出来，其余文本用 EXIF 模板渲染。
-fn parse_template(template: &str, exif: &ExifInfo, time_format: &str) -> Vec<Segment> {
+fn parse_template(
+    template: &str,
+    exif: &ExifInfo,
+    time_format: &str,
+    custom_text: &str,
+) -> Vec<Segment> {
     let re = Regex::new(r"\{Logo\}").unwrap();
     let mut segments = Vec::new();
     let mut last = 0;
 
     for m in re.find_iter(template) {
         if m.start() > last {
-            let text = render_exif_template(&template[last..m.start()], exif, time_format);
+            let text = render_watermark_template(
+                &template[last..m.start()],
+                exif,
+                time_format,
+                custom_text,
+            );
             if !text.is_empty() {
                 segments.push(Segment::Text(text));
             }
@@ -324,7 +357,7 @@ fn parse_template(template: &str, exif: &ExifInfo, time_format: &str) -> Vec<Seg
     }
 
     if last < template.len() {
-        let text = render_exif_template(&template[last..], exif, time_format);
+        let text = render_watermark_template(&template[last..], exif, time_format, custom_text);
         if !text.is_empty() {
             segments.push(Segment::Text(text));
         }
@@ -815,6 +848,16 @@ fn set_rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage
 ///
 /// 缺失的字段不会被保留成 `{xxx}` 字面量，而是直接丢弃，
 pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) -> String {
+    render_watermark_template(template, exif, time_format, "")
+}
+
+/// 解析 EXIF 与当前照片的 `{自定义文本}`。自定义内容按原文插入，不再解析其中的字段。
+pub fn render_watermark_template(
+    template: &str,
+    exif: &ExifInfo,
+    time_format: &str,
+    custom_text: &str,
+) -> String {
     let re = Regex::new(r"\{([^{}]+)\}").unwrap();
     let mut out = String::new();
     let mut last = 0usize;
@@ -825,7 +868,12 @@ pub fn render_exif_template(template: &str, exif: &ExifInfo, time_format: &str) 
             out.push_str(&template[last..whole.start()]);
         }
         let key = &caps[1];
-        if let Some(value) = resolve_exif_key_name(key, exif, time_format)
+        let value = if key == "自定义文本" {
+            Some(custom_text.to_owned())
+        } else {
+            resolve_exif_key_name(key, exif, time_format)
+        };
+        if let Some(value) = value
             && !value.is_empty()
         {
             out.push_str(&value);

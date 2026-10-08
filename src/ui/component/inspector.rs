@@ -189,6 +189,7 @@ pub(in crate::ui::app) struct ParameterControls {
     pub position: Entity<PositionSelect>,
     pub output_folder: Entity<InputState>,
     pub preset_name: Entity<InputState>,
+    pub custom_text: Entity<InputState>,
 }
 
 impl ParameterControls {
@@ -394,6 +395,24 @@ impl ParameterControls {
             }),
         );
 
+        let custom_text = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(params.custom_text.clone())
+                .placeholder("当前图片的自定义文本")
+        });
+        subscriptions.push(
+            cx.subscribe_in(&custom_text, window, |this, state, event, _, cx| {
+                if matches!(event, InputEvent::Change) && this.selected_photo_id().is_some() {
+                    let value = state.read(cx).value().to_string();
+                    if value != this.params.custom_text {
+                        this.params.custom_text = value;
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    }
+                }
+            }),
+        );
+
         let preset_name =
             cx.new(|cx| InputState::new(window, cx).placeholder("给这套配置起个名字"));
 
@@ -415,6 +434,7 @@ impl ParameterControls {
                 position,
                 output_folder,
                 preset_name,
+                custom_text,
             },
             subscriptions,
         )
@@ -485,6 +505,13 @@ impl AppView {
                     } else {
                         "当前配置用于后续导入的照片"
                     }))
+                    .child(
+                        Input::new(&self.controls.custom_text)
+                            .id("photo-custom-text")
+                            .aria_label("当前图片的自定义文本")
+                            .disabled(self.selected_photo_id().is_none())
+                            .w_full(),
+                    )
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
                     .child(self.render_image_section(cx))

@@ -25,7 +25,7 @@ use gpui_kit::{
 };
 
 use crate::media::ExifInfo;
-use crate::render::text::{TIME_FORMAT_EXAMPLES, render_exif_template, time_format_is_valid};
+use crate::render::text::{TIME_FORMAT_EXAMPLES, render_watermark_template, time_format_is_valid};
 use crate::watermark::{Placement, Text, TextAlign, TextDirection, TextGroup, TextParams};
 
 use super::super::AppView;
@@ -59,6 +59,7 @@ const TEXT_DIRECTIONS: &[(&str, TextDirection)] = &[
 ];
 
 const TEMPLATE_FIELDS: &[(&str, &str)] = &[
+    ("自定义文本", "{自定义文本}"),
     ("拍摄日期", "{拍摄日期}"),
     ("品牌", "{品牌}"),
     ("型号", "{型号}"),
@@ -820,11 +821,18 @@ impl AppView {
                         remove_view.update(cx, |this, cx| this.remove_text_line(id, cx));
                     }),
             );
+        let empty_exif = ExifInfo::default();
+        let exif = exif.or_else(|| template.contains("{自定义文本}").then_some(&empty_exif));
         let resolved = match exif {
             None => warning("选中的照片没有 EXIF 信息，这一行不会渲染。", cx),
             Some(exif) => {
                 let preview = template.replace("{Logo}", "[品牌 Logo]");
-                let resolved = render_exif_template(&preview, exif, time_format);
+                let resolved = render_watermark_template(
+                    &preview,
+                    exif,
+                    time_format,
+                    &self.params.custom_text,
+                );
                 if resolved.is_empty() {
                     warning("当前模板解析结果为空，这一行不会渲染。", cx)
                 } else {

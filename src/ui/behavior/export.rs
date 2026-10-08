@@ -168,6 +168,7 @@ mod tests {
     use super::*;
     use crate::rotation::Rotation;
     use crate::ui::app::PresetScope;
+    use gpui_kit::test::TestWindowExt;
     use gpui_kit::{TestAppContext, VisualTestContext};
     use std::{cell::RefCell, rc::Rc};
 
@@ -195,6 +196,73 @@ mod tests {
             view.add_photos(vec!["first.jpg".into(), "second.jpg".into()], cx);
         });
         (view, cx)
+    }
+
+    #[gpui_kit::test]
+    fn custom_photo_text_survives_selection_and_presets_and_is_frozen_for_export(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = rendered_workspace(cx);
+        view.update_in(cx, |view, _, cx| {
+            view.add_photos(
+                vec![
+                    "./test_images/DSC_4587.jpg".into(),
+                    "./test_images/ultra_hdr.jpg".into(),
+                ],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.click("photo-custom-text", cx);
+            window.input("第一张的标题", cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.params.custom_text.clone()),
+            "第一张的标题"
+        );
+        view.update_in(cx, |view, window, cx| {
+            view.select_photo_at(1, window, cx);
+            assert!(view.params.custom_text.is_empty());
+            assert!(view.controls.custom_text.read(cx).value().is_empty());
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.click("photo-custom-text", cx);
+            window.input("第二张的标题", cx);
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            assert_eq!(view.params.custom_text, "第二张的标题");
+            view.select_photo_at(0, window, cx);
+            assert_eq!(view.params.custom_text, "第一张的标题");
+            assert_eq!(
+                view.controls.custom_text.read(cx).value().as_ref(),
+                "第一张的标题"
+            );
+            view.load_preset("文字在上", window, cx);
+            assert_eq!(view.params.custom_text, "第一张的标题");
+            view.preset_scope = PresetScope::AllPhotos;
+            view.load_preset("16_9", window, cx);
+            assert!(view.global_watermark.params.custom_text.is_empty());
+            let jobs = view.photo_export_jobs(ExportScope::AllPhotos, cx);
+            assert_eq!(jobs[0].watermark.params.custom_text, "第一张的标题");
+            assert_eq!(jobs[1].watermark.params.custom_text, "第二张的标题");
+            view.params.custom_text = "导出期间修改".into();
+            assert_eq!(jobs[0].watermark.params.custom_text, "第一张的标题");
+            view.select_photo_at(1, window, cx);
+            assert_eq!(view.params.custom_text, "第二张的标题");
+            view.reset_params(window, cx);
+            assert_eq!(view.params.custom_text, "第二张的标题");
+            view.clear_photos(window, cx);
+            assert!(view.params.custom_text.is_empty());
+            assert!(view.controls.custom_text.read(cx).value().is_empty());
+            view.add_photos(vec!["./test_images/DSC_4587.jpg".into()], cx);
+            assert!(view.params.custom_text.is_empty());
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| view.params.custom_text.is_empty()));
     }
 
     #[gpui_kit::test]

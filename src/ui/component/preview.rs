@@ -265,7 +265,7 @@ impl AppView {
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child(Spinner::new().small())
-                .child("正在更新预览")
+                .child(description("正在更新预览"))
                 .into_any_element(),
             PreviewState::Failed(message) => h_flex()
                 .min_w_0()

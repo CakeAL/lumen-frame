@@ -6,7 +6,7 @@ use lumen_frame::{
     photo::Photo,
     render::{
         canvas::{self, Margin},
-        text::render_exif_template,
+        text::{render_exif_template, render_watermark_template},
     },
     watermark::{
         Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
@@ -232,4 +232,33 @@ async fn test_render_text_with_logo_mixed() {
         .expect("render_text should produce an image");
     assert!(fallback_img.width() > 0);
     assert!(fallback_img.height() > 0);
+}
+
+#[test]
+fn custom_text_is_inserted_literally_alongside_exif_fields() {
+    let exif = ExifInfo {
+        model: Some("Camera".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        render_watermark_template("{型号} · {自定义文本}", &exif, "%Y/%m/%d", "旅途中的光"),
+        "Camera · 旅途中的光"
+    );
+    assert_eq!(
+        render_watermark_template(
+            "{自定义文本} / {自定义文本}",
+            &exif,
+            "%Y/%m/%d",
+            "{型号} {Logo}"
+        ),
+        "{型号} {Logo} / {型号} {Logo}"
+    );
+    assert_eq!(
+        render_watermark_template("{型号} · {自定义文本}", &exif, "%Y/%m/%d", ""),
+        "Camera"
+    );
+    assert_eq!(
+        render_watermark_template("{自定义文本}", &exif, "%Y/%m/%d", ""),
+        ""
+    );
 }

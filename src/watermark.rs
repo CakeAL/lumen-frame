@@ -27,6 +27,9 @@ pub struct WatermarkParams {
     /// 本机默认字体，由应用设置提供，不写入预设。
     #[serde(skip, default = "default_font")]
     pub default_font: String,
+    /// 当前照片的自定义文本，随照片快照保存，不属于可复用预设。
+    #[serde(skip)]
+    pub custom_text: String,
     /// 边框比例（上、下、左、右）。
     pub border_ratio: (f64, f64, f64, f64),
     pub border_equal: bool,
@@ -47,6 +50,7 @@ impl Default for WatermarkParams {
         Self {
             output_folder: dirs::picture_dir().map(|path| path.join("watermark")),
             default_font: default_font(),
+            custom_text: String::new(),
             border_ratio: (0.05, 0.05, 0.05, 0.05),
             border_equal: false,
             aspect_ratio: None,

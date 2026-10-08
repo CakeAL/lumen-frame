@@ -116,6 +116,23 @@ fn output_folder_is_not_part_of_a_preset() {
 }
 
 #[test]
+fn custom_photo_content_is_not_written_into_a_reusable_preset() {
+    let dir = scratch_dir("custom-photo-text");
+    let mut preset = colourful_preset();
+    preset.params.custom_text = "只属于这一张照片".into();
+    preset.text_groups[0].text.template[0] = "{Logo} {自定义文本}".into();
+    let path = save_in(&dir, "custom-field", &preset).unwrap();
+    let document = std::fs::read_to_string(path).unwrap();
+    assert!(!document.contains("custom_text"));
+    assert!(!document.contains("只属于这一张照片"));
+    assert!(document.contains("{自定义文本}"));
+    let loaded = load_in(&dir, "custom-field").unwrap();
+    assert!(loaded.params.custom_text.is_empty());
+    assert_eq!(loaded.text_groups, preset.text_groups);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn bundled_presets_load_from_assets() {
     let presets = builtin().expect("内置预设应该随应用一起可用");
     let names = presets

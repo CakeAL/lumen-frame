@@ -1131,12 +1131,18 @@ impl AppView {
         }
         if self.preset_scope == PresetScope::AllPhotos {
             self.global_watermark = preset.clone();
+            self.global_watermark.params.custom_text.clear();
             for photo in self.workspace.photos() {
                 if Some(photo.id()) != self.selected_photo_id() {
-                    self.photo_watermarks.insert(photo.id(), preset.clone());
+                    let mut watermark = preset.clone();
+                    watermark.params.custom_text =
+                        self.watermark_for_photo(photo.id(), cx).params.custom_text;
+                    self.photo_watermarks.insert(photo.id(), watermark);
                 }
             }
         }
+        // 预设只改样式和模板，保留每张照片自己的内容。
+        preset.params.custom_text = self.params.custom_text.clone();
         self.restore_watermark(preset, window, cx);
     }
 
@@ -1191,6 +1197,9 @@ impl AppView {
     fn sync_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let params = self.params.clone();
         let controls = &self.controls;
+        controls.custom_text.update(cx, |state, cx| {
+            state.set_value(params.custom_text.clone(), window, cx);
+        });
 
         controls.border_top.sync(params.border_ratio.0, window, cx);
         controls
@@ -1258,7 +1267,8 @@ impl AppView {
     /// 预览重算都不用再写一遍。
     pub(super) fn reset_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // 输出文件夹是这台机器的设置，恢复画面效果不该把它一起清掉（`restore_watermark` 会保留）。
-        let preset = preset_of(&WatermarkParams::default(), &[TextGroup::default()]);
+        let mut preset = preset_of(&WatermarkParams::default(), &[TextGroup::default()]);
+        preset.params.custom_text = self.params.custom_text.clone();
         self.restore_watermark(preset, window, cx);
         cx.notify();
     }
