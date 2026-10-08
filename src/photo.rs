@@ -9,7 +9,7 @@ use crate::{
         ExifInfo, ensure_vips, load_base_image,
         vips::{VipsImage, from_owned_ptr, image_metadata_string, image_op},
     },
-    render::{canvas, image},
+    render::{canvas, image, text::TextGroupRegion},
     watermark::{Placement, TextAlign, TextGroup, WatermarkParams},
 };
 
@@ -65,6 +65,29 @@ impl Photo {
         params: &WatermarkParams,
         text_groups: &[TextGroup],
     ) -> Result<VipsImage> {
+        Self::compose_watermark_impl(img, exif, params, text_groups, None)
+    }
+
+    /// 预览复用同一合成管线，并取出每个已显示文字组的真实范围。
+    pub(crate) fn compose_watermark_with_regions(
+        img: VipsImage,
+        exif: Option<&ExifInfo>,
+        params: &WatermarkParams,
+        text_groups: &[TextGroup],
+    ) -> Result<(VipsImage, Vec<TextGroupRegion>)> {
+        let mut regions = Vec::new();
+        let image =
+            Self::compose_watermark_impl(img, exif, params, text_groups, Some(&mut regions))?;
+        Ok((image, regions))
+    }
+
+    fn compose_watermark_impl(
+        img: VipsImage,
+        exif: Option<&ExifInfo>,
+        params: &WatermarkParams,
+        text_groups: &[TextGroup],
+        mut regions: Option<&mut Vec<TextGroupRegion>>,
+    ) -> Result<VipsImage> {
         ensure_vips();
 
         // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）。
@@ -83,9 +106,9 @@ impl Photo {
         // 先渲染每个文字组，旋转后的真实尺寸才能准确决定四周需要扩出多少画布。
         let mut rendered_text_groups = Vec::new();
         if let Some(exif) = exif {
-            for group in text_groups {
+            for (group_ix, group) in text_groups.iter().enumerate() {
                 if let Some(image) = group.render_text(exif, img_h, params)? {
-                    rendered_text_groups.push((group.position, group.align, image));
+                    rendered_text_groups.push((group_ix, group.position, group.align, image));
                 }
             }
         }
@@ -93,7 +116,7 @@ impl Photo {
         // 计算画布边框尺寸
         let mut margin = canvas::Margin::cal_margin(img_w, img_h, params);
         let mut text_thickness = [0; 4];
-        for (position, _, image) in &rendered_text_groups {
+        for (_, position, _, image) in &rendered_text_groups {
             let thickness = match position {
                 Placement::Up | Placement::Bottom => image.height() as i32,
                 Placement::Left | Placement::Right => image.width() as i32,
@@ -157,7 +180,7 @@ impl Photo {
 
         // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
         let mut canvas = canvas;
-        for (position, align, text_layer) in rendered_text_groups {
+        for (group_ix, position, align, text_layer) in rendered_text_groups {
             let (text_w, text_h) = (text_layer.width() as i32, text_layer.height() as i32);
             let aligned_x = || match align {
                 TextAlign::Left => img_x,
@@ -182,6 +205,17 @@ impl Photo {
                 ),
                 Placement::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
             };
+            if let Some(regions) = regions.as_deref_mut()
+                && let Some(region) = TextGroupRegion::from_layer(
+                    &text_layer,
+                    group_ix,
+                    (text_x, text_y),
+                    (canvas_w, canvas_h),
+                    params.rotation,
+                )?
+            {
+                regions.push(region);
+            }
             canvas = image_op(|out| unsafe {
                 vips_sys::vips_composite2(
                     canvas.as_ptr(),

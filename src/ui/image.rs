@@ -53,11 +53,28 @@ pub struct PreviewJob {
 
 /// 按预览分辨率渲染水印照片。会阻塞，请在后台线程调用。
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
+    render_preview_with_regions(job).map(|preview| preview.image)
+}
+
+pub(crate) struct RenderedPreview {
+    pub image: Arc<RenderImage>,
+    pub text_regions: Vec<crate::render::text::TextGroupRegion>,
+}
+
+pub(crate) fn render_preview_with_regions(job: &PreviewJob) -> Result<RenderedPreview> {
     ensure_vips();
     let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;
-    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text_groups)
-        .context("合成预览")?;
-    to_render_image(&composed).context("转换预览位图")
+    let (composed, text_regions) = Photo::compose_watermark_with_regions(
+        base,
+        job.exif.as_ref(),
+        &job.params,
+        &job.text_groups,
+    )
+    .context("合成预览")?;
+    Ok(RenderedPreview {
+        image: to_render_image(&composed).context("转换预览位图")?,
+        text_regions,
+    })
 }
 
 /// 生成队列用的缩略图（不带水印，只是原图）。会阻塞，请在后台线程调用。
@@ -232,4 +249,139 @@ fn rgb_to_bgra(rgb: &[u8]) -> Vec<u8> {
         bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], u8::MAX]);
     }
     bgra
+}
+
+#[cfg(test)]
+mod preview_region_tests {
+    use super::*;
+    use crate::watermark::{Placement, TextAlign, TextDirection};
+
+    #[test]
+    fn text_regions_match_visible_pixels_after_placement_padding_and_rotation() {
+        let path = PathBuf::from("./test_images/DSC_4587.jpg");
+        let exif = ExifInfo::read(&path).unwrap();
+        for position in [
+            Placement::Up,
+            Placement::Right,
+            Placement::Bottom,
+            Placement::Left,
+            Placement::Center,
+        ] {
+            for rotation in [
+                Rotation::None,
+                Rotation::Clockwise90,
+                Rotation::HalfTurn,
+                Rotation::CounterClockwise90,
+            ] {
+                let mut group = TextGroup {
+                    position,
+                    align: TextAlign::Right,
+                    padding: 0.08,
+                    direction: if matches!(position, Placement::Left | Placement::Right) {
+                        TextDirection::Vertical
+                    } else {
+                        TextDirection::Horizontal
+                    },
+                    ..Default::default()
+                };
+                group.text.template = vec!["{Logo} Lumen".into()];
+                group.text.text_params.truncate(1);
+                group.text.text_params[0].size = 0.04;
+                let mut job = PreviewJob {
+                    path: path.clone(),
+                    exif: Some(exif.clone()),
+                    params: WatermarkParams {
+                        border_ratio: (0.2, 0.2, 0.2, 0.2),
+                        solid_background: true,
+                        shadow_size: 0.0,
+                        rotation,
+                        ..Default::default()
+                    },
+                    text_groups: vec![group],
+                    max_edge: 400,
+                };
+                let base = load_scaled(&path, job.max_edge).unwrap();
+                let layer = job.text_groups[0]
+                    .render_text(&exif, base.height() as i32, &job.params)
+                    .unwrap()
+                    .unwrap();
+                let rendered = render_preview_with_regions(&job).unwrap();
+                // 去掉文字时保留它原先占用的边框厚度，使像素差只包含文字与 Logo。
+                match position {
+                    Placement::Up => {
+                        job.params.border_ratio.0 += layer.height() as f64 / base.height() as f64
+                    }
+                    Placement::Bottom => {
+                        job.params.border_ratio.1 += layer.height() as f64 / base.height() as f64
+                    }
+                    Placement::Left => {
+                        job.params.border_ratio.2 += layer.width() as f64 / base.width() as f64
+                    }
+                    Placement::Right => {
+                        job.params.border_ratio.3 += layer.width() as f64 / base.width() as f64
+                    }
+                    Placement::Center => {}
+                }
+                job.text_groups.clear();
+                let bare = render_preview(&job).unwrap();
+                assert_eq!(bare.size(0), rendered.image.size(0));
+                let a = rendered.image.as_bytes(0).unwrap();
+                let b = bare.as_bytes(0).unwrap();
+                let width = bare.size(0).width.0 as usize;
+                let (mut left, mut top, mut right, mut bottom) = (i32::MAX, i32::MAX, 0, 0);
+                for (ix, (a, b)) in a
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(b.as_chunks::<4>().0)
+                    .enumerate()
+                {
+                    if a != b {
+                        let (x, y) = ((ix % width) as i32, (ix / width) as i32);
+                        left = left.min(x);
+                        top = top.min(y);
+                        right = right.max(x + 1);
+                        bottom = bottom.max(y + 1);
+                    }
+                }
+                assert_eq!(rendered.text_regions.len(), 1);
+                let region = rendered.text_regions[0];
+                assert_eq!(
+                    (
+                        region.x,
+                        region.y,
+                        region.x + region.width,
+                        region.y + region.height
+                    ),
+                    (left, top, right, bottom),
+                    "{position:?} / {rotation:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_exif_and_empty_text_do_not_create_interactive_regions() {
+        let mut job = PreviewJob {
+            path: "./test_images/DSC_4587.jpg".into(),
+            exif: None,
+            params: WatermarkParams::default(),
+            text_groups: vec![TextGroup::default()],
+            max_edge: 400,
+        };
+        assert!(
+            render_preview_with_regions(&job)
+                .unwrap()
+                .text_regions
+                .is_empty()
+        );
+        job.exif = ExifInfo::read(&job.path).ok();
+        job.text_groups[0].text.template.clear();
+        assert!(
+            render_preview_with_regions(&job)
+                .unwrap()
+                .text_regions
+                .is_empty()
+        );
+    }
 }

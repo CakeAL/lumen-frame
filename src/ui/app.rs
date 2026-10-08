@@ -418,8 +418,13 @@ impl AppView {
                 return;
             }
         };
-        self.preview
-            .update(cx, |preview, cx| preview.request(job, cx));
+        self.preview.update(cx, |preview, cx| {
+            preview.request(
+                job,
+                self.text_groups.iter().map(|group| group.id).collect(),
+                cx,
+            )
+        });
     }
 
     pub(super) fn set_gainmap_view(&mut self, show_map: bool, cx: &mut Context<Self>) {

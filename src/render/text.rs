@@ -20,7 +20,7 @@ use vips::{Error as VipsError, Result, VipsAngle, VipsBandFormat, VipsInterpreta
 
 use crate::{
     media::{
-        ExifInfo, Rational,
+        ExifInfo, Rational, image_write_to_memory,
         vips::{VipsImage, from_owned_ptr, image_op},
     },
     watermark::{
@@ -30,6 +30,82 @@ use crate::{
 };
 
 pub type SvgString = String;
+
+/// 合成快照中的文字组可见区域，坐标属于最终输出位图，不包含透明留白。
+/// `group_ix` 只用于同一份不可变输入快照；UI 再将它对应到该请求的稳定文字组 ID。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TextGroupRegion {
+    pub group_ix: usize,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl TextGroupRegion {
+    pub(crate) fn from_layer(
+        layer: &VipsImage,
+        group_ix: usize,
+        origin: (i32, i32),
+        canvas_size: (i32, i32),
+        rotation: crate::rotation::Rotation,
+    ) -> anyhow::Result<Option<Self>> {
+        let bytes = image_write_to_memory(layer)?;
+        let width = layer.width() as usize;
+        let (mut left, mut top, mut right, mut bottom) =
+            (layer.width() as i32, layer.height() as i32, 0, 0);
+        for (ix, pixel) in bytes.as_chunks::<4>().0.iter().enumerate() {
+            if pixel[3] != 0 {
+                let (x, y) = ((ix % width) as i32, (ix / width) as i32);
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+        // 先裁到可见画布，避免超长文字在照片外的部分仍可被点击。
+        let (canvas_w, canvas_h) = canvas_size;
+        left = (left + origin.0).max(0);
+        top = (top + origin.1).max(0);
+        right = (right + origin.0).min(canvas_w);
+        bottom = (bottom + origin.1).min(canvas_h);
+        if right <= left || bottom <= top {
+            return Ok(None);
+        }
+        let region = Self {
+            group_ix,
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        };
+        Ok(Some(region.rotated(rotation, canvas_size)))
+    }
+
+    fn rotated(self, rotation: crate::rotation::Rotation, (w, h): (i32, i32)) -> Self {
+        use crate::rotation::Rotation;
+        let (x, y, width, height) = match rotation {
+            Rotation::None => (self.x, self.y, self.width, self.height),
+            Rotation::Clockwise90 => (h - self.y - self.height, self.x, self.height, self.width),
+            Rotation::HalfTurn => (
+                w - self.x - self.width,
+                h - self.y - self.height,
+                self.width,
+                self.height,
+            ),
+            Rotation::CounterClockwise90 => {
+                (self.y, w - self.x - self.width, self.height, self.width)
+            }
+        };
+        Self {
+            x,
+            y,
+            width,
+            height,
+            ..self
+        }
+    }
+}
 
 impl Text {
     pub fn render_text(
@@ -1094,6 +1170,70 @@ mod time_format_tests {
         assert_ne!(
             render_exif_template("{拍摄日期}", &exif, "%Y-%m-%d"),
             fallback
+        );
+    }
+}
+
+#[cfg(test)]
+mod region_tests {
+    use super::*;
+    use crate::{media::ensure_vips, rotation::Rotation};
+
+    #[test]
+    fn transparent_padding_and_clipped_content_are_excluded_from_the_region() {
+        ensure_vips();
+        let mut bytes = vec![0_u8; 10 * 8 * 4];
+        for y in 1..4 {
+            for x in 2..6 {
+                bytes[(y * 10 + x) * 4 + 3] = 255;
+            }
+        }
+        let layer =
+            VipsImage::from_memory(bytes, 10, 8, 4, VipsBandFormat::VIPS_FORMAT_UCHAR).unwrap();
+        let region = TextGroupRegion::from_layer(&layer, 7, (-3, 2), (20, 10), Rotation::None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            region,
+            TextGroupRegion {
+                group_ix: 7,
+                x: 0,
+                y: 3,
+                width: 3,
+                height: 3
+            }
+        );
+        let rotated =
+            TextGroupRegion::from_layer(&layer, 7, (-3, 2), (20, 10), Rotation::Clockwise90)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            rotated,
+            TextGroupRegion {
+                group_ix: 7,
+                x: 4,
+                y: 0,
+                width: 3,
+                height: 3
+            }
+        );
+        assert!(
+            TextGroupRegion::from_layer(&layer, 7, (-30, 2), (20, 10), Rotation::None)
+                .unwrap()
+                .is_none()
+        );
+        let blank = VipsImage::from_memory(
+            vec![0_u8; 10 * 8 * 4],
+            10,
+            8,
+            4,
+            VipsBandFormat::VIPS_FORMAT_UCHAR,
+        )
+        .unwrap();
+        assert!(
+            TextGroupRegion::from_layer(&blank, 0, (0, 0), (20, 10), Rotation::None)
+                .unwrap()
+                .is_none()
         );
     }
 }
