@@ -236,7 +236,7 @@ impl AppView {
                     .flex_shrink_0()
                     .gap_2()
                     .when(!self.preview.read(cx).text_regions.is_empty(), |this| {
-                        this.child(description("点击文字组可编辑"))
+                        this.child(description("点击预览中的文字组可编辑"))
                     })
                     .child(self.render_preview_status(cx))
                     .child(

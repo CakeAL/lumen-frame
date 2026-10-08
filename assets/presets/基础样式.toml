@@ -31,7 +31,7 @@ time_format = "%Y/%m/%d"
 [text_groups.text]
 template = [
     "{Logo} {型号}",
-    "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}",
+    "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO} {自定义文本}",
 ]
 
 [[text_groups.text.text_params]]

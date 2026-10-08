@@ -1,4 +1,4 @@
-name = "16_9"
+name = "16:9"
 
 [params]
 border_ratio = [
@@ -24,6 +24,7 @@ shadow_density = 1.2
 solid_background = false
 blur_sigma = 15.0
 quality = 95
+rotation = "None"
 
 [[text_groups]]
 position = "Left"
@@ -62,8 +63,8 @@ align = "Center"
 [[text_groups]]
 position = "Right"
 direction = "Horizontal"
-align = "Center"
-padding = 0.0
+align = "Left"
+padding = 0.04
 time_format = "%Y/%m/%d"
 
 [text_groups.text]
@@ -100,4 +101,21 @@ size = 0.03
 line_spacing = 1.2999999523162842
 italic = false
 bold = false
+align = "Center"
+
+[[text_groups]]
+position = "Right"
+direction = "Horizontal"
+align = "Right"
+padding = 0.04
+time_format = "%Y/%m/%d"
+
+[text_groups.text]
+template = ["{自定义文本}"]
+
+[[text_groups.text.text_params]]
+size = 0.03
+line_spacing = 1.2999999523162842
+italic = false
+bold = true
 align = "Center"
