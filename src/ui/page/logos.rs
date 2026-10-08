@@ -216,7 +216,7 @@ impl AppView {
         v_flex().id("custom-logos-page").flex_1().min_h_0().gap_4().p_6()
             .child(h_flex().w_full().justify_between().gap_4()
                 .child(v_flex().gap_2().child(div().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("自定义 Logo"))
-                    .child(description("在文字模板中输入 {自定义logo1}。调节该行字号即可缩放，透明度与原始颜色会保留。")))
+                    .child(description("在文字模板中输入 {自定义logo1}，使用「Logo 高度」独立调整大小。透明度与原始颜色会保留。")))
                 .child(h_flex().gap_2()
                     .child(Button::new("logo-open-folder").label("打开素材文件夹").outline().disabled(self.logos.directory.is_none() || self.logos.assets.is_empty()).on_click(move |_, _, cx| {
                         if let Some(dir) = &folder_view.read(cx).logos.directory { cx.open_with_system(dir); }

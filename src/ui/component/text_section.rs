@@ -145,6 +145,7 @@ pub(in crate::ui::app) struct TextLine {
     pub id: u64,
     pub template: Entity<InputState>,
     pub size: NumberField,
+    pub logo_size: NumberField,
     pub line_spacing: NumberField,
     pub font: Entity<FontSelect>,
     pub align: Entity<AlignSelect>,
@@ -170,6 +171,17 @@ impl TextLine {
                 .placeholder("例如 {Logo} {型号}")
         });
         let size = NumberField::new(params.size, 1.0, 12.0, 0.1, 1, 100.0, "%", window, cx);
+        let logo_size = NumberField::new(
+            params.logo_size.unwrap_or(params.size),
+            0.5,
+            25.0,
+            0.1,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
         let line_spacing =
             NumberField::new(params.line_spacing, 1.0, 2.5, 0.05, 2, 1.0, "", window, cx);
 
@@ -217,6 +229,7 @@ impl TextLine {
             }),
         );
         subscriptions.extend(size.subscribe(window, cx, |_, _| {}));
+        subscriptions.extend(logo_size.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(line_spacing.subscribe(window, cx, |_, _| {}));
         subscriptions.push(cx.subscribe_in(&font, window, |this, _, event, _, cx| {
             if matches!(event, ComboboxEvent::Change(_) | ComboboxEvent::Confirm(_)) {
@@ -231,6 +244,7 @@ impl TextLine {
             id,
             template: template_input,
             size,
+            logo_size,
             line_spacing,
             font,
             align,
@@ -258,6 +272,7 @@ impl TextLine {
                 selected_font
             },
             size: self.size.value(cx),
+            logo_size: Some(self.logo_size.value(cx)),
             line_spacing: self.line_spacing.value(cx),
             color: if self.auto_color {
                 None
@@ -1074,7 +1089,11 @@ impl AppView {
                     )),
             )
             .child(resolved)
-            .child(line.size.render("字号 / Logo 大小", false, cx))
+            .child(line.size.render("字号", false, cx))
+            .when(template.contains("{自定义logo"), |this| {
+                this.child(line.logo_size.render("Logo 高度", false, cx))
+                    .child(description("按照片高度计算，仅缩放 Logo 的可见内容。"))
+            })
             .child(line.line_spacing.render("行距", false, cx))
             .child(field(
                 "字体",

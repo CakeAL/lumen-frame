@@ -69,8 +69,12 @@ pub fn load_logo_image(bytes: &[u8]) -> vips::Result<VipsImage> {
 }
 
 /// SVG 按最终尺寸栅格化，导出放大时不放大低分辨率的中间位图。
-pub(crate) fn load_logo_at_height(bytes: &[u8], height: f64) -> vips::Result<VipsImage> {
-    let natural = load_logo_image(bytes)?;
+pub(crate) fn load_logo_at_height(
+    bytes: &[u8],
+    natural: VipsImage,
+    height: f64,
+) -> vips::Result<VipsImage> {
+    ensure_vips();
     let loader =
         unsafe { vips_sys::vips_foreign_find_load_buffer(bytes.as_ptr().cast(), bytes.len()) };
     let is_svg = !loader.is_null()

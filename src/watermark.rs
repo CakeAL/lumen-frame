@@ -130,6 +130,9 @@ pub struct TextParams {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub font: String,
     pub size: f64,
+    /// 自定义 Logo 可见内容的高度占照片高度的比例；旧预设未设置时沿用字号比例。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo_size: Option<f64>,
     pub line_spacing: f64,
     pub color: Option<[u8; 3]>,
     pub italic: bool,
@@ -142,6 +145,7 @@ impl Default for TextParams {
         Self {
             font: String::new(),
             size: 0.03,
+            logo_size: None,
             line_spacing: 1.3,
             color: None,
             italic: false,

@@ -147,31 +147,21 @@ impl Text {
             .map(|t| parse_template(t, exif, time_format, &watermark_params.custom_text))
             .collect();
 
-        // 计算每一行的字号
-        let font_sizes: Vec<f32> = self
-            .text_params
-            .iter()
-            .take(line_count)
-            .map(|params| (params.size * img_h as f64) as f32)
-            .collect();
-
         let mut font_ctx = FontContext::new();
         let mut layout_ctx = LayoutContext::<peniko::Brush>::new();
 
         let mut prepared = Vec::with_capacity(line_count);
-        let mut total_h = 0usize;
 
         for i in 0..line_count {
             let line = prepare_line(
                 &segment_lines[i],
                 &self.text_params[i],
-                font_sizes[i],
+                img_h,
                 exif,
                 watermark_params,
                 &mut font_ctx,
                 &mut layout_ctx,
             )?;
-            total_h += line.height;
             prepared.push(line);
         }
 
@@ -193,15 +183,54 @@ impl Text {
                 alignment_for(self.text_params[i].align),
                 AlignmentOptions::default(),
             );
+            if line.compact {
+                // InlineBox 高于字体时 Parley 可能给出负 y；先完整接住可见内容，
+                // 再裁掉行框留白，不能让 Logo 顶端被裁切或画进上一行。
+                let (mut top, mut bottom) = (0.0f32, line.layout.height());
+                for layout_line in line.layout.lines() {
+                    for item in layout_line.items() {
+                        if let PositionedLayoutItem::InlineBox(logo) = item {
+                            top = top.min(logo.y.floor());
+                            bottom = bottom.max((logo.y + logo.height).ceil());
+                        }
+                    }
+                }
+                line.inset = -top as i32;
+                line.height = (bottom - top).ceil().max(1.0) as usize;
+            }
         }
+        // 为紧凑行的显式行间距预留空间，压缩字体行框后不能把行距一起截掉。
+        let total_h: usize = prepared
+            .iter()
+            .map(|line| line.height + if line.compact { line.gap } else { 0 })
+            .sum();
 
         let mut canvas = vec![0u8; width as usize * total_h * 4];
 
         let mut y_off = 0i32;
-        for line in &prepared {
-            render_line_into(&mut canvas, width, total_h as i32, y_off, line)?;
-            y_off += line.height as i32;
+        for (i, line) in prepared.iter().enumerate() {
+            render_line_into(&mut canvas, width, total_h as i32, y_off + line.inset, line)?;
+            let row_start = y_off as usize * width as usize * 4;
+            let row_end = row_start + line.height * width as usize * 4;
+            if line.compact
+                && let Some((_, top, _, bottom)) =
+                    alpha_bounds(&canvas[row_start..row_end], width as usize)
+            {
+                // Logo 行只用可见内容计高，不能把字体的 ascender/descender 和行框
+                // 留白再次计入边框厚度。行距只用于两行之间，首尾不添加额外空白。
+                let visible_h = bottom - top;
+                let gap = if i + 1 < prepared.len() { line.gap } else { 0 };
+                let visible_start = row_start + top * width as usize * 4;
+                let visible_end = row_start + bottom * width as usize * 4;
+                canvas.copy_within(visible_start..visible_end, row_start);
+                canvas[row_start + visible_h * width as usize * 4..row_end].fill(0);
+                y_off += (visible_h + gap) as i32;
+            } else {
+                y_off += line.height as i32;
+            }
         }
+        let total_h = y_off as usize;
+        canvas.truncate(width as usize * total_h * 4);
 
         let img = VipsImage::from_memory(
             canvas,
@@ -393,17 +422,21 @@ struct PreparedLine {
     layout: Layout<peniko::Brush>,
     slots: Vec<LogoSlot>,
     height: usize,
+    compact: bool,
+    gap: usize,
+    inset: i32,
 }
 
 fn prepare_line(
     segments: &[Segment],
     params: &TextParams,
-    font_size: f32,
+    img_h: i32,
     exif: &ExifInfo,
     watermark_params: &WatermarkParams,
     font_ctx: &mut FontContext,
     layout_ctx: &mut LayoutContext<peniko::Brush>,
 ) -> Result<PreparedLine> {
+    let font_size = (params.size * img_h as f64) as f32;
     // 先用占位字符构建一次纯文本布局，量出该行文字的实际字形高度（cap height），
     // 让 Logo 高度与文字高度相等，而不是用整个 em 高度（那样会显得比字高）。
     let mut probe_text = String::new();
@@ -426,11 +459,15 @@ fn prepare_line(
     let target_h = measure_cap_height(&probe_layout)
         .unwrap_or(font_size * 0.7)
         .max(1.0);
+    let custom_h = (params.logo_size.unwrap_or(params.size) * img_h as f64)
+        .round()
+        .max(1.0);
 
     let mut layout_text = String::new();
     let mut boxes: Vec<InlineBox> = Vec::new();
     let mut slots: Vec<LogoSlot> = Vec::new();
     let mut next_id = 0u64;
+    let mut compact = false;
 
     for segment in segments {
         match segment {
@@ -442,10 +479,9 @@ fn prepare_line(
                     Segment::CustomLogo(name) => watermark_params
                         .custom_logos
                         .get(name)
-                        .map(|bytes| {
-                            crate::media::vips::load_logo_at_height(bytes, target_h as f64)
-                        })
-                        .transpose()?,
+                        .map(|bytes| load_custom_logo(bytes, custom_h))
+                        .transpose()?
+                        .flatten(),
                     _ => find_make_logo(make, watermark_params),
                 };
                 if let Some(logo) = logo {
@@ -457,8 +493,9 @@ fn prepare_line(
                         continue;
                     }
                     let aspect = logo_w as f64 / logo_img_h as f64;
-                    // logo 高度与该行文字实际高度（cap height）一致
-                    let box_h = target_h;
+                    let is_custom = matches!(segment, Segment::CustomLogo(_));
+                    compact |= is_custom;
+                    let box_h = if is_custom { custom_h as f32 } else { target_h };
                     let box_w = ((box_h as f64 * aspect).round() as f32).max(1.0);
                     let logo = scale_logo(logo, box_w.round() as i32, box_h.round() as i32)?;
 
@@ -482,8 +519,12 @@ fn prepare_line(
             }
         }
     }
-    // 去掉整行开头多余的空白
-    let layout_text = layout_text.trim_start().to_string();
+    // 去掉开头空白时同步修正 InlineBox 的 UTF-8 字节索引。
+    let trim_len = layout_text.len() - layout_text.trim_start().len();
+    let layout_text = layout_text[trim_len..].to_string();
+    for inline_box in &mut boxes {
+        inline_box.index -= trim_len;
+    }
 
     let layout = build_parley_layout(
         &layout_text,
@@ -505,6 +546,9 @@ fn prepare_line(
         layout,
         slots,
         height,
+        compact,
+        gap: (font_size * (params.line_spacing as f32 - 1.0).max(0.0)).round() as usize,
+        inset: 0,
     })
 }
 
@@ -830,6 +874,51 @@ pub(crate) fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result
         return img.resize(scale_x, Some(scale_y), None);
     }
     Ok(img)
+}
+
+/// 尺寸针对素材的可见内容。SVG 先量出留白比例，再按实际需要的分辨率栅格化，
+/// 避免裁掉透明边缘后又放大一张过小的位图；素材库里的原文件保持原样。
+fn load_custom_logo(bytes: &[u8], height: f64) -> Result<Option<VipsImage>> {
+    let natural = to_rgba(crate::media::load_logo_image(bytes)?)?;
+    let pixels = natural.write_to_memory()?;
+    let Some((_, top, _, bottom)) = alpha_bounds(&pixels, natural.width() as usize) else {
+        return Ok(None);
+    };
+    let raster_h = height * natural.height() as f64 / (bottom - top) as f64;
+    let raster = to_rgba(crate::media::vips::load_logo_at_height(
+        bytes, natural, raster_h,
+    )?)?;
+    let pixels = raster.write_to_memory()?;
+    let Some((left, top, right, bottom)) = alpha_bounds(&pixels, raster.width() as usize) else {
+        return Ok(None);
+    };
+    let cropped = image_op(|out| unsafe {
+        vips_sys::vips_extract_area(
+            raster.as_ptr(),
+            out,
+            left as i32,
+            top as i32,
+            (right - left) as i32,
+            (bottom - top) as i32,
+            std::ptr::null::<i8>(),
+        )
+    })?;
+    Ok(Some(cropped))
+}
+
+/// RGBA 的半开可见边界；全透明素材不占用排版位置。
+fn alpha_bounds(pixels: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let (mut left, mut top, mut right, mut bottom) = (width, usize::MAX, 0, 0);
+    for (ix, pixel) in pixels.chunks_exact(4).enumerate() {
+        if pixel[3] != 0 {
+            let (x, y) = (ix % width, ix / width);
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x + 1);
+            bottom = bottom.max(y + 1);
+        }
+    }
+    (bottom != 0).then_some((left, top, right, bottom))
 }
 
 fn copy_image(image: &VipsImage) -> Result<VipsImage> {
