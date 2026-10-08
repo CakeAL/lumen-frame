@@ -108,7 +108,7 @@ async fn side_padding_is_transparent_space_inside_the_text_image() {
 #[test]
 fn test_render_exif_template_missing_and_dedupe() {
     // 没有镜头型号、型号含有品牌前缀时：
-    // 品牌 + 型号一起去重，缺失的 {镜头型号} 连同 “ - ” 一起被去掉。
+    // 品牌 + 型号一起去重，缺失字段移除后仍保留用户输入的连接符。
     let exif_info = ExifInfo {
         make: Some("Xiaomi".to_owned()),
         model: Some("Xiaomi 15".to_owned()),
@@ -116,9 +116,9 @@ fn test_render_exif_template_missing_and_dedupe() {
         ..Default::default()
     };
     let t1 = render_exif_template("{品牌} {型号} - {镜头型号}", &exif_info, "%Y/%m/%d");
-    assert_eq!(t1, "Xiaomi 15");
+    assert_eq!(t1, "Xiaomi 15 -");
     let t2 = render_exif_template("{型号} - {镜头型号}", &exif_info, "%Y/%m/%d");
-    assert_eq!(t2, "15");
+    assert_eq!(t2, "15 -");
 }
 
 #[test]
@@ -255,10 +255,27 @@ fn custom_text_is_inserted_literally_alongside_exif_fields() {
     );
     assert_eq!(
         render_watermark_template("{型号} · {自定义文本}", &exif, "%Y/%m/%d", ""),
-        "Camera"
+        "Camera ·"
     );
     assert_eq!(
         render_watermark_template("{自定义文本}", &exif, "%Y/%m/%d", ""),
         ""
     );
+}
+
+#[test]
+fn templates_preserve_trailing_punctuation_even_when_fields_are_missing() {
+    let exif = ExifInfo::default();
+    for ending in ["-", "/", "·", "|", ",", "、"] {
+        let template = format!("旅行 {ending} {{型号}}");
+        assert_eq!(
+            render_exif_template(&template, &exif, "%Y/%m/%d"),
+            format!("旅行 {ending}")
+        );
+        assert_eq!(
+            render_watermark_template("{自定义文本}", &exif, "%Y/%m/%d", &format!("旅行 {ending}")),
+            format!("旅行 {ending}")
+        );
+    }
+    assert_eq!(render_exif_template(",", &exif, "%Y/%m/%d"), ",");
 }

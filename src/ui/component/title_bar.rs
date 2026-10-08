@@ -37,9 +37,6 @@ impl AppView {
                     .when(self.page == AppPage::OtherTools, |this| {
                         this.selected_index(2)
                     })
-                    .when(self.page == AppPage::CustomLogos, |this| {
-                        this.selected_index(3)
-                    })
                     .child(
                         Tab::new()
                             .occlude()
@@ -63,17 +60,10 @@ impl AppView {
                             0 => AppPage::Watermark,
                             1 => AppPage::GainMap,
                             2 => AppPage::OtherTools,
-                            3 => AppPage::CustomLogos,
                             _ => return,
                         };
                         this.go_to(page, cx);
-                    }))
-                    .child(
-                        Tab::new()
-                            .occlude()
-                            .prefix(Icon::new(IconName::Images).left_2())
-                            .label("自定义 Logo"),
-                    ),
+                    })),
             )
             .child(
                 div()

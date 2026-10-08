@@ -477,7 +477,26 @@ impl AppView {
         let view = cx.entity();
         GroupBox::new()
             .id("text-section")
-            .title("文字与 Logo 水印")
+            .title(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .gap_2()
+                    .child("文字与 Logo 水印")
+                    .child(
+                        Button::new("custom-logos-open")
+                            .icon(gpui_kit::assets::IconName::Images)
+                            .label("自定义 Logo…")
+                            .outline()
+                            .small()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.open_logo_window(window, cx)
+                                }),
+                            ),
+                    ),
+            )
             .child(description("每个文字组可独立设置位置、方向和多行文字。"))
             .child(
                 v_flex()

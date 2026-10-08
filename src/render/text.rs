@@ -914,27 +914,13 @@ pub fn render_watermark_template(
     cleanup_template(&out)
 }
 
-/// 清理模板渲染结果：折叠连续空白，去掉末尾的连接分隔符（如 ` - `、` / `）。
+/// 只折叠空白，模板中的标点和连接符按原文保留。
 fn cleanup_template(s: &str) -> String {
-    let re = Regex::new(r"[ \t\r\n]+").unwrap();
-    let mut s = re.replace_all(s, " ").to_string();
-    loop {
-        let trimmed = s.trim_end_matches(' ');
-        let stripped = trimmed
-            .strip_suffix(" -")
-            .or_else(|| trimmed.strip_suffix(" /"))
-            .or_else(|| trimmed.strip_suffix(" ·"))
-            .or_else(|| trimmed.strip_suffix(" |"))
-            .or_else(|| trimmed.strip_suffix(","))
-            .or_else(|| trimmed.strip_suffix("、"))
-            .unwrap_or(trimmed);
-        if stripped.len() == trimmed.len() {
-            s = trimmed.to_string();
-            break;
-        }
-        s = stripped.to_string();
-    }
-    s
+    Regex::new(r"[ \t\r\n]+")
+        .unwrap()
+        .replace_all(s, " ")
+        .trim_end_matches(' ')
+        .to_owned()
 }
 
 fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Option<String> {

@@ -3,13 +3,14 @@
 use super::super::{AppView, component::field::description};
 use crate::persistence::logos::{self, LogoAsset};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, button::Button, h_flex,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, TitleBar, button::Button, h_flex,
     scroll::ScrollableElement as _, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    ClipboardItem, Context, ExternalPaths, ObjectFit, PathPromptOptions, RenderImage, SharedString,
-    div, img,
+    AnyWindowHandle, App, Bounds, ClipboardItem, Context, Entity, ExternalPaths, ObjectFit,
+    PathPromptOptions, RenderImage, SharedString, Subscription, Window, WindowBounds,
+    WindowOptions, div, img, px, size,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -19,6 +20,8 @@ pub(in crate::ui::app) struct LogoPageState {
     thumbnails: HashMap<u64, Arc<RenderImage>>,
     busy: bool,
     feedback: Option<SharedString>,
+    window: Option<AnyWindowHandle>,
+    opening: bool,
 }
 
 impl LogoPageState {
@@ -38,11 +41,88 @@ impl LogoPageState {
             feedback,
             thumbnails: HashMap::new(),
             busy: false,
+            window: None,
+            opening: false,
         }
     }
 }
 
+struct LogoWindow {
+    app: Entity<AppView>,
+    _subscription: Subscription,
+}
+
+impl LogoWindow {
+    fn new(app: Entity<AppView>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&app, |_, _, cx| cx.notify());
+        Self {
+            app,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl Render for LogoWindow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .child(TitleBar::new().child("自定义 Logo"))
+            .child(self.app.read(cx).render_logos_page(self.app.clone(), cx))
+    }
+}
+
 impl AppView {
+    pub(in crate::ui::app) fn open_logo_window(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(handle) = self.logos.window.take() {
+            // 当前窗口正在更新时，不能通过句柄嵌套更新它；直接激活即可。
+            if handle == window.window_handle() {
+                window.activate_window();
+                self.logos.window = Some(handle);
+                return;
+            }
+            if handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                self.logos.window = Some(handle);
+                return;
+            }
+        }
+        if self.logos.opening {
+            return;
+        }
+        self.logos.opening = true;
+        let app = cx.entity();
+        cx.defer(move |cx| {
+            // 像文字组编辑器一样，窗口共享 AppView 的素材库与导入状态。
+            let owner = app.clone();
+            let bounds = Bounds::centered(None, size(px(960.), px(720.)), cx);
+            let result = gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(760.), px(560.))),
+                    ..TitleBar::window_options()
+                },
+                cx,
+                move |_, cx| cx.new(|cx| LogoWindow::new(owner, cx)),
+            );
+            app.update(cx, |app, cx| {
+                app.logos.opening = false;
+                match result {
+                    Ok((handle, _)) => app.logos.window = Some(handle),
+                    Err(error) => {
+                        app.logos.feedback = Some(format!("无法打开 Logo 窗口：{error:#}").into())
+                    }
+                }
+                cx.notify();
+            });
+        });
+    }
     pub(in crate::ui::app) fn load_logo_thumbnails(&mut self, cx: &mut Context<Self>) {
         let assets = self.logos.assets.clone();
         cx.spawn(async move |this, cx| {
@@ -130,16 +210,18 @@ impl AppView {
         .detach();
     }
 
-    pub(in crate::ui::app) fn render_logos_page(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_logos_page(&self, view: Entity<Self>, cx: &App) -> impl IntoElement {
+        let folder_view = view.clone();
+        let import_view = view.clone();
         v_flex().id("custom-logos-page").flex_1().min_h_0().gap_4().p_6()
             .child(h_flex().w_full().justify_between().gap_4()
                 .child(v_flex().gap_2().child(div().text_lg().font_weight(gpui_kit::FontWeight::SEMIBOLD).child("自定义 Logo"))
                     .child(description("在文字模板中输入 {自定义logo1}。调节该行字号即可缩放，透明度与原始颜色会保留。")))
                 .child(h_flex().gap_2()
-                    .child(Button::new("logo-open-folder").label("打开素材文件夹").outline().disabled(self.logos.directory.is_none() || self.logos.assets.is_empty()).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(dir) = &this.logos.directory { cx.open_with_system(dir); }
-                    })))
-                    .child(Button::new("logo-import").icon(IconName::Plus).label("导入 Logo…").outline().loading(self.logos.busy).disabled(self.logos.busy).on_click(cx.listener(|this, _, _, cx| this.pick_custom_logos(cx))))))
+                    .child(Button::new("logo-open-folder").label("打开素材文件夹").outline().disabled(self.logos.directory.is_none() || self.logos.assets.is_empty()).on_click(move |_, _, cx| {
+                        if let Some(dir) = &folder_view.read(cx).logos.directory { cx.open_with_system(dir); }
+                    }))
+                    .child(Button::new("logo-import").icon(IconName::Plus).label("导入 Logo…").outline().loading(self.logos.busy).disabled(self.logos.busy).on_click(move |_, _, cx| { import_view.update(cx, |this, cx| this.pick_custom_logos(cx)); }))))
             .when_some(self.logos.feedback.clone(), |this, feedback| this.child(description(feedback)))
             .child(v_flex().id("custom-logos-scroll").flex_1().min_h_0().gap_3().overflow_y_scrollbar()
                 .when(self.logos.assets.is_empty(), |this| this.child(description("还没有自定义 Logo。导入文件或将文件拖到这里。")))
@@ -153,14 +235,16 @@ impl AppView {
                         .child(Button::new(("copy-logo-token", asset.id())).label("复制字段").outline().small().on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy_token.clone()))))
                 })))
             .child(description(self.logos.directory.as_ref().map(|path| format!("素材保存在 {}", path.display())).unwrap_or_default()))
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_custom_logos(paths.paths().to_vec(), cx)))
+            .on_drop(move |paths: &ExternalPaths, _, cx| { view.update(cx, |this, cx| this.import_custom_logos(paths.paths().to_vec(), cx)); })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{TestAppContext, component::Root, test::TestWindowExt};
+    use gpui_kit::{
+        ScrollDelta, TestAppContext, VisualTestContext, component::Root, point, test::TestWindowExt,
+    };
     use std::{cell::RefCell, rc::Rc};
     #[gpui_kit::test]
     fn custom_logo_page_imports_and_copies_template_fields(cx: &mut TestAppContext) {
@@ -183,12 +267,32 @@ mod tests {
             app.logos.directory = Some(root.join("support"));
             app.logos.assets.clear();
             app.logos.thumbnails.clear();
-            app.go_to(super::super::super::AppPage::CustomLogos, cx);
             app.import_custom_logos(vec![source], cx);
         });
         cx.run_until_parked();
         assert_eq!(app.read_with(cx, |app, _| app.logos.assets.len()), 1);
-        cx.update(|window, cx| window.click(("copy-logo-token", 1_u64), cx));
+        cx.update(|window, cx| {
+            window.scroll(
+                "photo-custom-text",
+                ScrollDelta::Pixels(point(px(0.), px(-4000.))),
+                cx,
+            );
+            window.click("custom-logos-open", cx);
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |app, _| app.logos.window.unwrap());
+        assert_eq!(
+            app.read_with(cx, |app, _| app.page),
+            super::super::super::AppPage::Watermark
+        );
+        cx.update(|window, cx| window.click("custom-logos-open", cx));
+        cx.run_until_parked();
+        assert_eq!(
+            app.read_with(cx, |app, _| app.logos.window.unwrap()),
+            handle
+        );
+        let mut logo_cx = VisualTestContext::from_window(handle, &cx.cx);
+        logo_cx.update(|window, cx| window.click(("copy-logo-token", 1_u64), cx));
         assert_eq!(
             cx.read(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
             "{自定义logo1}"
@@ -203,6 +307,13 @@ mod tests {
             assert!(app.params.custom_logos.contains_key("自定义logo1"));
         });
         cx.run_until_parked();
+        logo_cx.update(|window, _| window.remove_window());
+        cx.update(|window, cx| window.click("custom-logos-open", cx));
+        cx.run_until_parked();
+        assert_ne!(
+            app.read_with(cx, |app, _| app.logos.window.unwrap()),
+            handle
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

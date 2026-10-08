@@ -64,7 +64,6 @@ pub enum AppPage {
     Watermark,
     GainMap,
     OtherTools,
-    CustomLogos,
     Settings,
 }
 
