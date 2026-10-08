@@ -223,6 +223,19 @@ impl TextGroup {
             .any(|line| line.contains("{自定义文本}"))
     }
 
+    pub(crate) fn custom_logo_names(&self) -> Vec<String> {
+        let re = Regex::new(r"\{(自定义logo[1-9][0-9]*)\}").unwrap();
+        self.text
+            .template
+            .iter()
+            .flat_map(|line| {
+                re.captures_iter(line)
+                    .map(|caps| caps[1].to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// 自定义文本不依赖 EXIF；没有元数据的照片仍可使用这个字段。
     pub(crate) fn render_for_photo(
         &self,
@@ -232,7 +245,7 @@ impl TextGroup {
     ) -> Result<Option<VipsImage>> {
         if let Some(exif) = exif {
             self.render_text(exif, img_h, params)
-        } else if self.uses_custom_text() {
+        } else if self.uses_custom_text() || !self.custom_logo_names().is_empty() {
             self.render_text(&ExifInfo::default(), img_h, params)
         } else {
             Ok(None)
@@ -325,6 +338,7 @@ impl TextGroup {
 enum Segment {
     /// 需要插入相机 logo
     Logo,
+    CustomLogo(String),
     /// 已经用 EXIF 渲染好的普通文本
     Text(String),
 }
@@ -336,7 +350,7 @@ fn parse_template(
     time_format: &str,
     custom_text: &str,
 ) -> Vec<Segment> {
-    let re = Regex::new(r"\{Logo\}").unwrap();
+    let re = Regex::new(r"\{(?:Logo|自定义logo[1-9][0-9]*)\}").unwrap();
     let mut segments = Vec::new();
     let mut last = 0;
 
@@ -352,7 +366,11 @@ fn parse_template(
                 segments.push(Segment::Text(text));
             }
         }
-        segments.push(Segment::Logo);
+        segments.push(if m.as_str() == "{Logo}" {
+            Segment::Logo
+        } else {
+            Segment::CustomLogo(m.as_str()[1..m.as_str().len() - 1].to_owned())
+        });
         last = m.end();
     }
 
@@ -392,7 +410,7 @@ fn prepare_line(
     for segment in segments {
         match segment {
             Segment::Text(text) => probe_text.push_str(text),
-            Segment::Logo => probe_text.push('\u{200b}'),
+            Segment::Logo | Segment::CustomLogo(_) => probe_text.push('\u{200b}'),
         }
     }
     let probe_layout = build_parley_layout(
@@ -417,10 +435,20 @@ fn prepare_line(
     for segment in segments {
         match segment {
             Segment::Text(text) => layout_text.push_str(text),
-            Segment::Logo => {
+            Segment::Logo | Segment::CustomLogo(_) => {
                 let make = exif.make.as_deref().unwrap_or_default();
                 let index = layout_text.len();
-                if let Some(logo) = find_make_logo(make, watermark_params) {
+                let logo = match segment {
+                    Segment::CustomLogo(name) => watermark_params
+                        .custom_logos
+                        .get(name)
+                        .map(|bytes| {
+                            crate::media::vips::load_logo_at_height(bytes, target_h as f64)
+                        })
+                        .transpose()?,
+                    _ => find_make_logo(make, watermark_params),
+                };
+                if let Some(logo) = logo {
                     // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
                     layout_text.push('\u{200b}');
 
@@ -444,7 +472,7 @@ fn prepare_line(
                         height: box_h,
                     });
                     slots.push(LogoSlot { image: logo });
-                } else {
+                } else if matches!(segment, Segment::Logo) {
                     // 没有对应的 Logo 时，直接用品牌名（Make）兜底显示
                     let brand = clean_make_display(make);
                     if !brand.is_empty() {
@@ -793,7 +821,7 @@ fn to_rgba(img: VipsImage) -> Result<VipsImage> {
     set_rgba_srgb(&rgba, rgba.width() as i32, rgba.height() as i32)
 }
 
-fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage> {
+pub(crate) fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage> {
     let img = to_rgba(img)?;
     let (w, h) = (img.width() as i32, img.height() as i32);
     if (w, h) != (target_w, target_h) {

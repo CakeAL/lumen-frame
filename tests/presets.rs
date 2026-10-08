@@ -59,6 +59,7 @@ fn colourful_preset() -> WatermarkPreset {
             align: TextAlign::Right,
             padding: 0.04,
             time_format: "%Y年%m月%d日".to_owned(),
+            attachment: None,
         }],
     }
 }

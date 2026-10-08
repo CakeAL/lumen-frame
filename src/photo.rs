@@ -278,6 +278,15 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
         (image.width() as i32, image.height() as i32)
     }
 
+    fn content_bounds(image: &VipsImage) -> Result<(i32, i32, i32, i32)> {
+        let (w, h) = Self::dimensions(image);
+        Ok(
+            TextGroupRegion::from_layer(image, 0, (0, 0), (w, h), crate::rotation::Rotation::None)?
+                .map(|region| (region.x, region.y, region.width, region.height))
+                .unwrap_or((0, 0, w, h)),
+        )
+    }
+
     fn text(&mut self, group: &TextGroup) -> Result<Option<VipsImage>> {
         Ok(group.render_for_photo(self.exif, self.img.height() as i32, self.params)?)
     }

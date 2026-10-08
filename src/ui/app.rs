@@ -64,6 +64,7 @@ pub enum AppPage {
     Watermark,
     GainMap,
     OtherTools,
+    CustomLogos,
     Settings,
 }
 
@@ -120,6 +121,7 @@ pub struct AppView {
     gainmap: GainMapPageState,
     /// 黑白底图 + 彩色恢复 gain map 的独立生成页状态。
     other_tools: OtherToolsState,
+    logos: page::logos::LogoPageState,
     export: ExportState,
     photo_import: behavior::import::PhotoImportState,
 
@@ -183,11 +185,13 @@ impl AppView {
             settings.default_font.clone()
         };
         let text_group = TextGroup::default();
-        let global_watermark = preset_of(&params, std::slice::from_ref(&text_group));
 
         let preview = cx.new(|_| WatermarkPreview::new());
         let gainmap = GainMapPageState::new(cx);
         let other_tools = OtherToolsState::new(window, cx);
+        let logos = page::logos::LogoPageState::new();
+        params.custom_logos = crate::persistence::logos::snapshot(&logos.assets);
+        let global_watermark = preset_of(&params, std::slice::from_ref(&text_group));
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
 
@@ -258,6 +262,7 @@ impl AppView {
             preview,
             gainmap,
             other_tools,
+            logos,
             export: ExportState::Idle,
             photo_import: Default::default(),
             preset_names,
@@ -287,6 +292,7 @@ impl AppView {
         view.apply_theme_slots(cx);
         view.apply_appearance(window, cx);
         view.start_automatic_update_check(window, cx);
+        view.load_logo_thumbnails(cx);
         view
     }
 
@@ -355,7 +361,16 @@ impl AppView {
     pub(super) fn build_text_groups(&self, cx: &App) -> Vec<TextGroup> {
         self.text_groups
             .iter()
-            .map(|group| group.to_group(cx))
+            .map(|group| {
+                let mut value = group.to_group(cx);
+                value.attachment = group.attachment_target.and_then(|id| {
+                    self.text_groups
+                        .iter()
+                        .position(|target| target.id == id)
+                        .map(|target| group.attachment(target, cx))
+                });
+                value
+            })
             .collect()
     }
 
@@ -375,6 +390,7 @@ impl AppView {
         };
         watermark.params.output_folder = self.params.output_folder.clone();
         watermark.params.default_font = self.params.default_font.clone();
+        watermark.params.custom_logos = self.params.custom_logos.clone();
         watermark
     }
 
@@ -1166,11 +1182,17 @@ impl AppView {
         // 输出文件夹和默认字体是这台机器的环境设置，不跟着预设走。
         let output_folder = self.params.output_folder.clone();
         let default_font = self.params.default_font.clone();
+        let custom_logos = self.params.custom_logos.clone();
         self.params = preset.params;
         self.params.output_folder = output_folder;
         self.params.default_font = default_font;
+        self.params.custom_logos = custom_logos;
 
         let text_groups = preset.text_groups;
+        let targets = text_groups
+            .iter()
+            .map(|group| group.attachment.as_ref().map(|a| a.target))
+            .collect::<Vec<_>>();
         let mut editors = Vec::with_capacity(text_groups.len());
         for text_group in text_groups {
             let id = self.next_text_group_id;
@@ -1185,6 +1207,14 @@ impl AppView {
             ));
         }
         self.text_groups = editors;
+        for (ix, target) in targets.into_iter().enumerate() {
+            self.text_groups[ix].attachment_target = target.and_then(|target| {
+                self.text_groups
+                    .get(target)
+                    .filter(|group| group.id != self.text_groups[ix].id)
+                    .map(|group| group.id)
+            });
+        }
 
         self.sync_controls(window, cx);
         self.refresh_preview(cx);

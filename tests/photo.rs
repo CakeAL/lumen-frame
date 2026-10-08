@@ -77,6 +77,7 @@ async fn test_generate_watermark() {
             align: TextAlign::Center,
             padding: 0.03,
             time_format: "%Y/%m/%d".to_owned(),
+            attachment: None,
         },
     ];
     let params = WatermarkParams {

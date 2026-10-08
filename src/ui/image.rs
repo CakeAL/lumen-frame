@@ -219,6 +219,18 @@ fn shrink_to_edge(image: &VipsImage, max_edge: i32) -> Result<VipsImage> {
         .map_err(anyhow::Error::from)
 }
 
+/// 素材页使用与文字排版相同的解码与透明度处理。
+pub(crate) fn render_logo_thumbnail(bytes: &[u8]) -> Result<Arc<RenderImage>> {
+    let image = crate::media::load_logo_image(bytes)?;
+    let ratio = 160.0 / image.width().max(image.height()) as f64;
+    let (w, h) = (
+        (image.width() as f64 * ratio).round().max(1.0) as i32,
+        (image.height() as f64 * ratio).round().max(1.0) as i32,
+    );
+    let image = crate::render::text::scale_logo(image, w, h)?;
+    to_render_image(&image)
+}
+
 /// vips 图像 → GPUI 位图。
 ///
 /// GPUI 用 `image` crate 的 `Rgba` 缓冲承载 **BGRA** 字节序，所以这里必须交换 vips 的
@@ -394,5 +406,66 @@ mod preview_region_tests {
                 .text_regions
                 .is_empty()
         );
+    }
+}
+
+#[cfg(test)]
+mod custom_logo_tests {
+    use super::*;
+    use crate::watermark::{
+        GroupAttachment, Placement, Text, TextGroup, TextParams, WatermarkParams,
+    };
+    use std::collections::BTreeMap;
+    const SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect x="10" y="5" width="60" height="30" fill="#ffca00"/></svg>"##;
+    fn logo_group(token: &str) -> TextGroup {
+        TextGroup {
+            text: Text {
+                template: vec![token.into()],
+                text_params: vec![TextParams {
+                    size: 0.08,
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn adjacent_custom_logo_follows_target_and_preserves_hdr_preview() {
+        let params = WatermarkParams {
+            custom_logos: BTreeMap::from([("自定义logo1".into(), Arc::new(SVG.to_vec()))]),
+            solid_background: true,
+            ..Default::default()
+        };
+        let mut target = logo_group("{自定义文本}");
+        target.text.text_params[0].size = 0.03;
+        let logo = TextGroup {
+            attachment: Some(GroupAttachment {
+                target: 0,
+                side: Placement::Left,
+                gap: 0.0,
+            }),
+            ..logo_group("{自定义logo1}")
+        };
+        let mut job = PreviewJob {
+            path: PathBuf::from("test_images/ultra_hdr.jpg"),
+            exif: None,
+            params: WatermarkParams {
+                custom_text: "Travel".into(),
+                ..params
+            },
+            text_groups: vec![target, logo],
+            max_edge: 480,
+        };
+        let first = render_preview_with_regions(&job).unwrap();
+        assert_eq!(first.text_regions.len(), 2);
+        let [target, logo] = first.text_regions.as_slice() else {
+            panic!()
+        };
+        assert_eq!(logo.x + logo.width, target.x);
+        job.text_groups[0].position = Placement::Up;
+        job.text_groups[1].attachment.as_mut().unwrap().gap = 0.02;
+        let moved = render_preview_with_regions(&job).unwrap();
+        assert!(moved.text_regions[1].y < first.text_regions[1].y);
+        assert!(moved.text_regions[1].x + moved.text_regions[1].width < moved.text_regions[0].x);
     }
 }

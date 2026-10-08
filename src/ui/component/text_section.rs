@@ -26,7 +26,9 @@ use gpui_kit::{
 
 use crate::media::ExifInfo;
 use crate::render::text::{TIME_FORMAT_EXAMPLES, render_watermark_template, time_format_is_valid};
-use crate::watermark::{Placement, Text, TextAlign, TextDirection, TextGroup, TextParams};
+use crate::watermark::{
+    GroupAttachment, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
+};
 
 use super::super::AppView;
 use super::field::{
@@ -283,6 +285,9 @@ pub(in crate::ui::app) struct TextGroupEditor {
     pub time_format: Entity<InputState>,
     pub lines: Vec<TextLine>,
     pub expanded_line_ids: Vec<u64>,
+    pub attachment_target: Option<u64>,
+    pub attachment_side: Placement,
+    pub attachment_gap: NumberField,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -315,6 +320,22 @@ impl TextGroupEditor {
             cx,
         );
         let padding = NumberField::new(group.padding, 0.0, 30.0, 0.5, 1, 100.0, "%", window, cx);
+        let attachment_side = group
+            .attachment
+            .as_ref()
+            .map(|a| a.side)
+            .unwrap_or(Placement::Left);
+        let attachment_gap = NumberField::new(
+            group.attachment.as_ref().map(|a| a.gap).unwrap_or(0.0),
+            0.0,
+            20.0,
+            0.1,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
         let time_format = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(group.time_format.clone())
@@ -344,6 +365,7 @@ impl TextGroupEditor {
         ));
         subscriptions.push(on_select(&direction, window, cx, |_, _, _| {}));
         subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
+        subscriptions.extend(attachment_gap.subscribe(window, cx, |_, _| {}));
         subscriptions.push(
             cx.subscribe_in(&time_format, window, |this, _, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -373,7 +395,18 @@ impl TextGroupEditor {
             time_format,
             lines,
             expanded_line_ids: Vec::new(),
+            attachment_target: None,
+            attachment_side,
+            attachment_gap,
             _subscriptions: subscriptions,
+        }
+    }
+
+    pub(in crate::ui::app) fn attachment(&self, target: usize, cx: &App) -> GroupAttachment {
+        GroupAttachment {
+            target,
+            side: self.attachment_side,
+            gap: self.attachment_gap.value(cx),
         }
     }
 
@@ -407,6 +440,7 @@ impl TextGroupEditor {
                 .unwrap_or_default(),
             padding: self.padding.value(cx),
             time_format: self.time_format.read(cx).value().to_string(),
+            attachment: None,
         }
     }
 }
@@ -443,7 +477,7 @@ impl AppView {
         let view = cx.entity();
         GroupBox::new()
             .id("text-section")
-            .title("EXIF 文字水印")
+            .title("文字与 Logo 水印")
             .child(description("每个文字组可独立设置位置、方向和多行文字。"))
             .child(
                 v_flex()
@@ -601,6 +635,155 @@ impl AppView {
         });
     }
 
+    fn can_attach_group(&self, id: u64, target: u64) -> bool {
+        let mut current = Some(target);
+        let mut seen = std::collections::HashSet::new();
+        while let Some(target) = current {
+            if target == id || !seen.insert(target) {
+                return false;
+            }
+            current = self
+                .text_groups
+                .iter()
+                .find(|group| group.id == target)
+                .and_then(|group| group.attachment_target);
+        }
+        true
+    }
+
+    fn set_group_attachment(
+        &mut self,
+        id: u64,
+        target: Option<u64>,
+        side: Placement,
+        cx: &mut Context<Self>,
+    ) {
+        if target.is_some_and(|target| !self.can_attach_group(id, target)) {
+            return;
+        }
+        if let Some(group) = self.text_groups.iter_mut().find(|group| group.id == id) {
+            group.attachment_target = target;
+            group.attachment_side = side;
+            self.refresh_preview(cx);
+            cx.notify();
+        }
+    }
+
+    fn render_attachment_settings(
+        &self,
+        group: &TextGroupEditor,
+        view: Entity<AppView>,
+        cx: &App,
+    ) -> AnyElement {
+        let id = group.id;
+        let target = group.attachment_target;
+        let side = group.attachment_side;
+        let target_label = target
+            .and_then(|target| self.text_groups.iter().position(|group| group.id == target))
+            .map(|ix| format!("文字组 {}", ix + 1))
+            .unwrap_or_else(|| "独立位置".into());
+        let targets = self
+            .text_groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.id != id)
+            .map(|(ix, group)| {
+                (
+                    group.id,
+                    format!("文字组 {}", ix + 1),
+                    self.can_attach_group(id, group.id),
+                )
+            })
+            .collect::<Vec<_>>();
+        let target_view = view.clone();
+        let side_view = view.clone();
+        v_flex()
+            .gap_4()
+            .w_full()
+            .child(field(
+                "紧贴文字组",
+                Button::new(("attachment-target", id))
+                    .label(target_label)
+                    .outline()
+                    .dropdown_caret(true)
+                    .w_full()
+                    .dropdown_menu(move |menu, _, _| {
+                        let view = target_view.clone();
+                        let menu = menu.item(
+                            PopupMenuItem::new("独立位置")
+                                .checked(target.is_none())
+                                .on_click(move |_, _, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.set_group_attachment(id, None, side, cx)
+                                    });
+                                }),
+                        );
+                        targets
+                            .iter()
+                            .fold(menu, |menu, (target_id, label, enabled)| {
+                                let target_id = *target_id;
+                                let view = target_view.clone();
+                                menu.item(
+                                    PopupMenuItem::new(label.clone())
+                                        .checked(target == Some(target_id))
+                                        .disabled(!enabled)
+                                        .on_click(move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.set_group_attachment(
+                                                    id,
+                                                    Some(target_id),
+                                                    side,
+                                                    cx,
+                                                )
+                                            });
+                                        }),
+                                )
+                            })
+                    }),
+                cx,
+            ))
+            .when(target.is_some(), |this| {
+                this.child(field(
+                    "相邻方向",
+                    Button::new(("attachment-side", id))
+                        .label(match side {
+                            Placement::Right => "右侧",
+                            Placement::Up => "上方",
+                            Placement::Bottom => "下方",
+                            _ => "左侧",
+                        })
+                        .outline()
+                        .dropdown_caret(true)
+                        .w_full()
+                        .dropdown_menu(move |menu, _, _| {
+                            [
+                                ("左侧", Placement::Left),
+                                ("右侧", Placement::Right),
+                                ("上方", Placement::Up),
+                                ("下方", Placement::Bottom),
+                            ]
+                            .into_iter()
+                            .fold(menu, |menu, (label, value)| {
+                                let view = side_view.clone();
+                                menu.item(
+                                    PopupMenuItem::new(label).checked(side == value).on_click(
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.set_group_attachment(id, target, value, cx)
+                                            });
+                                        },
+                                    ),
+                                )
+                            })
+                        }),
+                    cx,
+                ))
+                .child(group.attachment_gap.render("组间距", false, cx))
+                .child(description("间距为 0 时紧贴目标组；位置和对齐跟随目标组。"))
+            })
+            .into_any_element()
+    }
+
     fn render_text_group_editor(
         &self,
         group_id: u64,
@@ -637,7 +820,8 @@ impl AppView {
         let time_input = group.time_format.clone();
         let time_view = view.clone();
         // 居中没有单一的相邻边框；只有贴边对齐时才显示文字与那一侧边框的空白。
-        let show_padding = matches!(value.align, TextAlign::Left | TextAlign::Right);
+        let show_padding = group.attachment_target.is_none()
+            && matches!(value.align, TextAlign::Left | TextAlign::Right);
 
         h_flex()
             .id(("text-group-editor", group_id))
@@ -664,8 +848,13 @@ impl AppView {
                             .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                             .child("文字组设置"),
                     )
-                    .child(field("位置", Select::new(&group.position).w_full(), cx))
-                    .child(field("组对齐", Select::new(&group.align).w_full(), cx))
+                    .child(self.render_attachment_settings(group, view.clone(), cx))
+                    .when(group.attachment_target.is_none(), |this| {
+                        this.child(field("位置", Select::new(&group.position).w_full(), cx))
+                    })
+                    .when(group.attachment_target.is_none(), |this| {
+                        this.child(field("组对齐", Select::new(&group.align).w_full(), cx))
+                    })
                     .child(
                         group
                             .padding
@@ -822,11 +1011,17 @@ impl AppView {
                     }),
             );
         let empty_exif = ExifInfo::default();
-        let exif = exif.or_else(|| template.contains("{自定义文本}").then_some(&empty_exif));
+        let exif = exif.or_else(|| {
+            (template.contains("{自定义文本}") || template.contains("{自定义logo"))
+                .then_some(&empty_exif)
+        });
         let resolved = match exif {
             None => warning("选中的照片没有 EXIF 信息，这一行不会渲染。", cx),
             Some(exif) => {
-                let preview = template.replace("{Logo}", "[品牌 Logo]");
+                let mut preview = template.replace("{Logo}", "[品牌 Logo]");
+                for name in self.params.custom_logos.keys() {
+                    preview = preview.replace(&format!("{{{name}}}"), &format!("[{name}]"));
+                }
                 let resolved = render_watermark_template(
                     &preview,
                     exif,
@@ -860,7 +1055,7 @@ impl AppView {
                     )),
             )
             .child(resolved)
-            .child(line.size.render("字号", false, cx))
+            .child(line.size.render("字号 / Logo 大小", false, cx))
             .child(line.line_spacing.render("行距", false, cx))
             .child(field(
                 "字体",
@@ -915,13 +1110,19 @@ impl AppView {
         view: Entity<AppView>,
         line_id: u64,
     ) -> impl IntoElement {
+        let logo_fields = self
+            .params
+            .custom_logos
+            .keys()
+            .map(|name| (name.clone(), format!("{{{name}}}")))
+            .collect::<Vec<_>>();
         Button::new(("template-field-options", line_id))
             .label("插入字段")
             .dropdown_caret(true)
             .outline()
             .small()
             .dropdown_menu(move |menu, _, _| {
-                TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
+                let menu = TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
                     let input = input.clone();
                     let view = view.clone();
                     menu.item(PopupMenuItem::new(*label).on_click(move |_, window, cx| {
@@ -929,6 +1130,18 @@ impl AppView {
                             this.append_to_input(&input, value, window, cx)
                         });
                     }))
+                });
+                logo_fields.iter().fold(menu, |menu, (label, value)| {
+                    let input = input.clone();
+                    let view = view.clone();
+                    let value = value.clone();
+                    menu.item(
+                        PopupMenuItem::new(label.clone()).on_click(move |_, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.append_to_input(&input, &value, window, cx)
+                            });
+                        }),
+                    )
                 })
             })
     }
@@ -978,6 +1191,11 @@ impl AppView {
             return;
         };
         self.text_groups.remove(ix);
+        for group in &mut self.text_groups {
+            if group.attachment_target == Some(id) {
+                group.attachment_target = None;
+            }
+        }
         self.opening_text_editor_ids.remove(&id);
         if let Some(handle) = self.text_editor_windows.remove(&id) {
             cx.defer(move |cx| {
@@ -1096,6 +1314,35 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui_kit::test]
+    fn custom_logo_attachment_keeps_identity_and_rejects_cycles(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (app, cx) =
+            cx.add_window_view(|window, cx| AppView::new_with_settings_path(None, window, cx));
+        app.update_in(cx, |app, window, cx| {
+            app.add_text_group(window, cx);
+            let target = app.text_groups[0].id;
+            let child = app.text_groups[1].id;
+            app.set_group_attachment(child, Some(target), Placement::Left, cx);
+            assert!(!app.can_attach_group(target, child));
+            app.set_group_attachment(target, Some(child), Placement::Right, cx);
+            assert!(app.text_groups[0].attachment_target.is_none());
+            let snapshot = app.current_watermark(cx);
+            assert_eq!(
+                snapshot.text_groups[1].attachment.as_ref().unwrap().target,
+                0
+            );
+            app.restore_watermark(snapshot, window, cx);
+            assert_eq!(
+                app.text_groups[1].attachment_target,
+                Some(app.text_groups[0].id)
+            );
+            app.remove_text_group(app.text_groups[0].id, cx);
+            assert!(app.text_groups[0].attachment_target.is_none());
+        });
+        cx.run_until_parked();
+    }
 
     #[test]
     fn group_alignment_labels_follow_group_position() {

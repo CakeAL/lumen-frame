@@ -86,6 +86,7 @@ struct TextKey {
     solid: bool,
     exif: String,
     custom_text: String,
+    custom_logos: Vec<(String, Option<Arc<Vec<u8>>>)>,
 }
 
 #[derive(Clone)]
@@ -301,13 +302,33 @@ impl LayerRenderer for CachedRenderer<'_> {
         (size.width.0, size.height.0)
     }
 
+    fn content_bounds(image: &TextLayer) -> Result<(i32, i32, i32, i32)> {
+        let (w, h) = Self::dimensions(image);
+        Ok(image
+            .visible
+            .map(|region| (region.x, region.y, region.width, region.height))
+            .unwrap_or((0, 0, w, h)))
+    }
+
     fn text(&mut self, group: &TextGroup) -> Result<Option<TextLayer>> {
         let key = TextKey {
-            group: group.clone(),
+            // 相邻排版只改变位置，不应重绘内容纹理。
+            group: TextGroup {
+                attachment: None,
+                ..group.clone()
+            },
             default_font: self.job.params.default_font.clone(),
             background: self.job.params.background,
             solid: self.job.params.solid_background,
             exif: format!("{:?}", self.job.exif),
+            custom_logos: group
+                .custom_logo_names()
+                .into_iter()
+                .map(|name| {
+                    let bytes = self.job.params.custom_logos.get(&name).cloned();
+                    (name, bytes)
+                })
+                .collect(),
             custom_text: if group.uses_custom_text() {
                 self.job.params.custom_text.clone()
             } else {
@@ -533,6 +554,28 @@ mod tests {
         for ix in 0..first.layers.len() {
             assert!(same(&next, &unchanged, ix));
         }
+    }
+
+    #[test]
+    fn custom_logo_attachment_changes_only_layer_positions() {
+        let mut job = job();
+        job.text_groups[1].text.template[0] = "{自定义logo1}".into();
+        job.params.custom_logos.insert("自定义logo1".into(), Arc::new(br##"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#ffca00"/></svg>"##.to_vec()));
+        job.text_groups[1].attachment = Some(crate::watermark::GroupAttachment {
+            target: 0,
+            side: Placement::Left,
+            gap: 0.0,
+        });
+        let mut cache = PreviewLayerCache::default();
+        let first = cache.render(&job).unwrap();
+        let builds = cache.builds;
+        job.text_groups[1].attachment.as_mut().unwrap().gap = 0.03;
+        let changed = cache.render(&job).unwrap();
+        assert_eq!(cache.builds, builds);
+        for ix in 0..first.layers.len() {
+            assert!(same(&first, &changed, ix));
+        }
+        assert_ne!(first.text_regions, changed.text_regions);
     }
 
     #[test]

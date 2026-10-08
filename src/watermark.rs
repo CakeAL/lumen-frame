@@ -1,6 +1,7 @@
 //! 水印合成的可序列化输入模型。
 
 use std::path::PathBuf;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +31,9 @@ pub struct WatermarkParams {
     /// 当前照片的自定义文本，随照片快照保存，不属于可复用预设。
     #[serde(skip)]
     pub custom_text: String,
+    /// 本机素材库的不可变快照，不写入预设；导出期间保留素材字节。
+    #[serde(skip)]
+    pub custom_logos: BTreeMap<String, Arc<Vec<u8>>>,
     /// 边框比例（上、下、左、右）。
     pub border_ratio: (f64, f64, f64, f64),
     pub border_equal: bool,
@@ -51,6 +55,7 @@ impl Default for WatermarkParams {
             output_folder: dirs::picture_dir().map(|path| path.join("watermark")),
             default_font: default_font(),
             custom_text: String::new(),
+            custom_logos: BTreeMap::new(),
             border_ratio: (0.05, 0.05, 0.05, 0.05),
             border_equal: false,
             aspect_ratio: None,
@@ -84,6 +89,17 @@ pub struct TextGroup {
     #[serde(default)]
     pub padding: f64,
     pub time_format: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<GroupAttachment>,
+}
+
+/// 指向同一不可变预设快照中的文字组；UI 编辑期间使用稳定组 ID，保存时投影成序号。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroupAttachment {
+    pub target: usize,
+    pub side: Placement,
+    /// 与目标组的距离，占照片高度的比例。
+    pub gap: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -198,6 +214,7 @@ impl Default for TextGroup {
             align: TextAlign::Center,
             padding: 0.0,
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
+            attachment: None,
         }
     }
 }
