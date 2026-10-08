@@ -1,3 +1,5 @@
+pub(crate) mod layers;
+
 use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
 use vips::VipsBlendMode;
@@ -10,7 +12,7 @@ use crate::{
         vips::{VipsImage, from_owned_ptr, image_metadata_string, image_op},
     },
     render::{canvas, image, text::TextGroupRegion},
-    watermark::{Placement, TextAlign, TextGroup, WatermarkParams},
+    watermark::{TextGroup, WatermarkParams},
 };
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,7 @@ impl Photo {
     }
 
     /// 预览复用同一合成管线，并取出每个已显示文字组的真实范围。
+    #[cfg(test)]
     pub(crate) fn compose_watermark_with_regions(
         img: VipsImage,
         exif: Option<&ExifInfo>,
@@ -103,114 +106,25 @@ impl Photo {
         // 计算水印照片的图片尺寸
         let (img_w, img_h) = (img.width() as i32, img.height() as i32);
 
-        // 先渲染每个文字组，旋转后的真实尺寸才能准确决定四周需要扩出多少画布。
-        let mut rendered_text_groups = Vec::new();
-        if let Some(exif) = exif {
-            for (group_ix, group) in text_groups.iter().enumerate() {
-                if let Some(image) = group.render_text(exif, img_h, params)? {
-                    rendered_text_groups.push((group_ix, group.position, group.align, image));
-                }
-            }
-        }
-
-        // 计算画布边框尺寸
-        let mut margin = canvas::Margin::cal_margin(img_w, img_h, params);
-        let mut text_thickness = [0; 4];
-        for (_, position, _, image) in &rendered_text_groups {
-            let thickness = match position {
-                Placement::Up | Placement::Bottom => image.height() as i32,
-                Placement::Left | Placement::Right => image.width() as i32,
-                Placement::Center => 0,
-            };
-            let slot = match position {
-                Placement::Up => Some(0),
-                Placement::Right => Some(1),
-                Placement::Bottom => Some(2),
-                Placement::Left => Some(3),
-                Placement::Center => None,
-            };
-            if let Some(slot) = slot {
-                text_thickness[slot] = text_thickness[slot].max(thickness);
-            }
-        }
-        margin.include_text_thickness(Placement::Up, text_thickness[0]);
-        margin.include_text_thickness(Placement::Right, text_thickness[1]);
-        margin.include_text_thickness(Placement::Bottom, text_thickness[2]);
-        margin.include_text_thickness(Placement::Left, text_thickness[3]);
-        // 画布尺寸
-        let (canvas_w, canvas_h) = canvas::cal_size(&margin, img_w, img_h, params);
-        // 计算图片坐标
-        let (img_x, img_y) =
-            image::cal_coordinates(&margin, canvas_w, canvas_h, img_w, img_h, params);
-
-        // 生成画布
-        let canvas = canvas::new_canvas(canvas_w, canvas_h, &img, params)
-            .context("failed to generate canvas")?;
-
-        // 给图片添加圆角
-        let img = if params.border_radius > 0.0 {
-            image::add_round_corner(img, params.border_radius).context("add round corner failed")?
-        } else {
-            img
+        let mut renderer = VipsLayerRenderer {
+            img: &img,
+            exif,
+            params,
+            rounded: None,
         };
-
-        // 为画布添加阴影
-        let canvas = if params.shadow_size > 0.0 {
-            canvas::add_shadow(canvas, &img, params, img_x, img_y)
-                .context("generate shadow failed")?
-        } else {
-            canvas
-        };
-
-        // 合成照片
-        let canvas = image_op(|out| unsafe {
-            vips_sys::vips_composite2(
-                canvas.as_ptr(),
-                img.as_ptr(),
-                out,
-                VipsBlendMode::VIPS_BLEND_MODE_OVER,
-                c"x".as_ptr(),
-                img_x,
-                c"y".as_ptr(),
-                img_y,
-                std::ptr::null::<i8>(),
-            )
-        })
-        .context("composite image err")?;
-
-        // 各文字组独立按组级位置和对齐方式合成。行级 align 已在组内排版时生效。
-        let mut canvas = canvas;
-        for (group_ix, position, align, text_layer) in rendered_text_groups {
-            let (text_w, text_h) = (text_layer.width() as i32, text_layer.height() as i32);
-            let aligned_x = || match align {
-                TextAlign::Left => img_x,
-                TextAlign::Center => img_x + (img_w - text_w) / 2,
-                TextAlign::Right => img_x + img_w - text_w,
-            };
-            let aligned_y = || match align {
-                TextAlign::Left => img_y,
-                TextAlign::Center => img_y + (img_h - text_h) / 2,
-                TextAlign::Right => img_y + img_h - text_h,
-            };
-            let (text_x, text_y) = match position {
-                Placement::Up => (aligned_x(), (img_y - text_h) / 2),
-                Placement::Bottom => (
-                    aligned_x(),
-                    img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
-                ),
-                Placement::Left => ((img_x - text_w) / 2, aligned_y()),
-                Placement::Right => (
-                    img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
-                    aligned_y(),
-                ),
-                Placement::Center => (aligned_x(), img_y + (img_h - text_h) / 2),
-            };
-            if let Some(regions) = regions.as_deref_mut()
+        let scene =
+            Self::prepare_watermark_layers(&mut renderer, (img_w, img_h), params, text_groups)?;
+        let (canvas_w, canvas_h) = scene.size;
+        let (img_x, img_y) = scene.photo_origin;
+        let mut layers = scene.layers.into_iter();
+        let mut canvas = layers.next().expect("背景图层").image;
+        for layer in layers {
+            if let (Some(regions), Some(group_ix)) = (regions.as_deref_mut(), layer.group_ix)
                 && let Some(region) = TextGroupRegion::from_layer(
-                    &text_layer,
+                    &layer.image,
                     group_ix,
-                    (text_x, text_y),
-                    (canvas_w, canvas_h),
+                    (layer.x, layer.y),
+                    scene.size,
                     params.rotation,
                 )?
             {
@@ -219,17 +133,17 @@ impl Photo {
             canvas = image_op(|out| unsafe {
                 vips_sys::vips_composite2(
                     canvas.as_ptr(),
-                    text_layer.as_ptr(),
+                    layer.image.as_ptr(),
                     out,
                     VipsBlendMode::VIPS_BLEND_MODE_OVER,
                     c"x".as_ptr(),
-                    text_x,
+                    layer.x,
                     c"y".as_ptr(),
-                    text_y,
+                    layer.y,
                     std::ptr::null::<i8>(),
                 )
             })
-            .context("composite text layer err")?;
+            .context("合成水印图层失败")?;
         }
 
         // 原图带 Ultra HDR gain map 时，重写一个只覆盖中间照片区域、四周为
@@ -253,6 +167,16 @@ impl Photo {
         // 旋转属于最终输出变换：照片、边框、文字和重建后的 gain map 一起旋转，不能在
         // 排版前先旋转输入照片，否则四周边框与文字位置会被重新计算。
         crate::rotation::apply_to_output(&canvas, params.rotation)
+    }
+
+    /// 完整合成与分层预览共用这条排版管线，避免缓存另做一套照片/文字位置规则。
+    pub(crate) fn prepare_watermark_layers<R: layers::LayerRenderer>(
+        renderer: &mut R,
+        image_size: (i32, i32),
+        params: &WatermarkParams,
+        text_groups: &[TextGroup],
+    ) -> Result<layers::WatermarkLayers<R::Image>> {
+        layers::prepare(renderer, image_size, params, text_groups)
     }
 
     pub fn save_image(&self, params: &WatermarkParams, watermark: &VipsImage) -> Result<()> {
@@ -338,6 +262,66 @@ fn ultra_hdr_resize_scale(max_dim: i32, has_gainmap: bool) -> Option<f64> {
     const ULTRA_HDR_MAX_EDGE: i32 = 8192;
     (has_gainmap && max_dim > ULTRA_HDR_MAX_EDGE)
         .then_some(ULTRA_HDR_MAX_EDGE as f64 / max_dim as f64)
+}
+
+struct VipsLayerRenderer<'a> {
+    img: &'a VipsImage,
+    exif: Option<&'a ExifInfo>,
+    params: &'a WatermarkParams,
+    rounded: Option<VipsImage>,
+}
+
+impl layers::LayerRenderer for VipsLayerRenderer<'_> {
+    type Image = VipsImage;
+
+    fn dimensions(image: &VipsImage) -> (i32, i32) {
+        (image.width() as i32, image.height() as i32)
+    }
+
+    fn text(&mut self, group: &TextGroup) -> Result<Option<VipsImage>> {
+        self.exif
+            .map(|exif| group.render_text(exif, self.img.height() as i32, self.params))
+            .transpose()
+            .map(Option::flatten)
+            .map_err(Into::into)
+    }
+
+    fn background(&mut self, (w, h): (i32, i32)) -> Result<VipsImage> {
+        Ok(canvas::new_canvas(w, h, self.img, self.params)?)
+    }
+
+    fn photo(&mut self) -> Result<VipsImage> {
+        if self.rounded.is_none() {
+            let img = image_op(|out| unsafe {
+                vips_sys::vips_copy(self.img.as_ptr(), out, std::ptr::null::<i8>())
+            })?;
+            self.rounded = Some(if self.params.border_radius > 0.0 {
+                image::add_round_corner(img, self.params.border_radius)?
+            } else {
+                img
+            });
+        }
+        // 独立 GObject 引用，不能依赖 vips crate 的浅拷贝 Clone。
+        Ok(image_op(|out| unsafe {
+            vips_sys::vips_copy(
+                self.rounded.as_ref().unwrap().as_ptr(),
+                out,
+                std::ptr::null::<i8>(),
+            )
+        })?)
+    }
+
+    fn shadow(&mut self) -> Result<Option<layers::PositionedLayer<VipsImage>>> {
+        let img = self.photo()?;
+        Ok(
+            canvas::shadow_layer(&img, self.params)?.map(|(image, x, y)| layers::PositionedLayer {
+                image,
+                x,
+                y,
+                group_ix: None,
+            }),
+        )
+    }
 }
 
 #[cfg(test)]

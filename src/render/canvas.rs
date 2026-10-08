@@ -187,9 +187,32 @@ pub fn add_shadow(
     img_x: i32,
     img_y: i32,
 ) -> Result<VipsImage> {
+    let Some((shadow, x, y)) = shadow_layer(img, params)? else {
+        return Ok(canvas);
+    };
+    image_op(|out| unsafe {
+        vips_sys::vips_composite2(
+            canvas.as_ptr(),
+            shadow.as_ptr(),
+            out,
+            VipsBlendMode::VIPS_BLEND_MODE_OVER,
+            c"x".as_ptr(),
+            img_x + x,
+            c"y".as_ptr(),
+            img_y + y,
+            std::ptr::null::<i8>(),
+        )
+    })
+}
+
+/// 独立的透明阴影图层，坐标相对于照片；预览可缓存它，不必重新做高斯模糊。
+pub(crate) fn shadow_layer(
+    img: &VipsImage,
+    params: &WatermarkParams,
+) -> Result<Option<(VipsImage, i32, i32)>> {
     ensure_vips();
     if params.shadow_size <= 0.0 || params.shadow_density <= 0.0 {
-        return Ok(canvas);
+        return Ok(None);
     }
     let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let shadow_sigma = img_h as f64 * params.shadow_size / 3.0;
@@ -338,24 +361,8 @@ pub fn add_shadow(
             std::ptr::null::<i8>(),
         )
     })?;
-    // 确保 shadow 与 canvas 一样是 uchar/SRGB，避免 band 格式不一致导致 composite2 崩溃。
     let shadow = rgba_srgb(&shadow, shadow_w, shadow_h)?;
-    let shadow_x = img_x - margin_x;
-    let shadow_y = img_y - margin_y;
-
-    image_op(|out| unsafe {
-        vips_sys::vips_composite2(
-            canvas.as_ptr(),
-            shadow.as_ptr(),
-            out,
-            VipsBlendMode::VIPS_BLEND_MODE_OVER,
-            c"x".as_ptr(),
-            shadow_x,
-            c"y".as_ptr(),
-            shadow_y,
-            std::ptr::null::<i8>(),
-        )
-    })
+    Ok(Some((shadow, -margin_x, -margin_y)))
 }
 
 fn rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {

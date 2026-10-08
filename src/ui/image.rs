@@ -1,9 +1,14 @@
 //! 预览与缩略图的位图生成。
 //!
-//! 水印合成本身仍然由 [`Photo::compose_watermark`] 负责；这一层只做 UI 才需要的两件事：
-//! 把底图缩到预览尺寸，以及把 libvips 的像素缓冲换成 GPUI 能直接渲染的 [`RenderImage`]。
+//! [`Photo::compose_watermark`] 与分层预览共用照片用例中的排版管线。
+//! 这一层负责缩小底图、转换 GPUI 位图，以及缓存可独立更新的预览图层。
 //!
 //! 这里的函数都会阻塞，只能在后台线程里调用。
+
+mod layers;
+
+pub use layers::LayeredPreview;
+pub(crate) use layers::PreviewLayerCache;
 
 use std::{
     path::{Path, PathBuf},
@@ -53,14 +58,20 @@ pub struct PreviewJob {
 
 /// 按预览分辨率渲染水印照片。会阻塞，请在后台线程调用。
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
-    render_preview_with_regions(job).map(|preview| preview.image)
+    ensure_vips();
+    let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;
+    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text_groups)
+        .context("合成预览")?;
+    to_render_image(&composed).context("转换预览位图")
 }
 
+#[cfg(test)]
 pub(crate) struct RenderedPreview {
     pub image: Arc<RenderImage>,
     pub text_regions: Vec<crate::render::text::TextGroupRegion>,
 }
 
+#[cfg(test)]
 pub(crate) fn render_preview_with_regions(job: &PreviewJob) -> Result<RenderedPreview> {
     ensure_vips();
     let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;

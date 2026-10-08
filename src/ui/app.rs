@@ -312,7 +312,8 @@ impl AppView {
         self.selected_photo().map(QueuedPhoto::path)
     }
 
-    /// 当前用于显示的预览位图；还没算出来时是 `None`。
+    /// 按需压平当前预览，供完整位图读取；正常窗口直接绘制缓存图层。
+    /// 还没算出来时是 `None`。
     pub fn preview_image(&self, cx: &App) -> Option<Arc<RenderImage>> {
         self.preview.read(cx).state().image().cloned()
     }

@@ -2,7 +2,7 @@
 //!
 //! 面板本身只负责呈现，渲染节奏由 [`WatermarkPreview`] 这个实体决定：参数每变一次就
 //! 请求一次，请求在实体里合并、防抖，再到后台线程重算。这样拖动滑块时不会每帧都启动
-//! 一次 libvips 合成，也不会让已经过期的结果覆盖新结果。
+//! 一次图层更新，也不会让已经过期的结果覆盖新结果。
 
 use std::{sync::Arc, time::Duration};
 
@@ -18,13 +18,13 @@ use gpui_kit::prelude::*;
 use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
     AvailableSpace, Bounds, Context, FontWeight, ObjectFit, Pixels, RenderImage, SharedString,
-    Task, canvas, div, img, point, px, size,
+    Task, canvas, div, point, px, size,
 };
 
 use super::super::AppView;
 use super::field::{description, rgb_to_hsla};
 use crate::render::text::TextGroupRegion;
-use crate::ui::image::{PreviewJob, render_preview_with_regions};
+use crate::ui::image::{LayeredPreview, PreviewJob, PreviewLayerCache};
 
 /// 参数连续变化时先攒一会儿再算。
 ///
@@ -32,7 +32,7 @@ use crate::ui::image::{PreviewJob, render_preview_with_regions};
 /// 的延迟感。
 const DEBOUNCE: Duration = Duration::from_millis(80);
 
-/// 预览位图的状态。
+/// 分层预览的状态。
 ///
 /// 重算时保留上一张图（[`PreviewState::Rendering`] 的 `previous`），是为了让拖动滑块
 /// 的过程中画面连续变化，而不是每次重算都闪一下空白。
@@ -40,19 +40,23 @@ pub enum PreviewState {
     /// 队列里没有可预览的照片。
     Empty,
     Rendering {
-        previous: Option<Arc<RenderImage>>,
+        previous: Option<Arc<LayeredPreview>>,
     },
-    Ready(Arc<RenderImage>),
+    Ready(Arc<LayeredPreview>),
     Failed(SharedString),
 }
 
 impl PreviewState {
-    /// 当前用于显示的位图。重算期间仍然是上一张，所以拖动滑块时画面不会闪空。
+    /// 按需读取完整位图；窗口绘制使用 layers，不触发 CPU 压平。
     pub(in crate::ui::app) fn image(&self) -> Option<&Arc<RenderImage>> {
+        self.layers().map(|layers| layers.image())
+    }
+
+    fn layers(&self) -> Option<&Arc<LayeredPreview>> {
         match self {
-            PreviewState::Rendering { previous } => previous.as_ref(),
-            PreviewState::Ready(image) => Some(image),
-            PreviewState::Empty | PreviewState::Failed(_) => None,
+            Self::Rendering { previous } => previous.as_ref(),
+            Self::Ready(layers) => Some(layers),
+            Self::Empty | Self::Failed(_) => None,
         }
     }
 }
@@ -67,6 +71,7 @@ pub struct WatermarkPreview {
     /// 仅最新请求的位图可以编辑；旧图仍显示时不保留它的交互区域。
     text_regions: Vec<(u64, TextGroupRegion)>,
     worker: Option<Task<()>>,
+    cache: Option<PreviewLayerCache>,
 }
 
 impl WatermarkPreview {
@@ -77,6 +82,7 @@ impl WatermarkPreview {
             pending: None,
             text_regions: Vec::new(),
             worker: None,
+            cache: Some(PreviewLayerCache::default()),
         }
     }
 
@@ -117,7 +123,7 @@ impl WatermarkPreview {
 
                 let started = this.update(cx, |this, cx| {
                     this.state = PreviewState::Rendering {
-                        previous: this.state.image().cloned(),
+                        previous: this.state.layers().cloned(),
                     };
                     cx.notify();
                 });
@@ -125,11 +131,24 @@ impl WatermarkPreview {
                     break;
                 }
 
-                let rendered = cx
-                    .background_spawn(async move { render_preview_with_regions(&job) })
+                let Ok(mut cache) =
+                    this.update(cx, |this, _| this.cache.take().unwrap_or_default())
+                else {
+                    break;
+                };
+                let (cache, rendered) = cx
+                    .background_spawn(async move {
+                        let rendered = cache.render(&job);
+                        (cache, rendered)
+                    })
                     .await;
 
                 let applied = this.update(cx, |this, cx| {
+                    // 缓存仅是可重用位图；各层键会核对照片、文件版本与参数。
+                    // 清空队列时不恢复正在后台生成的旧照片缓存。
+                    if !matches!(this.state, PreviewState::Empty) {
+                        this.cache = Some(cache);
+                    }
                     // 期间用户又改了参数：这份结果对应的已经不是界面上的状态了。
                     if this.generation != generation {
                         return;
@@ -138,12 +157,13 @@ impl WatermarkPreview {
                         Ok(rendered) => {
                             this.text_regions = rendered
                                 .text_regions
-                                .into_iter()
+                                .iter()
+                                .copied()
                                 .filter_map(|region| {
                                     group_ids.get(region.group_ix).map(|id| (*id, region))
                                 })
                                 .collect();
-                            PreviewState::Ready(rendered.image)
+                            PreviewState::Ready(rendered)
                         }
                         Err(error) => PreviewState::Failed(format!("{error:#}").into()),
                     };
@@ -159,6 +179,7 @@ impl WatermarkPreview {
     /// 当前没有可预览的照片（队列为空，或选中的照片被移除了）。
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.pending = None;
+        self.cache = Some(PreviewLayerCache::default());
         self.text_regions.clear();
         self.generation = self.generation.wrapping_add(1);
         if !matches!(self.state, PreviewState::Empty) {
@@ -306,13 +327,13 @@ impl AppView {
 
     fn render_editable_bitmap(
         &self,
-        image: &Arc<RenderImage>,
+        image: &Arc<LayeredPreview>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let preview = self.preview.read(cx);
         let generation = preview.generation;
         let regions = preview.text_regions.clone();
-        let image_size = image.size(0);
+        let image_size = image.size();
         let app = cx.entity().downgrade();
 
         div()
@@ -326,7 +347,7 @@ impl AppView {
             .size_full()
             .child(render_bitmap(image))
             .child(
-                // 文字是位图内容：在布局完成后使用与 img 完全相同的 contain 变换，
+                // 在布局完成后使用与各图层完全相同的 contain 变换，
                 // 为每个可见文字组摆放标准 Button，复用键盘、焦点、提示和无障碍语义。
                 canvas(
                     move |bounds, window, cx| {
@@ -407,10 +428,38 @@ fn preview_region_bounds(
 }
 
 /// 照片按 contain 缩放到整个区域：外框固定，画面自己按比例留边。
-fn render_bitmap(image: &Arc<RenderImage>) -> impl IntoElement {
-    img(image.clone())
-        .size_full()
-        .object_fit(ObjectFit::Contain)
+fn render_bitmap(scene: &Arc<LayeredPreview>) -> impl IntoElement {
+    let scene = scene.clone();
+    let dimensions = scene.size();
+    canvas(
+        move |bounds, _, _| ObjectFit::Contain.get_bounds(bounds, dimensions),
+        move |_, fitted, window, _| {
+            let scale = fitted.size.width.as_f32() / scene.size().width.0 as f32;
+            // 窗口最后叠加这些缓存纹理；未修改图层沿用同一个 RenderImage ID，
+            // 无须重新上传纹理，也无须在 CPU 上压平成一张完整预览图。
+            for layer in &scene.layers {
+                let dimensions = layer.image.size(0);
+                let rect = Bounds::new(
+                    fitted.origin + point(px(layer.x as f32 * scale), px(layer.y as f32 * scale)),
+                    size(
+                        px(dimensions.width.0 as f32 * scale),
+                        px(dimensions.height.0 as f32 * scale),
+                    ),
+                );
+                window
+                    .paint_image(
+                        fitted,
+                        rect,
+                        Default::default(),
+                        layer.image.clone(),
+                        0,
+                        false,
+                    )
+                    .ok();
+            }
+        },
+    )
+    .size_full()
 }
 
 #[cfg(test)]
@@ -486,6 +535,28 @@ mod tests {
         group.text.text_params.truncate(1);
         group.text.text_params[0].size = 0.04;
         group
+    }
+
+    #[gpui_kit::test]
+    fn normal_window_render_does_not_flatten_layers_and_clear_releases_cache(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let (view, cx) = workspace(cx, vec![text_group(Placement::Bottom)]);
+        settle(&view, cx);
+        cx.update(|window, cx| {
+            window.render_frame(cx);
+        });
+        view.read_with(cx, |view, cx| {
+            let preview = view.preview.read(cx);
+            assert!(preview.cache.is_some());
+            assert!(!preview.state.layers().unwrap().is_flattened());
+        });
+        view.update_in(cx, |view, window, cx| view.clear_photos(window, cx));
+        view.read_with(cx, |view, cx| {
+            let preview = view.preview.read(cx);
+            assert!(preview.state.layers().is_none());
+            assert!(preview.cache.as_ref().unwrap().is_empty());
+        });
     }
 
     #[gpui_kit::test]

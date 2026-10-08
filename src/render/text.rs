@@ -63,15 +63,6 @@ impl TextGroupRegion {
                 bottom = bottom.max(y + 1);
             }
         }
-        // 先裁到可见画布，避免超长文字在照片外的部分仍可被点击。
-        let (canvas_w, canvas_h) = canvas_size;
-        left = (left + origin.0).max(0);
-        top = (top + origin.1).max(0);
-        right = (right + origin.0).min(canvas_w);
-        bottom = (bottom + origin.1).min(canvas_h);
-        if right <= left || bottom <= top {
-            return Ok(None);
-        }
         let region = Self {
             group_ix,
             x: left,
@@ -79,10 +70,37 @@ impl TextGroupRegion {
             width: right - left,
             height: bottom - top,
         };
-        Ok(Some(region.rotated(rotation, canvas_size)))
+        Ok(region.positioned(group_ix, origin, canvas_size, rotation))
     }
 
-    fn rotated(self, rotation: crate::rotation::Rotation, (w, h): (i32, i32)) -> Self {
+    pub(crate) fn positioned(
+        self,
+        group_ix: usize,
+        origin: (i32, i32),
+        canvas_size: (i32, i32),
+        rotation: crate::rotation::Rotation,
+    ) -> Option<Self> {
+        // 先裁到可见画布，避免超长文字在照片外的部分仍可被点击。
+        let left = (self.x + origin.0).max(0);
+        let top = (self.y + origin.1).max(0);
+        let right = (self.x + self.width + origin.0).min(canvas_size.0);
+        let bottom = (self.y + self.height + origin.1).min(canvas_size.1);
+        if right <= left || bottom <= top {
+            return None;
+        }
+        Some(
+            Self {
+                group_ix,
+                x: left,
+                y: top,
+                width: right - left,
+                height: bottom - top,
+            }
+            .rotated(rotation, canvas_size),
+        )
+    }
+
+    pub(crate) fn rotated(self, rotation: crate::rotation::Rotation, (w, h): (i32, i32)) -> Self {
         use crate::rotation::Rotation;
         let (x, y, width, height) = match rotation {
             Rotation::None => (self.x, self.y, self.width, self.height),
