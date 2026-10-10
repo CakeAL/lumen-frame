@@ -7,6 +7,7 @@ pub(super) mod exif_editor;
 pub(super) mod field;
 pub(super) mod gainmap_preview;
 pub(super) mod inspector;
+pub(super) mod location_picker;
 pub(super) mod motion_photo_preview;
 pub(super) mod preview;
 pub(super) mod queue;

@@ -170,6 +170,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> Self {
         component::queue::init(cx);
+        component::location_picker::init(cx);
         let settings = settings_path
             .as_deref()
             .map(settings_store::load_at)

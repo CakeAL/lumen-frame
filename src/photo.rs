@@ -230,6 +230,10 @@ impl Photo {
             flattened =
                 unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(flattened.as_ptr())) }
                     .context("准备导出像素失败")?;
+            if let Some(exif) = &self.exif {
+                crate::media::gps::write_gps(&mut flattened, exif.gps_info.as_ref())
+                    .context("写入导出 GPS 信息失败")?;
+            }
             crate::media::jpeg::update_thumbnail(&mut flattened)?;
 
             // 保留源图的 ICC（如 Display P3），让照片保持原色域。

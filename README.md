@@ -10,7 +10,7 @@ Lumen Frame 是一款添加边框水印的工具。
 1. 支持调整文字的位置（通过文字组），可以在照片的上面下面左面右面！
 2. 可以导出固定比例的照片，比如16:9，而且可以自由决定照片的放置位置（比如靠左）。
 3. Exif 可以编辑，应用到导出。
-4. 自动根据照片GPS信息识别省市区。
+4. 自动根据照片GPS信息识别省市区；支持通过 OpenStreetMap 地图选点添加 GPS，并写入导出图片。
 5. 内置部分预设，也可以保存自己的边框水印预设。
 6. 如果原图含HDR Gain Map，导出的水印同时保留HDR Gain Map (此时图片大小会限制在 8192x8192，由于`libultrahdr`限制)。
 7. 提供小工具，生成Motion Photo（实况照片）以及“黑白 + 彩色Gain Map”的照片。
@@ -52,6 +52,10 @@ Lumen Frame 是一款添加边框水印的工具。
 macOS 安装包目前采用临时签名，首次打开如被系统拦截，可在 Finder 中右键应用并选择“打开”。Windows 安装包使用精简版 libvips，支持 AVIF，不接受 HEIC 和相机 RAW；macOS 使用 Homebrew 的完整 libvips，相关格式仍建议用实际照片验证。
 
 边框水印和 Gain Map 功能不需要 FFmpeg。使用 Motion Photo 前，需另行安装包含 `ffprobe` 和 `libx264` 的 FFmpeg。应用会自动检测 PATH 与常见安装位置，也可以在小工具页面手动指定 `ffmpeg` 可执行文件。输入为 MP4；导出时视频统一编码为 H.264，以提高兼容性。Motion Photo 是否能播放还取决于目标相册或平台，建议导出后在目标设备上确认。
+
+为照片添加 GPS：选中照片 →「EXIF 信息」→「地图选点…」，搜索地点或点击地图，也可手动输入 WGS 84 经纬度。点击「使用此位置」回填，再在 EXIF 编辑页点击「应用」。修改只作用于这张队列照片，导出的 JPEG 包含 GPS；清空 GPS 输入可移除位置，原图不变。
+
+地图采用 `cartography` 原生渲染，瓦片来自 OpenStreetMap，地点搜索使用 Photon。在线功能只请求地图瓦片和提交搜索词，不上传照片；地图瓦片按服务端缓存期限保存在本机缓存目录。部署自有服务时可通过 `LUMEN_FRAME_TILE_URL`（包含 `{z}/{x}/{y}`）和 `LUMEN_FRAME_GEOCODER_URL`（兼容 Photon API）替换默认服务。
 
 （Motion Photo和HDR已在小红书/小米15相册播放测试过。）
 
