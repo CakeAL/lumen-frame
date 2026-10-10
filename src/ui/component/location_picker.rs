@@ -1,11 +1,9 @@
-//! cartography 的栅格图层适配为 GPUI 位图；坐标仍是 EXIF 编辑器的草稿。
+//! cartography 的栅格图层适配为 GPUI 位图；确认后按稳定照片身份更新 GPS。
 
-use super::{
-    exif_editor::ExifEditor,
-    field::{Choice, choices, description, index_of, warning},
-};
+use super::field::{Choice, choices, description, index_of, warning};
 use crate::features::geolocation::{
-    Location, MapProvider, MapService, MapSettings, MapViewport, Place,
+    Location, MapProvider, MapService, MapSettings, MapViewport, Place, clear_tile_cache,
+    tile_cache_directory,
 };
 use cartography::{
     BoxedImageDataRef, ImageData, ImageFeature, ImagesVecLayer, LabelConfig, Map, MapRenderer,
@@ -14,11 +12,12 @@ use cartography::{
 #[cfg(test)]
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, TitleBar,
+    ActiveTheme as _, Disableable as _, Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
     link::Link,
+    notification::Notification,
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
@@ -27,11 +26,11 @@ use gpui_kit::{
     AnyWindowHandle, App, AvailableSpace, Bounds, Context, Entity, FocusHandle, KeyBinding,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
     RenderImage, Role, ScrollDelta, ScrollWheelEvent, SharedString, Subscription, Task, WeakEntity,
-    Window, canvas, div, img, point, px, size,
+    Window, WindowBounds, WindowOptions, canvas, div, img, point, px, size,
 };
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{
         Arc,
@@ -39,6 +38,15 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use super::super::AppView;
+use crate::workspace::PhotoId;
+
+#[derive(Default)]
+pub(in crate::ui::app) struct GpsWindows {
+    handles: HashMap<PhotoId, AnyWindowHandle>,
+    opening: HashSet<PhotoId>,
+}
 
 gpui_kit::actions!(
     gps_map,
@@ -121,10 +129,11 @@ const PROVIDERS: &[(&str, MapProvider)] = &[
     ),
     (MapProvider::Tencent.label(), MapProvider::Tencent),
 ];
-pub(super) struct LocationPicker {
+struct LocationPicker {
     focus: FocusHandle,
-    editor: WeakEntity<ExifEditor>,
-    editor_window: AnyWindowHandle,
+    app: WeakEntity<AppView>,
+    photo_id: PhotoId,
+    main_window: AnyWindowHandle,
     source: Entity<SelectState<Vec<Choice<MapProvider>>>>,
     active_settings: MapSettings,
     source_feedback: Option<SharedString>,
@@ -145,22 +154,26 @@ pub(super) struct LocationPicker {
     search_time: Option<Instant>,
     search_cache: HashMap<String, Vec<Place>>,
     places: Vec<Place>,
+    clearing_cache: bool,
+    cache_feedback: Option<SharedString>,
     map_feedback: Option<SharedString>,
     feedback: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl LocationPicker {
-    pub fn new(
-        editor: WeakEntity<ExifEditor>,
-        editor_window: AnyWindowHandle,
+    fn new(
+        app: WeakEntity<AppView>,
+        photo_id: PhotoId,
+        main_window: AnyWindowHandle,
         location: Option<Location>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::with_service(
-            editor,
-            editor_window,
+            app,
+            photo_id,
+            main_window,
             location,
             MapService::from_settings,
             window,
@@ -168,17 +181,18 @@ impl LocationPicker {
         )
     }
 
-    pub(super) fn with_service(
-        editor: WeakEntity<ExifEditor>,
-        editor_window: AnyWindowHandle,
+    fn with_service(
+        app: WeakEntity<AppView>,
+        photo_id: PhotoId,
+        main_window: AnyWindowHandle,
         location: Option<Location>,
         build_service: impl FnOnce(&MapSettings) -> anyhow::Result<MapService>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings = editor
+        let settings = app
             .upgrade()
-            .map(|owner| owner.read(cx).map_settings(cx))
+            .map(|owner| owner.read(cx).map_settings.clone())
             .unwrap_or_default();
         // 控件和地图请求共享同一次读取的偏好，测试可注入离线服务。
         let service = build_service(&settings);
@@ -223,7 +237,7 @@ impl LocationPicker {
         }));
         let mut viewport = MapViewport::new(location);
         let _ = viewport.set_coordinates(settings.coordinates());
-        if let Some(owner) = editor.upgrade() {
+        if let Some(owner) = app.upgrade() {
             subscriptions.push(
                 cx.observe_release_in(&owner, window, |_, _, window, _| window.remove_window()),
             );
@@ -234,8 +248,9 @@ impl LocationPicker {
             .map(|_| "地图暂时不可用，仍可手动填写经纬度。".into());
         let mut this = Self {
             focus: cx.focus_handle(),
-            editor,
-            editor_window,
+            app,
+            photo_id,
+            main_window,
             source,
             active_settings: settings,
             source_feedback: None,
@@ -256,6 +271,8 @@ impl LocationPicker {
             search_time: None,
             search_cache: HashMap::new(),
             places: Vec::new(),
+            clearing_cache: false,
+            cache_feedback: None,
             map_feedback,
             feedback: None,
             _subscriptions: subscriptions,
@@ -279,9 +296,15 @@ impl LocationPicker {
                 self.drag = None;
                 self.service = Some(service);
                 self.active_settings = settings.clone();
-                let saved = self
-                    .editor
-                    .update(cx, |editor, cx| editor.save_map_settings(settings, cx));
+                let saved = self.app.update(cx, |app, cx| {
+                    app.map_settings = settings;
+                    app.persist_settings();
+                    cx.notify();
+                    match &app.settings_feedback {
+                        Some(message) => Err(anyhow::anyhow!("{message}")),
+                        None => Ok(()),
+                    }
+                });
                 self.source_feedback = match saved {
                     Ok(Ok(())) => None,
                     _ => Some("地图源已应用，但偏好未能保存；请检查配置目录是否可写。".into()),
@@ -297,6 +320,9 @@ impl LocationPicker {
     }
     fn request_tiles(&mut self, cx: &mut Context<Self>) {
         let generation = self.latest.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.clearing_cache {
+            return;
+        }
         let Some(service) = self.service.clone() else {
             return;
         };
@@ -401,22 +427,82 @@ impl LocationPicker {
     }
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let result = self.coordinates(cx).and_then(|location| {
-            self.editor_window.update(cx, |_, window, cx| {
-                self.editor.update(cx, |editor, cx| {
+            let gps = location.to_gps()?;
+            self.main_window.update(cx, |_, window, cx| {
+                self.app.update(cx, |app, cx| {
+                    let photo = app
+                        .workspace
+                        .photo(self.photo_id)
+                        .ok_or_else(|| anyhow::anyhow!("这张照片已从队列中移除"))?;
+                    // 从最新 EXIF 只替换 GPS，保留地图打开期间其他字段的修改。
+                    let mut exif = photo.exif().cloned().unwrap_or_default();
+                    exif.gps_info = Some(gps);
+                    app.replace_photo_exif(self.photo_id, exif, cx);
                     window.activate_window();
-                    editor.set_location(location, window, cx)
+                    window.push_notification(
+                        Notification::success("GPS 信息已应用到这张照片的预览和导出"),
+                        cx,
+                    );
+                    anyhow::Ok(())
                 })
             })??
         });
         match result {
-            Ok(()) => {
-                window.remove_window();
-            }
+            Ok(()) => window.remove_window(),
             Err(error) => {
                 self.feedback = Some(format!("无法使用位置：{error}").into());
                 cx.notify();
             }
         }
+    }
+
+    fn clear_cache(&mut self, cx: &mut Context<Self>) {
+        if self.clearing_cache {
+            return;
+        }
+        self.latest.fetch_add(1, Ordering::Relaxed);
+        self.load_task = None;
+        self.loading = false;
+        self.clearing_cache = true;
+        self.cache_feedback = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { clear_tile_cache() }).await;
+            this.update(cx, |this, cx| {
+                this.clearing_cache = false;
+                this.cache_feedback = Some(match result {
+                    Ok(()) => "所有地图源的瓦片缓存已清理；移动或缩放地图后会重新下载。".into(),
+                    Err(error) => format!("{error:#}").into(),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn open_cache_folder(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async {
+                    let path = tile_cache_directory()?;
+                    std::fs::create_dir_all(&path)
+                        .map_err(|error| anyhow::anyhow!("无法创建缓存文件夹：{error}"))?;
+                    anyhow::Ok(path)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(path) => cx.open_with_system(&path),
+                    Err(error) => {
+                        this.cache_feedback = Some(format!("无法打开缓存文件夹：{error:#}").into())
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
     fn search(&mut self, cx: &mut Context<Self>) {
         if self.searching {
@@ -722,7 +808,7 @@ impl Render for LocationPicker {
         v_flex()
             .size_full()
             .min_h_0()
-            .child(TitleBar::new().child("为当前照片添加 GPS"))
+            .child(TitleBar::new().child("更改GPS信息"))
             .child(
                 v_flex()
                     .id("gps-picker-content")
@@ -799,7 +885,18 @@ impl Render for LocationPicker {
                     .when_some(self.feedback.clone(), |this, feedback| {
                         this.child(warning(feedback, cx))
                     })
-                    .child(description("使用位置后，请在 EXIF 编辑页点击“应用”。GPS 会写入导出图片，原始照片不变。"))
+                    .child(
+                        h_flex().gap_2()
+                            .child(Button::new("gps-clear-cache")
+                                .label(if self.clearing_cache { "正在清理…" } else { "清理地图瓦片缓存" })
+                                .outline().small().disabled(self.clearing_cache)
+                                .on_click(cx.listener(|this, _, _, cx| this.clear_cache(cx))))
+                            .child(Button::new("gps-open-cache-folder").label("打开缓存文件夹")
+                                .outline().small().disabled(self.clearing_cache)
+                                .on_click(cx.listener(|this, _, _, cx| this.open_cache_folder(cx)))),
+                    )
+                    .when_some(self.cache_feedback.clone(), |this, feedback| this.child(description(feedback)))
+                    .child(description("使用此位置会直接更新打开时的那张照片，并写入导出图片；原始照片不变。"))
                     .child(
                         h_flex()
                             .justify_end()
@@ -821,9 +918,195 @@ impl Render for LocationPicker {
     }
 }
 
+impl AppView {
+    pub(in crate::ui::app) fn open_location_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(photo) = self.selected_photo() else {
+            return;
+        };
+        let photo_id = photo.id();
+        let location = photo
+            .exif()
+            .and_then(|exif| exif.gps_info.as_ref())
+            .and_then(Location::from_gps);
+        if let Some(handle) = self.gps_windows.handles.remove(&photo_id)
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            self.gps_windows.handles.insert(photo_id, handle);
+            return;
+        }
+        if !self.gps_windows.opening.insert(photo_id) {
+            return;
+        }
+        let app = cx.weak_entity();
+        let main_window = window.window_handle();
+        cx.defer(move |cx| {
+            let Some(owner) = app.upgrade() else {
+                return;
+            };
+            let bounds = Bounds::centered(None, size(px(960.), px(760.)), cx);
+            let picker_owner = app.clone();
+            let result = gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(720.), px(660.))),
+                    ..TitleBar::window_options()
+                },
+                cx,
+                move |window, cx| {
+                    cx.new(|cx| {
+                        LocationPicker::new(
+                            picker_owner,
+                            photo_id,
+                            main_window,
+                            location,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            );
+            owner.update(cx, |app, cx| {
+                app.gps_windows.opening.remove(&photo_id);
+                match result {
+                    Ok((handle, _)) => {
+                        app.gps_windows.handles.insert(photo_id, handle);
+                    }
+                    Err(error) => {
+                        let _ = main_window.update(cx, |_, window, cx| {
+                            window.push_notification(
+                                Notification::error(format!("无法打开 GPS 窗口：{error}")),
+                                cx,
+                            );
+                        });
+                    }
+                }
+            });
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
+
+    #[gpui_kit::test]
+    fn map_click_and_confirmation_update_only_the_original_photo(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let settings_path =
+            std::env::temp_dir().join(format!("lumen-frame-map-ui-{}.toml", std::process::id()));
+        let _ = std::fs::remove_file(&settings_path);
+        let main = cx.add_window(|window, cx| {
+            let app = cx
+                .new(|cx| AppView::new_with_settings_path(Some(settings_path.clone()), window, cx));
+            Root::new(app, window, cx)
+        });
+        let (app, first, second) = main
+            .update(cx, |root, _, cx| {
+                let app = root.view().clone().downcast::<AppView>().unwrap();
+                let (first, second) = app.update(cx, |app, _| {
+                    let first = app.workspace.add("first.jpg".into()).unwrap();
+                    let second = app.workspace.add("second.jpg".into()).unwrap();
+                    app.workspace.select(first);
+                    // 腾讯底图的点击回填仍须使用 WGS 84，且保留原照片身份。
+                    app.map_settings = MapSettings::default()
+                        .with_provider(crate::features::geolocation::MapProvider::Tencent);
+                    (first, second)
+                });
+                (app, first, second)
+            })
+            .unwrap();
+        {
+            let mut main_visual = VisualTestContext::from_window(main.into(), cx);
+            main_visual.update(|window, cx| {
+                window.render_frame(cx);
+                let exif = window.find("preview-exif").bounds();
+                let gps = window.find("preview-gps").bounds();
+                assert!(gps.left() >= exif.right());
+                assert_eq!(gps.top(), exif.top());
+            });
+        }
+        let owner = app.downgrade();
+        let picker = cx.open_window(size(px(960.), px(760.)), |window, cx| {
+            let view = cx.new(|cx| {
+                LocationPicker::with_service(
+                    owner,
+                    first,
+                    main.into(),
+                    Some(Location::new(35., 105.).unwrap()),
+                    |_| Err(anyhow::anyhow!("测试离线地图")),
+                    window,
+                    cx,
+                )
+            });
+            Root::new(view, window, cx)
+        });
+        let mut visual = VisualTestContext::from_window(picker.into(), cx);
+        visual.run_until_parked();
+        let bounds = visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.find("gps-map").bounds()
+        });
+        assert!(bounds.size.height > px(120.));
+        // 原生按钮应用来源并保存应用偏好；确认位置仍由另一个按钮完成。
+        visual.update(|window, cx| window.click("gps-source-apply", cx));
+        assert_eq!(
+            crate::persistence::settings::load_at(&settings_path)
+                .map
+                .provider(),
+            crate::features::geolocation::MapProvider::Tencent
+        );
+        visual.simulate_click(bounds.center(), Modifiers::default());
+        // 地图窗口打开后，主工作台即使换了选择，修改仍指向原照片。
+        app.update(&mut visual, |app, _| {
+            app.workspace.select(second);
+            app.workspace
+                .photo_mut(first)
+                .unwrap()
+                .replace_exif(crate::media::ExifInfo {
+                    model: Some("地图打开期间编辑的新型号".into()),
+                    ..Default::default()
+                });
+        });
+        visual.update(|window, cx| {
+            window.render_frame(cx);
+            window.click("gps-confirm", cx);
+        });
+        assert!(cx.windows().iter().all(|handle| *handle != picker.into()));
+        app.read_with(cx, |app, _| {
+            let gps = app
+                .workspace
+                .photo(first)
+                .unwrap()
+                .exif()
+                .unwrap()
+                .gps_info
+                .as_ref()
+                .unwrap();
+            assert!((gps.latitude_decimal().unwrap() - 35.).abs() < 0.00001);
+            assert!((gps.longitude_decimal().unwrap() - 105.).abs() < 0.00001);
+            assert_eq!(
+                app.workspace
+                    .photo(first)
+                    .unwrap()
+                    .exif()
+                    .unwrap()
+                    .model
+                    .as_deref(),
+                Some("地图打开期间编辑的新型号")
+            );
+            assert!(app.workspace.photo(second).unwrap().exif().is_none());
+        });
+        let _ = std::fs::remove_file(settings_path);
+    }
 
     #[test]
     fn cartography_raster_placement_matches_pointer_coordinates() {

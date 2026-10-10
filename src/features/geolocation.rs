@@ -23,6 +23,29 @@ pub use map_source::{MapProvider, MapSettings};
 
 const HALF_WORLD: f64 = 20_037_508.342_789_244;
 const CACHE_AGE: u64 = 7 * 24 * 60 * 60;
+// 下载写入与清理共用进程级锁，防止清理期间被另一个地图窗口写回瓦片。
+static TILE_CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+pub(crate) fn tile_cache_directory() -> Result<PathBuf> {
+    Ok(dirs::cache_dir()
+        .context("无法找到地图缓存目录")?
+        .join("lumen-frame/maps"))
+}
+
+pub(crate) fn clear_tile_cache() -> Result<()> {
+    clear_tile_cache_at(&tile_cache_directory()?)
+}
+
+fn clear_tile_cache_at(directory: &std::path::Path) -> Result<()> {
+    let _guard = TILE_CACHE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("地图缓存状态异常，请重启应用后重试"))?;
+    match std::fs::remove_dir_all(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).context("清理地图瓦片缓存失败，请检查缓存目录权限"),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Location {
@@ -71,7 +94,7 @@ impl Location {
     }
 }
 
-/// 仅保存地图交互状态，照片 GPS 的真值仍由 EXIF 编辑器应用到队列。
+/// 仅保存地图交互状态，照片 GPS 的真值由 AppView 应用到队列。
 #[derive(Clone)]
 pub(crate) struct MapViewport {
     center: Coord,
@@ -242,7 +265,6 @@ pub(crate) struct MapService {
     cache: PathBuf,
     settings: MapSettings,
     search_url: String,
-    downloads: Arc<Mutex<()>>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -257,10 +279,7 @@ impl MapService {
         use std::hash::{Hash, Hasher};
         let mut hash = std::hash::DefaultHasher::new();
         settings.tile_template().hash(&mut hash);
-        let cache = dirs::cache_dir()
-            .context("无法找到地图缓存目录")?
-            .join("lumen-frame/maps")
-            .join(format!("{:x}", hash.finish()));
+        let cache = tile_cache_directory()?.join(format!("{:x}", hash.finish()));
         let client = reqwest::blocking::Client::builder()
             .user_agent(concat!(
                 "LumenFrame/",
@@ -274,7 +293,6 @@ impl MapService {
             client,
             cache,
             settings: settings.clone(),
-            downloads: Arc::new(Mutex::new(())),
             search_url: std::env::var("LUMEN_FRAME_GEOCODER_URL")
                 .unwrap_or_else(|_| "https://photon.komoot.io/api/".into()),
         })
@@ -289,7 +307,7 @@ impl MapService {
             tiles: Vec::new(),
             failures: 0,
         };
-        let Ok(_guard) = self.downloads.lock() else {
+        let Ok(_guard) = TILE_CACHE_LOCK.lock() else {
             return result;
         };
         for id in viewport.tiles() {
@@ -431,6 +449,32 @@ pub(crate) struct Place {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clearing_tiles_removes_all_sources_but_preserves_other_app_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "lumen-frame-tile-cache-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let maps = root.join("maps");
+        for source in ["osm", "tencent"] {
+            let directory = maps.join(source).join("14/13386");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("7151.png"), b"tile").unwrap();
+            std::fs::write(directory.join("7151.json"), b"metadata").unwrap();
+        }
+        let unrelated = root.join("update-check.stamp");
+        std::fs::write(&unrelated, b"keep").unwrap();
+        clear_tile_cache_at(&maps).unwrap();
+        assert!(!maps.exists());
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"keep");
+        clear_tile_cache_at(&maps).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn validates_and_roundtrips_gps_coordinates() {

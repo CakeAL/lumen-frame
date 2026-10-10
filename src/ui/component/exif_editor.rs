@@ -5,7 +5,7 @@
 
 use chrono::NaiveDateTime;
 use gpui_kit::component::{
-    TitleBar, WindowExt as _,
+    WindowExt as _,
     button::{Button, ButtonVariants as _},
     group_box::GroupBox,
     h_flex,
@@ -14,21 +14,17 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyWindowHandle, App, Bounds, Context, Entity, Render, SharedString, Window, WindowBounds,
-    WindowOptions, px, size,
-};
+use gpui_kit::{App, Context, Entity, Render, SharedString, Window, px};
 use nom_exif::{ExifDateTime, GPSInfo};
 
 use crate::{
-    features::geolocation::{Location, MapSettings},
+    features::geolocation::Location,
     media::{ExifInfo, Rational},
     workspace::PhotoId,
 };
 
 use super::super::AppView;
 use super::field::{description, field, warning};
-use super::location_picker::LocationPicker;
 
 const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
@@ -148,31 +144,9 @@ pub(super) struct ExifEditor {
     original: ExifInfo,
     inputs: ExifInputs,
     feedback: Option<SharedString>,
-    location_window: Option<AnyWindowHandle>,
-    opening_location: bool,
 }
 
 impl ExifEditor {
-    pub(super) fn map_settings(&self, cx: &App) -> MapSettings {
-        self.app.read(cx).map_settings.clone()
-    }
-
-    pub(super) fn save_map_settings(
-        &mut self,
-        settings: MapSettings,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        self.app.update(cx, |app, cx| {
-            app.map_settings = settings;
-            app.persist_settings();
-            cx.notify();
-            if let Some(message) = &app.settings_feedback {
-                anyhow::bail!("{message}");
-            }
-            Ok(())
-        })
-    }
-
     fn new(
         photo_id: PhotoId,
         exif: ExifInfo,
@@ -187,76 +161,7 @@ impl ExifEditor {
             original: exif,
             inputs,
             feedback: None,
-            location_window: None,
-            opening_location: false,
         }
-    }
-
-    pub(super) fn set_location(
-        &mut self,
-        location: Location,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        let gps = location.to_gps()?;
-        self.inputs.gps.update(cx, |input, cx| {
-            input.set_value(gps.to_iso6709(), window, cx)
-        });
-        self.feedback = None;
-        cx.notify();
-        Ok(())
-    }
-
-    fn open_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.location_window.take()
-            && handle
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
-            self.location_window = Some(handle);
-            return;
-        }
-        if self.opening_location {
-            return;
-        }
-        self.opening_location = true;
-        let location = parse_gps(&value(&self.inputs.gps, cx))
-            .ok()
-            .flatten()
-            .as_ref()
-            .and_then(Location::from_gps);
-        let editor = cx.weak_entity();
-        let editor_window = window.window_handle();
-        cx.defer(move |cx| {
-            if editor.upgrade().is_none() {
-                return;
-            }
-            let owner = editor.clone();
-            let bounds = Bounds::centered(None, size(px(960.), px(760.)), cx);
-            let result = gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(720.), px(660.))),
-                    ..TitleBar::window_options()
-                },
-                cx,
-                move |window, cx| {
-                    cx.new(|cx| LocationPicker::new(owner, editor_window, location, window, cx))
-                },
-            );
-            editor
-                .update(cx, |editor, cx| {
-                    editor.opening_location = false;
-                    match result {
-                        Ok((handle, _)) => editor.location_window = Some(handle),
-                        Err(error) => {
-                            editor.feedback = Some(format!("无法打开地图：{error}").into())
-                        }
-                    }
-                    cx.notify();
-                })
-                .ok();
-        });
     }
 
     fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -299,7 +204,13 @@ impl ExifEditor {
             .map(GPSInfo::to_iso6709)
             .unwrap_or_default();
         let gps_info = if gps_text.trim() == original_gps {
-            self.original.gps_info.clone()
+            // 独立地图窗口可能在本 Sheet 打开期间修改 GPS；未编辑的输入不覆盖新位置。
+            self.app
+                .read(cx)
+                .workspace
+                .photo(self.photo_id)
+                .and_then(|photo| photo.exif())
+                .and_then(|exif| exif.gps_info.clone())
         } else {
             parse_gps(&gps_text)?
         };
@@ -386,7 +297,6 @@ impl Render for ExifEditor {
                     .w_full()
                     .title("位置")
                     .child(self.render_input("GPS（ISO 6709）", &self.inputs.gps, cx))
-                    .child(Button::new("exif-gps-map").label("地图选点…").outline().on_click(cx.listener(|this, _, window, cx| this.open_location(window, cx))))
                     .child(description("GPS 用于当前照片的水印，并写入导出图片；清空坐标即可移除。")),
             )
     }
@@ -434,7 +344,7 @@ impl AppView {
         });
     }
 
-    fn replace_photo_exif(
+    pub(super) fn replace_photo_exif(
         &mut self,
         photo_id: PhotoId,
         exif: ExifInfo,
@@ -556,9 +466,6 @@ fn parse_gps(value: &str) -> Result<Option<GPSInfo>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::component::Root;
-    use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{Modifiers, TestAppContext, VisualTestContext};
 
     #[test]
     fn parses_rational_and_optional_values() {
@@ -584,102 +491,44 @@ mod tests {
         assert!(parse_created_time("2026:09:24 18:30:00").unwrap().is_some());
         assert!(parse_created_time("2026/09/24").is_err());
     }
+
     #[gpui_kit::test]
-    fn map_click_and_confirmation_fill_the_original_photo_draft(cx: &mut TestAppContext) {
+    fn unchanged_gps_input_preserves_location_updated_outside_the_sheet(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         cx.update(gpui_kit::init);
-        let settings_path =
-            std::env::temp_dir().join(format!("lumen-frame-map-ui-{}.toml", std::process::id()));
-        let _ = std::fs::remove_file(&settings_path);
-        let main = cx.add_window(|window, cx| {
-            let app = cx
-                .new(|cx| AppView::new_with_settings_path(Some(settings_path.clone()), window, cx));
-            Root::new(app, window, cx)
+        let window = cx.add_window(|window, cx| {
+            let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+            gpui_kit::component::Root::new(app, window, cx)
         });
-        let (app, editor, first, second) = main
+        window
             .update(cx, |root, window, cx| {
                 let app = root.view().clone().downcast::<AppView>().unwrap();
-                let (first, second) = app.update(cx, |app, _| {
-                    let first = app.workspace.add("first.jpg".into()).unwrap();
-                    let second = app.workspace.add("second.jpg".into()).unwrap();
-                    app.workspace.select(first);
-                    // 腾讯底图的点击回填仍须使用 WGS 84，且保留原照片身份。
-                    app.map_settings = MapSettings::default()
-                        .with_provider(crate::features::geolocation::MapProvider::Tencent);
-                    (first, second)
+                let photo_id =
+                    app.update(cx, |app, _| app.workspace.add("first.jpg".into()).unwrap());
+                let editor = cx.new(|cx| {
+                    ExifEditor::new(photo_id, ExifInfo::default(), app.clone(), window, cx)
                 });
-                let editor = cx
-                    .new(|cx| ExifEditor::new(first, ExifInfo::default(), app.clone(), window, cx));
-                (app, editor, first, second)
-            })
-            .unwrap();
-        let owner = editor.downgrade();
-        let picker = cx.open_window(size(px(960.), px(760.)), |window, cx| {
-            let view = cx.new(|cx| {
-                LocationPicker::with_service(
-                    owner,
-                    main.into(),
-                    Some(Location::new(35., 105.).unwrap()),
-                    |_| Err(anyhow::anyhow!("测试离线地图")),
-                    window,
-                    cx,
-                )
-            });
-            Root::new(view, window, cx)
-        });
-        let mut visual = VisualTestContext::from_window(picker.into(), cx);
-        visual.run_until_parked();
-        let bounds = visual.update(|window, cx| {
-            window.render_frame(cx);
-            window.find("gps-map").bounds()
-        });
-        assert!(bounds.size.height > px(120.));
-        // 原生按钮应用来源并保存应用偏好；确认位置仍由另一个按钮完成。
-        visual.update(|window, cx| window.click("gps-source-apply", cx));
-        assert_eq!(
-            crate::persistence::settings::load_at(&settings_path)
-                .map
-                .provider(),
-            crate::features::geolocation::MapProvider::Tencent
-        );
-        visual.simulate_click(bounds.center(), Modifiers::default());
-        let selected = Location::new(35., 105.).unwrap();
-        // 地图窗口打开后，主工作台即使换了选择，回填仍指向原编辑器。
-        app.update(&mut visual, |app, _| {
-            app.workspace.select(second);
-        });
-        visual.update(|window, cx| {
-            window.render_frame(cx);
-            window.click("gps-confirm", cx);
-        });
-        assert!(cx.windows().iter().all(|handle| *handle != picker.into()));
-        AnyWindowHandle::from(main)
-            .update(cx, |_, window, cx| {
+                app.update(cx, |app, _| {
+                    app.workspace
+                        .photo_mut(photo_id)
+                        .unwrap()
+                        .replace_exif(ExifInfo {
+                            gps_info: Some(
+                                Location::new(22.5429, 114.0596).unwrap().to_gps().unwrap(),
+                            ),
+                            ..Default::default()
+                        });
+                });
                 editor.update(cx, |editor, cx| {
+                    assert!(editor.parse(cx).unwrap().gps_info.is_some());
+                    editor.inputs.gps.update(cx, |input, cx| {
+                        input.set_value("+35.000000+105.000000/", window, cx)
+                    });
                     let gps = editor.parse(cx).unwrap().gps_info.unwrap();
-                    assert!(
-                        (gps.latitude_decimal().unwrap() - selected.latitude()).abs() < 0.00001,
-                        "expected: {selected:?}; actual: {}",
-                        gps.to_iso6709()
-                    );
-                    assert!(
-                        (gps.longitude_decimal().unwrap() - selected.longitude()).abs() < 0.00001
-                    );
-                    editor.apply(window, cx);
+                    assert!((gps.latitude_decimal().unwrap() - 35.).abs() < 0.00001);
                 });
             })
             .unwrap();
-        app.read_with(cx, |app, _| {
-            assert!(
-                app.workspace
-                    .photo(first)
-                    .unwrap()
-                    .exif()
-                    .unwrap()
-                    .gps_info
-                    .is_some()
-            );
-            assert!(app.workspace.photo(second).unwrap().exif().is_none());
-        });
-        let _ = std::fs::remove_file(settings_path);
     }
 }

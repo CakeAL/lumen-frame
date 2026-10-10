@@ -251,6 +251,16 @@ impl AppView {
                                     this.open_exif_editor(window, cx)
                                 }),
                             ),
+                    )
+                    .child(
+                        Button::new("preview-gps")
+                            .label("更改GPS信息")
+                            .outline()
+                            .small()
+                            .disabled(self.selected_photo_id().is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_location_picker(window, cx)
+                            })),
                     ),
             )
     }

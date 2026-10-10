@@ -129,6 +129,7 @@ pub struct AppView {
     /// 只包含用户预设；新增项追加，删除项在目录刷新时清理。
     preset_order: Vec<String>,
     map_settings: crate::features::geolocation::MapSettings,
+    gps_windows: component::location_picker::GpsWindows,
     /// 拖动落点的预设名与前/后位置，不写入配置。
     preset_drop_target: Option<(SharedString, bool)>,
     /// 预设卡片使用的轻量视觉快照，避免在每一帧渲染时读取磁盘。
@@ -261,6 +262,7 @@ impl AppView {
             preset_names,
             builtin_presets_collapsed: settings.builtin_presets_collapsed,
             preset_order,
+            gps_windows: Default::default(),
             map_settings: settings.map,
             preset_drop_target: None,
             preset_previews,
