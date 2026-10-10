@@ -74,7 +74,7 @@ pub enum ExportState {
     Finished { succeeded: usize, failed: usize },
 }
 
-/// 预设的应用范围；手动调整参数始终只修改当前照片。
+/// 预设的应用范围；手动画面调整只修改当前照片，导出旋转对全部照片生效。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PresetScope {
     CurrentPhoto,
@@ -90,7 +90,7 @@ pub struct AppView {
     queue_scroll: ScrollHandle,
     /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
     thumbnails: HashMap<PhotoId, Thumbnail>,
-    /// 当前照片的编辑真值，供预览与导出使用。
+    /// 当前照片的编辑真值，供预览与导出使用；rotation 是全部照片共用的导出方向。
     params: WatermarkParams,
     /// 未选中照片的配置快照。选中时移出，离开时写回，避免保存第二份编辑真值。
     photo_watermarks: HashMap<PhotoId, WatermarkPreset>,
@@ -248,7 +248,7 @@ impl AppView {
             params,
             photo_watermarks: HashMap::new(),
             global_watermark,
-            preset_scope: PresetScope::CurrentPhoto,
+            preset_scope: PresetScope::AllPhotos,
             text_groups,
             text_editor_windows: HashMap::new(),
             opening_text_editor_ids: HashSet::new(),
@@ -378,7 +378,7 @@ impl AppView {
         preset_of(&self.params, &self.build_text_groups(cx))
     }
 
-    /// 导出读取每张照片的配置；本机环境设置始终使用当前值。
+    /// 导出读取每张照片的配置；本机环境设置与全局旋转方向始终使用当前值。
     fn watermark_for_photo(&self, id: PhotoId, cx: &App) -> WatermarkPreset {
         let mut watermark = if self.selected_photo_id() == Some(id) {
             self.current_watermark(cx)
@@ -391,6 +391,7 @@ impl AppView {
         watermark.params.output_folder = self.params.output_folder.clone();
         watermark.params.default_font = self.params.default_font.clone();
         watermark.params.custom_logos = self.params.custom_logos.clone();
+        watermark.params.rotation = self.params.rotation;
         watermark
     }
 
@@ -1179,14 +1180,16 @@ impl AppView {
             });
         }
 
-        // 输出文件夹和默认字体是这台机器的环境设置，不跟着预设走。
+        // 本机环境设置与全部照片共用的导出方向，不随照片快照或预设切换。
         let output_folder = self.params.output_folder.clone();
         let default_font = self.params.default_font.clone();
         let custom_logos = self.params.custom_logos.clone();
+        let rotation = self.params.rotation;
         self.params = preset.params;
         self.params.output_folder = output_folder;
         self.params.default_font = default_font;
         self.params.custom_logos = custom_logos;
+        self.params.rotation = rotation;
 
         let text_groups = preset.text_groups;
         let targets = text_groups

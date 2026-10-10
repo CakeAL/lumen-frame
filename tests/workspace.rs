@@ -165,19 +165,25 @@ fn switching_photos_recomputes_the_preview(cx: &mut TestAppContext) {
     });
 }
 
-/// 预设与旋转通过界面入口修改，切换和删除照片后仍只属于原来的照片。
+/// 当前照片预设保留独立样式，旋转方向则在切换和删除照片后保持全局一致。
 #[gpui_kit::test]
 fn photo_presets_and_edits_are_independent(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
     view.update_in(cx, |view, _, cx| {
         view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
     });
-    let original = view.read_with(cx, |view, _| view.params().clone());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.within("preset-scope").click(0_usize, cx);
+        window.render_frame(cx);
+    });
+    let mut original = view.read_with(cx, |view, _| view.params().clone());
     click_preset(cx, "preset-card-16_9");
     cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
     let first = view.read_with(cx, |view, _| view.params().clone());
     assert_eq!(first.aspect_ratio, Some((16.0, 9.0)));
     assert_eq!(first.rotation.degrees(), 90);
+    original.rotation = first.rotation;
 
     view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
     cx.run_until_parked();
@@ -199,7 +205,7 @@ fn photo_presets_and_edits_are_independent(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |view, _| view.params().clone()), first);
 }
 
-/// 应用范围控件走实际点击路径，全局预设之后的手动编辑仍然只修改当前照片。
+/// 默认预设范围是全部照片，也可通过实际点击切回当前照片；旋转始终对全部照片生效。
 #[gpui_kit::test]
 fn preset_scope_applies_globally_and_can_return_to_current_photo(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
@@ -207,10 +213,6 @@ fn preset_scope_applies_globally_and_can_return_to_current_photo(cx: &mut TestAp
         view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
     });
     cx.run_until_parked();
-    cx.update(|window, cx| {
-        window.within("preset-scope").click(1_usize, cx);
-        window.render_frame(cx);
-    });
     click_preset(cx, "preset-card-16_9");
     cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
     view.update_in(cx, |view, window, cx| view.select_photo_at(1, window, cx));
@@ -220,7 +222,7 @@ fn preset_scope_applies_globally_and_can_return_to_current_photo(cx: &mut TestAp
     );
     assert_eq!(
         view.read_with(cx, |view, _| view.params().rotation.degrees()),
-        0
+        90
     );
     cx.run_until_parked();
     cx.update(|window, cx| {

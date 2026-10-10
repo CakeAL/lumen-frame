@@ -269,6 +269,7 @@ mod tests {
     fn export_freezes_each_photos_parameters_and_text(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         view.update_in(cx, |view, window, cx| {
+            view.preset_scope = PresetScope::CurrentPhoto;
             view.load_preset("16_9", window, cx);
             view.text_groups[0].lines[0]
                 .template
@@ -322,6 +323,70 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn rotation_button_applies_to_all_photos_and_freezes_with_export(cx: &mut TestAppContext) {
+        let (view, cx) = rendered_workspace(cx);
+        view.update_in(cx, |view, window, cx| {
+            assert!(view.preset_scope == PresetScope::AllPhotos);
+            view.add_photos(
+                vec![
+                    "./test_images/DSC_4587.jpg".into(),
+                    "./test_images/ultra_hdr.jpg".into(),
+                ],
+                cx,
+            );
+            view.preset_scope = PresetScope::CurrentPhoto;
+            view.load_preset("16_9", window, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
+        let jobs = view.read_with(cx, |view, cx| {
+            view.photo_export_jobs(ExportScope::AllPhotos, cx)
+        });
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].watermark.params.aspect_ratio, Some((16.0, 9.0)));
+        assert_eq!(jobs[1].watermark.params.aspect_ratio, None);
+        for job in &jobs {
+            assert_eq!(job.watermark.params.rotation, Rotation::Clockwise90);
+        }
+        view.update_in(cx, |view, window, cx| {
+            view.select_photo_at(1, window, cx);
+            assert_eq!(view.params.rotation, Rotation::Clockwise90);
+            view.load_preset("基础样式", window, cx);
+            assert_eq!(view.params.rotation, Rotation::Clockwise90);
+            view.preset_scope = PresetScope::AllPhotos;
+            view.load_preset("16_9", window, cx);
+            view.add_photos(vec!["third.jpg".into()], cx);
+            view.select_photo_at(2, window, cx);
+            assert_eq!(view.params.rotation, Rotation::Clockwise90);
+            view.reset_params(window, cx);
+            assert_eq!(view.params.rotation, Rotation::Clockwise90);
+        });
+        for expected in [
+            Rotation::HalfTurn,
+            Rotation::CounterClockwise90,
+            Rotation::None,
+        ] {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.click("rotate-watermark-photo", cx));
+            view.update_in(cx, |view, window, cx| {
+                let batch = view.photo_export_jobs(ExportScope::AllPhotos, cx);
+                assert_eq!(batch.len(), 3);
+                for job in batch {
+                    assert_eq!(job.watermark.params.rotation, expected);
+                }
+                let current = view.photo_export_jobs(ExportScope::CurrentPhoto, cx);
+                assert_eq!(current.len(), 1);
+                assert_eq!(current[0].watermark.params.rotation, expected);
+                view.select_photo_at(0, window, cx);
+                assert_eq!(view.params.rotation, expected);
+            });
+        }
+        for job in jobs {
+            assert_eq!(job.watermark.params.rotation, Rotation::Clockwise90);
+        }
+    }
+
+    #[gpui_kit::test]
     fn global_preset_copies_are_independent_and_seed_new_photos(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         view.update_in(cx, |view, window, cx| {
@@ -332,10 +397,20 @@ mod tests {
             view.load_preset("16_9", window, cx);
             let global = view.current_watermark(cx);
             for job in view.photo_export_jobs(ExportScope::AllPhotos, cx) {
-                assert_eq!(job.watermark, global);
+                assert_eq!(job.watermark.params, global.params);
+                // 未选中快照保留 TOML 的 f64，控件投影的行距会经过 f32。
+                let templates = |preset: &WatermarkPreset| {
+                    preset
+                        .text_groups
+                        .iter()
+                        .map(|group| &group.text.template)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(templates(&job.watermark), templates(&global));
             }
-            // 「全部照片」只控制载入预设的范围；之后的编辑也应仅影响当前照片。
-            view.params.rotation = Rotation::Clockwise90;
+            // 「全部照片」只控制载入预设的范围；之后的画面编辑仍只影响当前照片。
+            view.params.shadow_size = 0.;
             view.text_groups.clear();
             view.refresh_preview(cx);
             let edited = view.current_watermark(cx);
@@ -368,14 +443,14 @@ mod tests {
             view.load_preset("16_9", window, cx);
             let expected = view.current_watermark(cx);
             view.add_photos(vec!["first.jpg".into(), "second.jpg".into()], cx);
-            view.params.rotation = Rotation::Clockwise90;
+            view.params.shadow_size = 0.;
             view.select_photo_at(1, window, cx);
             assert_eq!(view.current_watermark(cx), expected);
             // 恢复默认只作用于当前照片，与预设应用范围无关。
             view.preset_scope = PresetScope::AllPhotos;
             view.reset_params(window, cx);
             view.select_photo_at(0, window, cx);
-            assert_eq!(view.params.rotation, Rotation::Clockwise90);
+            assert_eq!(view.params.shadow_size, 0.);
             assert_eq!(view.params.aspect_ratio, Some((16.0, 9.0)));
             assert_eq!(view.global_watermark.params.aspect_ratio, Some((16.0, 9.0)));
         });

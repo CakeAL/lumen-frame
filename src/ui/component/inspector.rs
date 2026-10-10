@@ -632,7 +632,7 @@ impl AppView {
                         )
                         .description(
                             if self.preset_scope == PresetScope::AllPhotos {
-                                "选择预设将覆盖全部照片，并用于后续导入。手动调整仅修改当前照片。"
+                                "选择预设将覆盖全部照片，并用于后续导入。画面调整仅修改当前照片，导出旋转对全部照片生效。"
                             } else if self.selected_photo_id().is_some() {
                                 "选择预设仅修改当前照片。"
                             } else {
@@ -1229,12 +1229,13 @@ impl AppView {
                 Button::new("rotate-watermark-photo")
                     .icon(IconName::RotateCw)
                     .label(format!(
-                        "顺时针旋转 90° · 当前 {}°",
+                        "全部照片顺时针旋转 90° · 当前 {}°",
                         self.params.rotation.degrees()
                     ))
                     .outline()
                     .small()
                     .w_full()
+                    .tooltip("统一旋转全部导出照片，预览同步显示旋转结果")
                     .disabled(self.selected_photo().is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.params.rotation = this.params.rotation.next();

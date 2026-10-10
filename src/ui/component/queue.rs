@@ -342,7 +342,7 @@ mod tests {
         );
         assert_eq!(
             view.read_with(cx, |view, _| view.params.rotation.degrees()),
-            0
+            90
         );
         cx.update(|window, cx| window.press("right", cx));
         assert_eq!(
