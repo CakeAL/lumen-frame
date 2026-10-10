@@ -115,8 +115,11 @@ impl MapRenderer<TileFeature> for TileRenderer {
 }
 
 const PROVIDERS: &[(&str, MapProvider)] = &[
-    ("OpenStreetMap", MapProvider::OpenStreetMap),
-    ("腾讯地图（公开瓦片）", MapProvider::Tencent),
+    (
+        MapProvider::OpenStreetMap.label(),
+        MapProvider::OpenStreetMap,
+    ),
+    (MapProvider::Tencent.label(), MapProvider::Tencent),
 ];
 pub(super) struct LocationPicker {
     focus: FocusHandle,
@@ -155,15 +158,11 @@ impl LocationPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let settings = editor
-            .upgrade()
-            .map(|owner| owner.read(cx).map_settings(cx))
-            .unwrap_or_default();
         Self::with_service(
             editor,
             editor_window,
             location,
-            MapService::from_settings(&settings),
+            MapService::from_settings,
             window,
             cx,
         )
@@ -173,7 +172,7 @@ impl LocationPicker {
         editor: WeakEntity<ExifEditor>,
         editor_window: AnyWindowHandle,
         location: Option<Location>,
-        service: anyhow::Result<MapService>,
+        build_service: impl FnOnce(&MapSettings) -> anyhow::Result<MapService>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -181,6 +180,8 @@ impl LocationPicker {
             .upgrade()
             .map(|owner| owner.read(cx).map_settings(cx))
             .unwrap_or_default();
+        // 控件和地图请求共享同一次读取的偏好，测试可注入离线服务。
+        let service = build_service(&settings);
         let source = cx.new(|cx| {
             SelectState::new(
                 choices(PROVIDERS),
@@ -274,8 +275,6 @@ impl LocationPicker {
         match result {
             Ok(service) => {
                 // 先废弃旧源的瓦片，再以同一个 WGS 84 中心加载新底图。
-                self.latest.fetch_add(1, Ordering::Relaxed);
-                self.load_task = None;
                 self.map = Arc::new(Map::new());
                 self.drag = None;
                 self.service = Some(service);
@@ -290,9 +289,11 @@ impl LocationPicker {
                 self.map_feedback = None;
                 self.request_tiles(cx);
             }
-            Err(error) => self.source_feedback = Some(format!("地图源未应用：{error}").into()),
+            Err(error) => {
+                self.source_feedback = Some(format!("地图源未应用：{error}").into());
+                cx.notify();
+            }
         }
-        cx.notify();
     }
     fn request_tiles(&mut self, cx: &mut Context<Self>) {
         let generation = self.latest.fetch_add(1, Ordering::Relaxed) + 1;

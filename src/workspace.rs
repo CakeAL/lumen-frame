@@ -129,14 +129,6 @@ impl PhotoWorkspace {
         true
     }
 
-    /// 按当前顺序选择一张照片。
-    pub fn select_at(&mut self, ix: usize) -> bool {
-        let Some(id) = self.photos.get(ix).map(QueuedPhoto::id) else {
-            return false;
-        };
-        self.select(id)
-    }
-
     /// 删除选中照片，并选择原位置的下一张；不存在时选择上一张。
     ///
     /// 返回被删除的身份，调用方可据此清理缩略图等展示缓存。

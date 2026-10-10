@@ -33,7 +33,7 @@ pub(crate) unsafe fn from_owned_ptr(raw: *mut vips_sys::VipsImage) -> vips::Resu
     );
     // SAFETY: vips 0.1.0 的 VipsImage 仅包含一个 NonNull 指针和零尺寸的 PhantomData。
     // 调用方必须转交一份 GObject 引用，Drop 会释放它。
-    Ok(unsafe { std::mem::transmute(raw) })
+    Ok(unsafe { std::mem::transmute::<*mut vips_sys::VipsImage, VipsImage>(raw) })
 }
 
 /// 执行返回一张新图像的 vips-sys 操作，并验证状态与所有权。

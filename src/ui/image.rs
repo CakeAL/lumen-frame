@@ -246,7 +246,7 @@ fn to_render_image(img: &VipsImage) -> Result<Arc<RenderImage>> {
     })
     .context("转换为 8bit 失败")?;
     let (width, height) = (img.width(), img.height());
-    if width <= 0 || height <= 0 {
+    if width == 0 || height == 0 {
         bail!("尺寸非法：{width}x{height}");
     }
 
@@ -261,7 +261,7 @@ fn to_render_image(img: &VipsImage) -> Result<Arc<RenderImage>> {
         bands => bail!("不支持的通道数：{bands}"),
     }
 
-    let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width as u32, height as u32, bytes)
+    let buffer = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, bytes)
         .context("位图尺寸与像素数据不匹配")?;
     Ok(Arc::new(RenderImage::new(vec![Frame::new(buffer)])))
 }

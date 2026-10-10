@@ -28,7 +28,7 @@ impl AppView {
     pub fn set_interface_scale(&mut self, scale: f32, window: &mut Window, cx: &mut Context<Self>) {
         self.interface_scale = scale;
         settings::apply_interface_scale(scale, window, cx);
-        self.persist_settings(cx);
+        self.persist_settings();
         cx.notify();
     }
 
@@ -37,13 +37,13 @@ impl AppView {
             return;
         }
         self.preview_max_edge = max_edge;
-        self.persist_settings_inner();
+        self.persist_settings();
     }
 
     pub(in crate::ui::app) fn set_preview_background(&mut self, rgb: [u8; 3]) {
         if self.preview_background != rgb {
             self.preview_background = rgb;
-            self.persist_settings_inner();
+            self.persist_settings();
         }
     }
 
@@ -52,7 +52,7 @@ impl AppView {
             return;
         }
         self.params.default_font = font;
-        self.persist_settings_inner();
+        self.persist_settings();
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -70,11 +70,7 @@ impl AppView {
         });
     }
 
-    fn persist_settings(&mut self, _: &App) {
-        self.persist_settings_inner();
-    }
-
-    pub(in crate::ui::app) fn persist_settings_inner(&mut self) {
+    pub(in crate::ui::app) fn persist_settings(&mut self) {
         let settings = settings_store::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
@@ -135,7 +131,7 @@ impl AppView {
             .sync(f64::from(self.preview_max_edge), window, cx);
         settings::apply_interface_scale(self.interface_scale, window, cx);
         self.apply_appearance(window, cx);
-        self.persist_settings(cx);
+        self.persist_settings();
         self.settings_feedback = Some("已恢复默认设置。".into());
         self.refresh_preview(cx);
         cx.notify();
@@ -154,7 +150,7 @@ impl AppView {
         }
         self.apply_theme_slots(cx);
         self.apply_appearance(window, cx);
-        self.persist_settings(cx);
+        self.persist_settings();
         cx.notify();
     }
 
@@ -188,7 +184,7 @@ impl AppView {
         if self.appearance != mode {
             self.appearance = mode;
             self.apply_appearance(window, cx);
-            self.persist_settings(cx);
+            self.persist_settings();
             cx.notify();
         }
     }

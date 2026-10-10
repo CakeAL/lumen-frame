@@ -219,16 +219,8 @@ impl AppView {
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
-        let (settings_controls, settings_subscriptions) = SettingsControls::new(
-            settings.preview_background,
-            settings::preview_max_edge_from_settings(settings.preview_max_edge),
-            settings.light_theme.as_deref(),
-            settings.dark_theme.as_deref(),
-            &params.default_font,
-            &font_names,
-            window,
-            cx,
-        );
+        let (settings_controls, settings_subscriptions) =
+            SettingsControls::new(&settings, &params.default_font, &font_names, window, cx);
 
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
@@ -324,11 +316,6 @@ impl AppView {
     /// 还没算出来时是 `None`。
     pub fn preview_image(&self, cx: &App) -> Option<Arc<RenderImage>> {
         self.preview.read(cx).state().image().cloned()
-    }
-
-    /// 当前的导出进度。
-    pub fn export_state(&self) -> &ExportState {
-        &self.export
     }
 
     /// 已保存的预设名。
@@ -828,7 +815,7 @@ impl AppView {
 
     pub(super) fn set_output_folder(&mut self, value: String) {
         self.params.output_folder = (!value.trim().is_empty()).then(|| PathBuf::from(value));
-        self.persist_settings_inner();
+        self.persist_settings();
     }
 
     /// 把外部路径加入队列；文件夹在后台递归扫描后加入其中的照片。
@@ -1071,7 +1058,7 @@ impl AppView {
     }
 
     fn persist_preset_preferences(&mut self) {
-        self.persist_settings_inner();
+        self.persist_settings();
         if let Some(error) = self.settings_feedback.clone() {
             self.preset_feedback = Some(error);
             self.preset_feedback_is_error = true;

@@ -26,7 +26,7 @@ use gpui_kit::{
     div, img, px, relative,
 };
 
-use crate::persistence::settings::AppearanceMode;
+use crate::persistence::settings::{AppSettings, AppearanceMode};
 use crate::ui::image::PREVIEW_DEFAULT_MAX_EDGE;
 use crate::watermark::DEFAULT_FONT;
 
@@ -75,21 +75,24 @@ pub(in crate::ui::app) struct SettingsControls {
 
 impl SettingsControls {
     pub(in crate::ui::app) fn new(
-        preview_background_rgb: [u8; 3],
-        preview_max_edge: i32,
-        saved_light_theme: Option<&str>,
-        saved_dark_theme: Option<&str>,
+        settings: &AppSettings,
         saved_default_font: &str,
         font_names: &[SharedString],
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> (Self, Vec<Subscription>) {
-        let light_theme = make_theme_select(ThemeMode::Light, saved_light_theme, window, cx);
-        let dark_theme = make_theme_select(ThemeMode::Dark, saved_dark_theme, window, cx);
+        let light_theme = make_theme_select(
+            ThemeMode::Light,
+            settings.light_theme.as_deref(),
+            window,
+            cx,
+        );
+        let dark_theme =
+            make_theme_select(ThemeMode::Dark, settings.dark_theme.as_deref(), window, cx);
         let default_font = make_font_select(saved_default_font, font_names, window, cx);
-        let preview_background = ColorField::new(preview_background_rgb, window, cx);
+        let preview_background = ColorField::new(settings.preview_background, window, cx);
         let preview_max_edge = NumberField::new(
-            f64::from(preview_max_edge),
+            f64::from(preview_max_edge_from_settings(settings.preview_max_edge)),
             f64::from(PREVIEW_MAX_EDGE_MIN),
             f64::from(PREVIEW_MAX_EDGE_MAX),
             10.0,

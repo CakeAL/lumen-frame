@@ -164,7 +164,7 @@ impl ExifEditor {
     ) -> anyhow::Result<()> {
         self.app.update(cx, |app, cx| {
             app.map_settings = settings;
-            app.persist_settings_inner();
+            app.persist_settings();
             cx.notify();
             if let Some(message) = &app.settings_feedback {
                 anyhow::bail!("{message}");
@@ -208,14 +208,13 @@ impl ExifEditor {
     }
 
     fn open_location(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.location_window.take() {
-            if handle
+        if let Some(handle) = self.location_window.take()
+            && handle
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
-            {
-                self.location_window = Some(handle);
-                return;
-            }
+        {
+            self.location_window = Some(handle);
+            return;
         }
         if self.opening_location {
             return;
@@ -620,7 +619,7 @@ mod tests {
                     owner,
                     main.into(),
                     Some(Location::new(35., 105.).unwrap()),
-                    Err(anyhow::anyhow!("测试离线地图")),
+                    |_| Err(anyhow::anyhow!("测试离线地图")),
                     window,
                     cx,
                 )

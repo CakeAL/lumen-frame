@@ -869,7 +869,6 @@ impl AppView {
                         if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
                             this.preset_drop_target = None;
                             cx.notify();
-                            return;
                         }
                     }))
                     .when(!builtin, |card| {

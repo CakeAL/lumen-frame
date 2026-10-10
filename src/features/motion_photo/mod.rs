@@ -62,27 +62,28 @@ fn ffmpeg_candidates(path: Option<&OsStr>) -> Vec<PathBuf> {
         "ffmpeg"
     };
 
-    #[allow(unused)]
-    let mut candidates = path
+    let common_paths: &[&str] = if cfg!(target_os = "macos") {
+        &[
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/opt/local/bin/ffmpeg",
+        ]
+    } else if cfg!(unix) {
+        &[
+            "/usr/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/snap/bin/ffmpeg",
+        ]
+    } else {
+        &[]
+    };
+    let candidates = path
         .into_iter()
         .flat_map(env::split_paths)
         .map(|directory| directory.join(executable))
-        .collect::<Vec<_>>();
+        .chain(common_paths.iter().map(PathBuf::from));
 
-    #[cfg(target_os = "macos")]
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/ffmpeg"),
-        PathBuf::from("/usr/local/bin/ffmpeg"),
-        PathBuf::from("/opt/local/bin/ffmpeg"),
-    ]);
-    #[cfg(all(unix, not(target_os = "macos")))]
-    candidates.extend([
-        PathBuf::from("/usr/bin/ffmpeg"),
-        PathBuf::from("/usr/local/bin/ffmpeg"),
-        PathBuf::from("/snap/bin/ffmpeg"),
-    ]);
-
-    let mut unique = Vec::with_capacity(candidates.len());
+    let mut unique = Vec::new();
     for candidate in candidates {
         if !unique.contains(&candidate) {
             unique.push(candidate);

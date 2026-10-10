@@ -152,10 +152,10 @@ impl Text {
 
         let mut prepared = Vec::with_capacity(line_count);
 
-        for i in 0..line_count {
+        for (segments, params) in segment_lines.iter().zip(&self.text_params) {
             let line = prepare_line(
-                &segment_lines[i],
-                &self.text_params[i],
+                segments,
+                params,
                 img_h,
                 exif,
                 watermark_params,
@@ -489,7 +489,7 @@ fn prepare_line(
                     layout_text.push('\u{200b}');
 
                     let (logo_w, logo_img_h) = (logo.width(), logo.height());
-                    if logo_w <= 0 || logo_img_h <= 0 {
+                    if logo_w == 0 || logo_img_h == 0 {
                         continue;
                     }
                     let aspect = logo_w as f64 / logo_img_h as f64;
@@ -909,7 +909,7 @@ fn load_custom_logo(bytes: &[u8], height: f64) -> Result<Option<VipsImage>> {
 /// RGBA 的半开可见边界；全透明素材不占用排版位置。
 fn alpha_bounds(pixels: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
     let (mut left, mut top, mut right, mut bottom) = (width, usize::MAX, 0, 0);
-    for (ix, pixel) in pixels.chunks_exact(4).enumerate() {
+    for (ix, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
         if pixel[3] != 0 {
             let (x, y) = (ix % width, ix / width);
             left = left.min(x);

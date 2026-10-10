@@ -14,7 +14,7 @@ pub enum MapProvider {
 }
 
 impl MapProvider {
-    pub fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::OpenStreetMap => "OpenStreetMap",
             Self::Tencent => "腾讯地图（公开瓦片）",
@@ -22,9 +22,8 @@ impl MapProvider {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy)]
 pub(crate) enum MapCoordinates {
-    #[default]
     Wgs84,
     Gcj02,
 }
