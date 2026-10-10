@@ -2,9 +2,11 @@
 
 use super::{
     exif_editor::ExifEditor,
-    field::{description, warning},
+    field::{Choice, choices, description, index_of, warning},
 };
-use crate::features::geolocation::{Location, MapService, MapViewport, Place};
+use crate::features::geolocation::{
+    Location, MapProvider, MapService, MapSettings, MapViewport, Place,
+};
 use cartography::{
     BoxedImageDataRef, ImageData, ImageFeature, ImagesVecLayer, LabelConfig, Map, MapRenderer,
     RenderingState, Rgba, StyleBuilder, Symbol, geo,
@@ -16,6 +18,8 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
+    link::Link,
+    select::{Select, SelectEvent, SelectState},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -110,10 +114,17 @@ impl MapRenderer<TileFeature> for TileRenderer {
     fn draw_background(&mut self, _: &Rgba, _: (f64, f64)) {}
 }
 
+const PROVIDERS: &[(&str, MapProvider)] = &[
+    ("OpenStreetMap", MapProvider::OpenStreetMap),
+    ("腾讯地图（公开瓦片）", MapProvider::Tencent),
+];
 pub(super) struct LocationPicker {
     focus: FocusHandle,
     editor: WeakEntity<ExifEditor>,
     editor_window: AnyWindowHandle,
+    source: Entity<SelectState<Vec<Choice<MapProvider>>>>,
+    active_settings: MapSettings,
+    source_feedback: Option<SharedString>,
     query: Entity<InputState>,
     latitude: Entity<InputState>,
     longitude: Entity<InputState>,
@@ -144,11 +155,15 @@ impl LocationPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = editor
+            .upgrade()
+            .map(|owner| owner.read(cx).map_settings(cx))
+            .unwrap_or_default();
         Self::with_service(
             editor,
             editor_window,
             location,
-            MapService::new(),
+            MapService::from_settings(&settings),
             window,
             cx,
         )
@@ -162,6 +177,18 @@ impl LocationPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let settings = editor
+            .upgrade()
+            .map(|owner| owner.read(cx).map_settings(cx))
+            .unwrap_or_default();
+        let source = cx.new(|cx| {
+            SelectState::new(
+                choices(PROVIDERS),
+                index_of(PROVIDERS, &settings.provider()),
+                window,
+                cx,
+            )
+        });
         let query =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索地点，例如 深圳湾公园"));
         let latitude = cx.new(|cx| {
@@ -187,6 +214,14 @@ impl LocationPicker {
                 this.search(cx);
             }
         })];
+        subscriptions.push(cx.subscribe_in(&source, window, |this, _, event, _, cx| {
+            if matches!(event, SelectEvent::Confirm(_)) {
+                this.source_feedback = None;
+                cx.notify();
+            }
+        }));
+        let mut viewport = MapViewport::new(location);
+        let _ = viewport.set_coordinates(settings.coordinates());
         if let Some(owner) = editor.upgrade() {
             subscriptions.push(
                 cx.observe_release_in(&owner, window, |_, _, window, _| window.remove_window()),
@@ -200,10 +235,13 @@ impl LocationPicker {
             focus: cx.focus_handle(),
             editor,
             editor_window,
+            source,
+            active_settings: settings,
+            source_feedback: None,
             query,
             latitude,
             longitude,
-            viewport: MapViewport::new(location),
+            viewport,
             selected: location,
             map: Arc::new(Map::new()),
             bounds: Rc::new(Cell::new(Bounds::default())),
@@ -223,6 +261,38 @@ impl LocationPicker {
         };
         this.request_tiles(cx);
         this
+    }
+    fn apply_source(&mut self, cx: &mut Context<Self>) {
+        let Some(provider) = self.source.read(cx).selected_value().copied() else {
+            return;
+        };
+        let settings = self.active_settings.clone().with_provider(provider);
+        let result = MapService::from_settings(&settings).and_then(|service| {
+            self.viewport.set_coordinates(settings.coordinates())?;
+            Ok(service)
+        });
+        match result {
+            Ok(service) => {
+                // 先废弃旧源的瓦片，再以同一个 WGS 84 中心加载新底图。
+                self.latest.fetch_add(1, Ordering::Relaxed);
+                self.load_task = None;
+                self.map = Arc::new(Map::new());
+                self.drag = None;
+                self.service = Some(service);
+                self.active_settings = settings.clone();
+                let saved = self
+                    .editor
+                    .update(cx, |editor, cx| editor.save_map_settings(settings, cx));
+                self.source_feedback = match saved {
+                    Ok(Ok(())) => None,
+                    _ => Some("地图源已应用，但偏好未能保存；请检查配置目录是否可写。".into()),
+                };
+                self.map_feedback = None;
+                self.request_tiles(cx);
+            }
+            Err(error) => self.source_feedback = Some(format!("地图源未应用：{error}").into()),
+        }
+        cx.notify();
     }
     fn request_tiles(&mut self, cx: &mut Context<Self>) {
         let generation = self.latest.fetch_add(1, Ordering::Relaxed) + 1;
@@ -259,7 +329,7 @@ impl LocationPicker {
                 }
                 if !tiles.is_empty() {
                     let mut map = Map::new();
-                    map.add_visible_layer("OpenStreetMap", ImagesVecLayer::from_images(tiles));
+                    map.add_visible_layer("basemap", ImagesVecLayer::from_images(tiles));
                     this.map = Arc::new(map);
                 }
                 this.loading = false;
@@ -611,14 +681,22 @@ impl LocationPicker {
                     ),
             )
             .child(
-                Button::new("gps-attribution")
+                div()
                     .absolute()
                     .bottom_2()
                     .right_2()
+                    .px_2()
+                    .py_1()
+                    .bg(cx.theme().background)
+                    .rounded(cx.theme().radius)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .label("© OpenStreetMap contributors")
-                    .outline()
-                    .on_click(|_, _, cx| cx.open_url("https://www.openstreetmap.org/copyright")),
+                    .child({
+                        let (label, url) = self.active_settings.attribution();
+                        Link::new("gps-attribution")
+                            .href(url.to_owned())
+                            .text_sm()
+                            .child(label.to_owned())
+                    }),
             )
     }
 }
@@ -652,6 +730,16 @@ impl Render for LocationPicker {
                     .overflow_y_scroll()
                     .p_4()
                     .gap_3()
+                    .child(
+                        h_flex().gap_2()
+                            .child(div().flex_shrink_0().child("地图源"))
+                            .child(Select::new(&self.source).flex_1())
+                            .child(Button::new("gps-source-apply").label("应用地图源").outline()
+                                .on_click(cx.listener(|this, _, _, cx| this.apply_source(cx)))),
+                    )
+                    .child(description(format!("当前地图源：{}{}", self.active_settings.provider().label(),
+                        if self.active_settings.provider() == MapProvider::Tencent { "。无需 Key；公开瓦片服务可能变化。" } else { "" })))
+                    .when_some(self.source_feedback.clone(), |this, feedback| this.child(warning(feedback, cx)))
                     .child(
                         h_flex()
                             .gap_2()

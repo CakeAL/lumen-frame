@@ -21,7 +21,7 @@ use gpui_kit::{
 use nom_exif::{ExifDateTime, GPSInfo};
 
 use crate::{
-    features::geolocation::Location,
+    features::geolocation::{Location, MapSettings},
     media::{ExifInfo, Rational},
     workspace::PhotoId,
 };
@@ -153,6 +153,26 @@ pub(super) struct ExifEditor {
 }
 
 impl ExifEditor {
+    pub(super) fn map_settings(&self, cx: &App) -> MapSettings {
+        self.app.read(cx).map_settings.clone()
+    }
+
+    pub(super) fn save_map_settings(
+        &mut self,
+        settings: MapSettings,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.app.update(cx, |app, cx| {
+            app.map_settings = settings;
+            app.persist_settings_inner();
+            cx.notify();
+            if let Some(message) = &app.settings_feedback {
+                anyhow::bail!("{message}");
+            }
+            Ok(())
+        })
+    }
+
     fn new(
         photo_id: PhotoId,
         exif: ExifInfo,
@@ -568,8 +588,12 @@ mod tests {
     #[gpui_kit::test]
     fn map_click_and_confirmation_fill_the_original_photo_draft(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
+        let settings_path =
+            std::env::temp_dir().join(format!("lumen-frame-map-ui-{}.toml", std::process::id()));
+        let _ = std::fs::remove_file(&settings_path);
         let main = cx.add_window(|window, cx| {
-            let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+            let app = cx
+                .new(|cx| AppView::new_with_settings_path(Some(settings_path.clone()), window, cx));
             Root::new(app, window, cx)
         });
         let (app, editor, first, second) = main
@@ -579,6 +603,9 @@ mod tests {
                     let first = app.workspace.add("first.jpg".into()).unwrap();
                     let second = app.workspace.add("second.jpg".into()).unwrap();
                     app.workspace.select(first);
+                    // 腾讯底图的点击回填仍须使用 WGS 84，且保留原照片身份。
+                    app.map_settings = MapSettings::default()
+                        .with_provider(crate::features::geolocation::MapProvider::Tencent);
                     (first, second)
                 });
                 let editor = cx
@@ -592,7 +619,7 @@ mod tests {
                 LocationPicker::with_service(
                     owner,
                     main.into(),
-                    None,
+                    Some(Location::new(35., 105.).unwrap()),
                     Err(anyhow::anyhow!("测试离线地图")),
                     window,
                     cx,
@@ -607,6 +634,14 @@ mod tests {
             window.find("gps-map").bounds()
         });
         assert!(bounds.size.height > px(120.));
+        // 原生按钮应用来源并保存应用偏好；确认位置仍由另一个按钮完成。
+        visual.update(|window, cx| window.click("gps-source-apply", cx));
+        assert_eq!(
+            crate::persistence::settings::load_at(&settings_path)
+                .map
+                .provider(),
+            crate::features::geolocation::MapProvider::Tencent
+        );
         visual.simulate_click(bounds.center(), Modifiers::default());
         let selected = Location::new(35., 105.).unwrap();
         // 地图窗口打开后，主工作台即使换了选择，回填仍指向原编辑器。
@@ -623,7 +658,12 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     let gps = editor.parse(cx).unwrap().gps_info.unwrap();
                     assert!(
-                        (gps.latitude_decimal().unwrap() - selected.latitude()).abs() < 0.00001
+                        (gps.latitude_decimal().unwrap() - selected.latitude()).abs() < 0.00001,
+                        "expected: {selected:?}; actual: {}",
+                        gps.to_iso6709()
+                    );
+                    assert!(
+                        (gps.longitude_decimal().unwrap() - selected.longitude()).abs() < 0.00001
                     );
                     editor.apply(window, cx);
                 });
@@ -641,5 +681,6 @@ mod tests {
             );
             assert!(app.workspace.photo(second).unwrap().exif().is_none());
         });
+        let _ = std::fs::remove_file(settings_path);
     }
 }

@@ -1248,6 +1248,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "coordtransform"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19bbb9b12da62ba1ef82b2f4893ddf72e64bf1cd423f26a4f7c5ec0054be2c11"
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4320,6 +4326,7 @@ dependencies = [
  "anyhow",
  "cartography",
  "chrono",
+ "coordtransform",
  "dirs 7.0.0",
  "ffmpeg-sidecar",
  "gpui-kit",

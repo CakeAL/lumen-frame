@@ -17,6 +17,8 @@ num-integer = "0.1"
 reverse-geocoder-cn = "0.1"
 # 原生地图的坐标投影和图层渲染；只启用核心，GPUI 绘制由应用适配。
 cartography = { version = "0.12", default-features = false }
+# 腾讯等国内底图坐标与照片的 WGS 84 GPS 相互转换。
+coordtransform = "0.4"
 # 地图瓦片和地点搜索在后台请求。
 reqwest = { version = "0.13", features = ["blocking", "query", "json"] }
 serde_json = "1"

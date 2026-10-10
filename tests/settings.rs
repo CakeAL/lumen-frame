@@ -69,6 +69,7 @@ fn theme_slots_round_trip() {
         default_font: "Menlo".to_owned(),
         builtin_presets_collapsed: true,
         preset_order: vec!["我的预设二".to_owned(), "我的预设一".to_owned()],
+        ..Default::default()
     };
     save_at(&path, &settings).unwrap();
     assert_eq!(load_at(&path), settings);
@@ -131,4 +132,27 @@ fn default_location_sits_under_the_user_config() {
     );
     // 和预设分开放：预设是一份画面效果，这里是这台机器的应用偏好。
     assert!(!path.to_string_lossy().contains("presets"));
+}
+
+#[test]
+fn map_preferences_round_trip_and_old_settings_keep_defaults() {
+    use lumen_frame::features::geolocation::{MapProvider, MapSettings};
+    let path = scratch_file("map-source");
+    for provider in [MapProvider::Tencent, MapProvider::OpenStreetMap] {
+        let settings = AppSettings {
+            map: MapSettings::default().with_provider(provider),
+            ..Default::default()
+        };
+        save_at(&path, &settings).unwrap();
+        assert_eq!(load_at(&path), settings);
+    }
+    std::fs::write(&path, "appearance = \"Dark\"\n").unwrap();
+    let old = load_at(&path);
+    assert_eq!(old.appearance, AppearanceMode::Dark);
+    assert_eq!(old.map, MapSettings::default());
+    // 移除的来源只回退地图选择，不应连带丢失其他应用偏好。
+    std::fs::write(&path, "appearance = \"Dark\"\n[map]\nprovider = \"Custom\"\ncustom_url = \"https://example.com\"\n").unwrap();
+    assert_eq!(load_at(&path).appearance, AppearanceMode::Dark);
+    assert_eq!(load_at(&path).map, MapSettings::default());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }

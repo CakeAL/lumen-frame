@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::watermark::DEFAULT_FONT;
+use crate::{features::geolocation::MapSettings, watermark::DEFAULT_FONT};
 
 pub fn settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("lumen-frame").join("settings.toml"))
@@ -36,6 +36,8 @@ pub struct AppSettings {
     pub builtin_presets_collapsed: bool,
     /// 用户预设的显示顺序，以预设名作为稳定身份。
     pub preset_order: Vec<String>,
+    /// 地图源是本机偏好，不随水印预设或照片配置切换。
+    pub map: MapSettings,
 }
 
 pub const DEFAULT_PREVIEW_BACKGROUND: [u8; 3] = [0x9a, 0xa7, 0xb1];
@@ -61,6 +63,7 @@ impl Default for AppSettings {
             preview_background: DEFAULT_PREVIEW_BACKGROUND,
             builtin_presets_collapsed: false,
             preset_order: Vec::new(),
+            map: MapSettings::default(),
         }
     }
 }

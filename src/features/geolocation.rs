@@ -17,6 +17,10 @@ use cartography::{
 use nom_exif::GPSInfo;
 use serde::{Deserialize, Serialize};
 
+mod map_source;
+pub(crate) use map_source::MapCoordinates;
+pub use map_source::{MapProvider, MapSettings};
+
 const HALF_WORLD: f64 = 20_037_508.342_789_244;
 const CACHE_AGE: u64 = 7 * 24 * 60 * 60;
 
@@ -71,6 +75,7 @@ impl Location {
 #[derive(Clone)]
 pub(crate) struct MapViewport {
     center: Coord,
+    coordinates: MapCoordinates,
     zoom: u8,
     width: f64,
     height: f64,
@@ -87,10 +92,23 @@ impl MapViewport {
             .expect("有效地图中心");
         Self {
             center,
+            coordinates: MapCoordinates::Wgs84,
             zoom: if location.is_some() { 14 } else { 3 },
             width: 800.0,
             height: 380.0,
         }
+    }
+    pub fn set_coordinates(&mut self, coordinates: MapCoordinates) -> Result<()> {
+        let p = cartography::transform(
+            &Projection::web_mercator(),
+            &Projection::wgs84(),
+            &self.center,
+        )?;
+        let location = self.coordinates.gps_location(p.y, p.x)?;
+        self.center = coordinates.map_location(location)?.projected()?;
+        self.coordinates = coordinates;
+        self.clamp_center();
+        Ok(())
     }
     fn resolution(&self) -> f64 {
         2.0 * HALF_WORLD / (256.0 * 2.0f64.powi(self.zoom as i32))
@@ -120,7 +138,7 @@ impl MapViewport {
         self.clamp_center();
     }
     pub fn locate(&mut self, location: Location) -> Result<()> {
-        self.center = location.projected()?;
+        self.center = self.coordinates.map_location(location)?.projected()?;
         self.zoom = 15.max(self.minimum_zoom());
         self.clamp_center();
         Ok(())
@@ -152,10 +170,10 @@ impl MapViewport {
             y: self.rect().max().y - y * self.resolution(),
         };
         let p = cartography::transform(&Projection::web_mercator(), &Projection::wgs84(), &p)?;
-        Location::new(p.y, p.x)
+        self.coordinates.gps_location(p.y, p.x)
     }
     pub fn point(&self, location: Location) -> Result<(f64, f64)> {
-        let p = location.projected()?;
+        let p = self.coordinates.map_location(location)?.projected()?;
         Ok((
             (p.x - self.rect().min().x) / self.resolution(),
             (self.rect().max().y - p.y) / self.resolution(),
@@ -222,7 +240,7 @@ pub(crate) struct TileBatch {
 pub(crate) struct MapService {
     client: reqwest::blocking::Client,
     cache: PathBuf,
-    tile_url: String,
+    settings: MapSettings,
     search_url: String,
     downloads: Arc<Mutex<()>>,
 }
@@ -235,12 +253,10 @@ struct TileMetadata {
 }
 
 impl MapService {
-    pub fn new() -> Result<Self> {
+    pub fn from_settings(settings: &MapSettings) -> Result<Self> {
         use std::hash::{Hash, Hasher};
-        let tile_url = std::env::var("LUMEN_FRAME_TILE_URL")
-            .unwrap_or_else(|_| "https://tile.openstreetmap.org/{z}/{x}/{y}.png".into());
         let mut hash = std::hash::DefaultHasher::new();
-        tile_url.hash(&mut hash);
+        settings.tile_template().hash(&mut hash);
         let cache = dirs::cache_dir()
             .context("无法找到地图缓存目录")?
             .join("lumen-frame/maps")
@@ -257,7 +273,7 @@ impl MapService {
         Ok(Self {
             client,
             cache,
-            tile_url,
+            settings: settings.clone(),
             downloads: Arc::new(Mutex::new(())),
             search_url: std::env::var("LUMEN_FRAME_GEOCODER_URL")
                 .unwrap_or_else(|_| "https://photon.komoot.io/api/".into()),
@@ -311,11 +327,7 @@ impl MapService {
         {
             return Ok(image.clone());
         }
-        let url = self
-            .tile_url
-            .replace("{z}", &id.zoom.to_string())
-            .replace("{x}", &id.x.to_string())
-            .replace("{y}", &id.y.to_string());
+        let url = self.settings.tile_url(id);
         let mut request = self.client.get(url);
         if cached.is_some() {
             if let Some(tag) = &meta.etag {
@@ -457,5 +469,54 @@ mod tests {
         viewport.resize(920., 440.);
         assert!(viewport.controller().is_ok());
         assert!(viewport.location_at(0., 0.).is_ok());
+    }
+
+    #[test]
+    fn tencent_coordinates_preserve_gps_when_switching_sources() {
+        for (lat, lon) in [(39.915, 116.404), (22.5429, 114.0596), (35.6762, 139.6503)] {
+            let location = Location::new(lat, lon).unwrap();
+            let mut viewport = MapViewport::new(Some(location));
+            viewport.resize(800., 380.);
+            viewport.set_coordinates(MapCoordinates::Gcj02).unwrap();
+            let center = viewport.location_at(400., 190.).unwrap();
+            assert!((center.latitude() - lat).abs() < 1e-8);
+            assert!((center.longitude() - lon).abs() < 1e-8);
+            viewport.pan(50., -30.);
+            viewport.zoom(2);
+            let (x, y) = viewport.point(location).unwrap();
+            let selected = viewport.location_at(x, y).unwrap();
+            let gps = Location::from_gps(&selected.to_gps().unwrap()).unwrap();
+            assert!((gps.latitude() - lat).abs() < 1e-6);
+            assert!((gps.longitude() - lon).abs() < 1e-6);
+            let panned = viewport.location_at(400., 190.).unwrap();
+            viewport.set_coordinates(MapCoordinates::Wgs84).unwrap();
+            let restored = viewport.location_at(400., 190.).unwrap();
+            assert!((restored.latitude() - panned.latitude()).abs() < 1e-8);
+            assert!((restored.longitude() - panned.longitude()).abs() < 1e-8);
+        }
+        // 独立参考坐标：北京 WGS 84 在腾讯底图上需要偏移数百米。
+        let display = MapCoordinates::Gcj02
+            .map_location(Location::new(39.915, 116.404).unwrap())
+            .unwrap();
+        assert!((display.latitude() - 39.91640428150164).abs() < 1e-8);
+        assert!((display.longitude() - 116.41024449916938).abs() < 1e-8);
+    }
+
+    #[test]
+    fn builtin_sources_use_the_correct_tile_row_without_a_key() {
+        let id = TileId {
+            zoom: 3,
+            x: 6,
+            y: 3,
+        };
+        let tencent = MapSettings::default().with_provider(MapProvider::Tencent);
+        assert_eq!(
+            tencent.tile_url(id),
+            "https://rt0.map.gtimg.com/tile?z=3&x=6&y=4&type=vector&styleid=1"
+        );
+        assert_eq!(
+            MapSettings::default().tile_url(id),
+            "https://tile.openstreetmap.org/3/6/3.png"
+        );
     }
 }
