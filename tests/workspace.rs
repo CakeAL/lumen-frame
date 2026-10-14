@@ -165,6 +165,71 @@ fn switching_photos_recomputes_the_preview(cx: &mut TestAppContext) {
     });
 }
 
+/// 快捷按钮切换照片后继续编辑文本，并保留每张照片自己的内容。
+#[gpui_kit::test]
+fn custom_text_next_button_preserves_text_and_returns_input_focus(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    cx.run_until_parked();
+    cx.update(|window, cx| window.click("photo-custom-text-next", cx));
+    assert!(view.read_with(cx, |view, _| view.selected_path().is_none()));
+
+    view.update_in(cx, |view, _, cx| {
+        view.add_photos(vec![PathBuf::from(PHOTO), PathBuf::from(OTHER_PHOTO)], cx);
+    });
+    cx.run_until_parked();
+    let (button, input) = cx.update(|window, _| {
+        (
+            window.find("photo-custom-text-next").bounds(),
+            window.find("photo-custom-text").bounds(),
+        )
+    });
+    assert_eq!(button.size.width, button.size.height);
+    assert_eq!(button.size.height, input.size.height);
+    assert_eq!(button.origin.y, input.origin.y);
+
+    cx.update(|window, cx| window.click("photo-custom-text", cx));
+    cx.simulate_input("第一张的文字");
+    cx.run_until_parked();
+    cx.update(|window, cx| window.click("photo-custom-text-next", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view
+            .selected_path()
+            .map(|path| path.to_path_buf())),
+        Some(PathBuf::from(OTHER_PHOTO))
+    );
+    assert!(view.read_with(cx, |view, _| view.params().custom_text.is_empty()));
+    // 不再点击输入框，直接输入，证明切换后的焦点已经回到文本编辑。
+    cx.simulate_input("第二张的文字");
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().custom_text.clone()),
+        "第二张的文字"
+    );
+    cx.update(|window, cx| window.click("photo-custom-text-next", cx));
+    assert_eq!(
+        view.read_with(cx, |view, _| view
+            .selected_path()
+            .map(|path| path.to_path_buf())),
+        Some(PathBuf::from(OTHER_PHOTO))
+    );
+
+    view.update_in(cx, |view, window, cx| view.select_photo_at(0, window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().custom_text.clone()),
+        "第一张的文字"
+    );
+    cx.update(|window, cx| window.click("photo-custom-text", cx));
+    cx.update(|window, cx| window.press("tab", cx));
+    cx.update(|window, cx| window.press("space", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.params().custom_text.clone()),
+        "第二张的文字"
+    );
+}
+
 /// 当前照片预设保留独立样式，旋转方向则在切换和删除照片后保持全局一致。
 #[gpui_kit::test]
 fn photo_presets_and_edits_are_independent(cx: &mut TestAppContext) {

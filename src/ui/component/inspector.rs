@@ -22,8 +22,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, DragMoveEvent, Entity, EntityId, FontWeight, Hsla, IntoElement,
-    KeyDownEvent, Keystroke, Role, SharedString, Subscription, Window, black, div,
+    AnyElement, Context, DragMoveEvent, Entity, EntityId, Focusable as _, FontWeight, Hsla,
+    IntoElement, KeyDownEvent, Keystroke, Role, SharedString, Subscription, Window, black, div,
     linear_color_stop, linear_gradient, relative, rgba, white,
 };
 
@@ -506,11 +506,36 @@ impl AppView {
                         "当前配置用于后续导入的照片"
                     }))
                     .child(
-                        Input::new(&self.controls.custom_text)
-                            .id("photo-custom-text")
-                            .aria_label("当前图片的自定义文本")
-                            .disabled(self.selected_photo_id().is_none())
-                            .w_full(),
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Input::new(&self.controls.custom_text)
+                                    .id("photo-custom-text")
+                                    .aria_label("当前图片的自定义文本")
+                                    .disabled(self.selected_photo_id().is_none())
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                Button::new("photo-custom-text-next")
+                                    .label("->")
+                                    .size_8()
+                                    .p_0()
+                                    .tooltip("下一张照片")
+                                    .accessibility_label("下一张照片")
+                                    .disabled(
+                                        self.selected_photo_id().is_none()
+                                            || self.photos().last().map(|photo| photo.id())
+                                                == self.selected_photo_id(),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.select_adjacent_photo(false, window, cx);
+                                        this.controls.custom_text.update(cx, |input, cx| {
+                                            window.focus(&input.focus_handle(cx), cx);
+                                        });
+                                    })),
+                            ),
                     )
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))

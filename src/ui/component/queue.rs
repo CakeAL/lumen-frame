@@ -82,7 +82,7 @@ impl AppView {
             })
     }
 
-    fn select_adjacent_photo(
+    pub(in crate::ui::app) fn select_adjacent_photo(
         &mut self,
         previous: bool,
         window: &mut Window,
