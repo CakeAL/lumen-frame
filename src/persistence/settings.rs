@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{features::geolocation::MapSettings, watermark::DEFAULT_FONT};
+use crate::{
+    features::geolocation::MapSettings,
+    watermark::{DEFAULT_FONT, DEFAULT_JPEG_QUALITY},
+};
 
 pub fn settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("lumen-frame").join("settings.toml"))
@@ -28,6 +31,8 @@ pub struct AppSettings {
     pub interface_scale: Option<f32>,
     pub preview_max_edge: Option<i32>,
     pub output_folder: Option<PathBuf>,
+    /// 全部照片共用的 JPEG 导出质量。
+    pub jpeg_quality: i32,
     #[serde(default = "default_font")]
     pub default_font: String,
     #[serde(default = "default_preview_background")]
@@ -59,6 +64,7 @@ impl Default for AppSettings {
             interface_scale: None,
             preview_max_edge: None,
             output_folder: None,
+            jpeg_quality: DEFAULT_JPEG_QUALITY,
             default_font: default_font(),
             preview_background: DEFAULT_PREVIEW_BACKGROUND,
             builtin_presets_collapsed: false,

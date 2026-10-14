@@ -45,6 +45,8 @@ pub struct WatermarkParams {
     pub shadow_density: f64,
     pub solid_background: bool,
     pub blur_sigma: f64,
+    /// 全部照片共用的本机 JPEG 导出质量，不写入预设。
+    #[serde(skip, default = "default_jpeg_quality")]
     pub quality: i32,
     pub rotation: Rotation,
 }
@@ -66,7 +68,7 @@ impl Default for WatermarkParams {
             shadow_density: 1.2,
             solid_background: false,
             blur_sigma: 15.0,
-            quality: 95,
+            quality: DEFAULT_JPEG_QUALITY,
             rotation: Rotation::None,
         }
     }
@@ -74,6 +76,11 @@ impl Default for WatermarkParams {
 
 pub const DEFAULT_TIME_FORMAT: &str = "%Y/%m/%d";
 pub const DEFAULT_FONT: &str = "Arial";
+pub const DEFAULT_JPEG_QUALITY: i32 = 95;
+
+fn default_jpeg_quality() -> i32 {
+    DEFAULT_JPEG_QUALITY
+}
 
 fn default_font() -> String {
     DEFAULT_FONT.to_owned()

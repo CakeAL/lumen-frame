@@ -21,6 +21,8 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::prelude::*;
+#[cfg(test)]
+use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, Entity, EntityId, Focusable as _, FontWeight, Hsla,
     IntoElement, KeyDownEvent, Keystroke, Role, SharedString, Subscription, Window, black, div,
@@ -328,7 +330,7 @@ impl ParameterControls {
             this.params.blur_sigma = value;
         }));
         subscriptions.extend(quality.subscribe(window, cx, |this, value| {
-            this.params.quality = value.round() as i32;
+            this.set_jpeg_quality(value.round() as i32);
         }));
         subscriptions.extend(background.subscribe(window, cx, |this, rgb| {
             this.params.background = rgb;
@@ -467,6 +469,15 @@ pub(in crate::ui::app) fn preset_of(
 }
 
 impl AppView {
+    /// JPEG 质量属于本机导出偏好；所有照片在生成导出快照时读取当前值。
+    fn set_jpeg_quality(&mut self, quality: i32) {
+        let quality = quality.clamp(1, 100);
+        if self.params.quality != quality {
+            self.params.quality = quality;
+            self.persist_settings();
+        }
+    }
+
     pub(in crate::ui::app) fn render_inspector(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .h_full()
@@ -1248,7 +1259,16 @@ impl AppView {
                             })),
                     ),
             )
-            .child(controls.quality.render("JPEG 质量", false, cx))
+            .child(
+                div()
+                    .id("jpeg-quality")
+                    .map(|this| {
+                        #[cfg(test)]
+                        let this = this.test_support();
+                        this
+                    })
+                    .child(controls.quality.render("JPEG 质量", false, cx)),
+            )
             .child(
                 Button::new("rotate-watermark-photo")
                     .icon(IconName::RotateCw)

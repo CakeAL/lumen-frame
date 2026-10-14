@@ -90,7 +90,7 @@ pub struct AppView {
     queue_scroll: ScrollHandle,
     /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
     thumbnails: HashMap<PhotoId, Thumbnail>,
-    /// 当前照片的编辑真值，供预览与导出使用；rotation 是全部照片共用的导出方向。
+    /// 当前照片的编辑真值；rotation 与 quality 是全部照片共用的导出设置。
     params: WatermarkParams,
     /// 未选中照片的配置快照。选中时移出，离开时写回，避免保存第二份编辑真值。
     photo_watermarks: HashMap<PhotoId, WatermarkPreset>,
@@ -177,7 +177,10 @@ impl AppView {
             .as_deref()
             .map(settings_store::load_at)
             .unwrap_or_default();
-        let mut params = WatermarkParams::default();
+        let mut params = WatermarkParams {
+            quality: settings.jpeg_quality.clamp(1, 100),
+            ..Default::default()
+        };
         if let Some(folder) = settings.output_folder.clone() {
             params.output_folder = Some(folder);
         }
@@ -383,6 +386,7 @@ impl AppView {
         watermark.params.default_font = self.params.default_font.clone();
         watermark.params.custom_logos = self.params.custom_logos.clone();
         watermark.params.rotation = self.params.rotation;
+        watermark.params.quality = self.params.quality;
         watermark
     }
 
@@ -1171,16 +1175,18 @@ impl AppView {
             });
         }
 
-        // 本机环境设置与全部照片共用的导出方向，不随照片快照或预设切换。
+        // 本机环境设置与全局导出设置，不随照片快照或预设切换。
         let output_folder = self.params.output_folder.clone();
         let default_font = self.params.default_font.clone();
         let custom_logos = self.params.custom_logos.clone();
         let rotation = self.params.rotation;
+        let quality = self.params.quality;
         self.params = preset.params;
         self.params.output_folder = output_folder;
         self.params.default_font = default_font;
         self.params.custom_logos = custom_logos;
         self.params.rotation = rotation;
+        self.params.quality = quality;
 
         let text_groups = preset.text_groups;
         let targets = text_groups

@@ -77,7 +77,7 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.border_ratio, original.params.border_ratio);
     assert_eq!(loaded.params.aspect_ratio, original.params.aspect_ratio);
     assert_eq!(loaded.params.background, original.params.background);
-    assert_eq!(loaded.params.quality, original.params.quality);
+    assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
     assert_eq!(loaded.text_groups, original.text_groups);
     assert_eq!(loaded.text_groups[0].position, Placement::Center);
@@ -103,7 +103,8 @@ fn output_folder_is_not_part_of_a_preset() {
         !document.contains("output_folder")
             && !document.contains("should/not/be/saved")
             && !document.contains("version =")
-            && !document.contains("default_font"),
+            && !document.contains("default_font")
+            && !document.contains("quality"),
         "本机环境设置不该写进预设：\n{document}"
     );
 
@@ -112,6 +113,14 @@ fn output_folder_is_not_part_of_a_preset() {
     let loaded = load_in(&dir, "no-folder").unwrap();
     assert_ne!(loaded.params.output_folder, preset.params.output_folder);
     assert_ne!(loaded.params.default_font, preset.params.default_font);
+    assert_ne!(loaded.params.quality, preset.params.quality);
+
+    // 旧预设仍可载入，其中的质量值不能覆盖全局导出偏好。
+    let legacy = document.replace("[params]", "[params]\nquality = 17");
+    std::fs::write(&path, legacy).unwrap();
+    let loaded = load_in(&dir, "no-folder").unwrap();
+    assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
+    assert_eq!(loaded.params.border_ratio, preset.params.border_ratio);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

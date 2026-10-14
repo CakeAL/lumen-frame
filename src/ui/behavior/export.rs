@@ -387,6 +387,88 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn jpeg_quality_is_global_persisted_and_frozen_for_export(cx: &mut TestAppContext) {
+        let path = std::env::temp_dir()
+            .join(format!("lumen-frame-jpeg-quality-{}", std::process::id()))
+            .join("settings.toml");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let (view, cx) = rendered_workspace(cx);
+        view.update_in(cx, |view, _, cx| {
+            view.settings_path = Some(path.clone());
+            view.add_photos(vec!["first.jpg".into(), "second.jpg".into()], cx);
+        });
+        cx.run_until_parked();
+        // 数值框位于这一行右侧，按实际渲染边界点击并通过键盘修改。
+        cx.update(|window, cx| {
+            let bounds = window.find("jpeg-quality").bounds();
+            window.click_at(
+                "jpeg-quality",
+                gpui_kit::point(bounds.size.width - gpui_kit::px(40.), gpui_kit::px(12.)),
+                cx,
+            );
+            window.press("cmd-a", cx);
+            window.input("81", cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |view, _| view.params.quality), 81);
+        assert_eq!(
+            crate::persistence::settings::load_at(&path).jpeg_quality,
+            81
+        );
+        let frozen = view.read_with(cx, |view, cx| {
+            view.photo_export_jobs(ExportScope::AllPhotos, cx)
+        });
+        assert_eq!(frozen.len(), 2);
+        for job in &frozen {
+            assert_eq!(job.watermark.params.quality, 81);
+        }
+
+        view.update_in(cx, |view, window, cx| {
+            view.select_photo_at(1, window, cx);
+            assert_eq!(view.params.quality, 81);
+            view.preset_scope = PresetScope::CurrentPhoto;
+            view.load_preset("基础样式", window, cx);
+            assert_eq!(view.params.quality, 81);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let bounds = window.find("jpeg-quality").bounds();
+            window.click_at(
+                "jpeg-quality",
+                gpui_kit::point(bounds.size.width - gpui_kit::px(40.), gpui_kit::px(12.)),
+                cx,
+            );
+            window.press("cmd-a", cx);
+            window.input("64", cx);
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.preset_scope = PresetScope::AllPhotos;
+            view.load_preset("16_9", window, cx);
+            view.add_photos(vec!["third.jpg".into()], cx);
+            view.select_photo_at(2, window, cx);
+            view.reset_params(window, cx);
+            assert_eq!(view.params.quality, 64);
+            for job in view.photo_export_jobs(ExportScope::AllPhotos, cx) {
+                assert_eq!(job.watermark.params.quality, 64);
+            }
+            let current = view.photo_export_jobs(ExportScope::CurrentPhoto, cx);
+            assert_eq!(current.len(), 1);
+            assert_eq!(current[0].watermark.params.quality, 64);
+            view.remove_selected(window, cx);
+            view.clear_photos(window, cx);
+            assert_eq!(view.params.quality, 64);
+            let restored =
+                cx.new(|cx| AppView::new_with_settings_path(Some(path.clone()), window, cx));
+            assert_eq!(restored.read(cx).params.quality, 64);
+        });
+        for job in frozen {
+            assert_eq!(job.watermark.params.quality, 81);
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[gpui_kit::test]
     fn global_preset_copies_are_independent_and_seed_new_photos(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         view.update_in(cx, |view, window, cx| {

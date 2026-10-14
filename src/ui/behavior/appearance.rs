@@ -79,6 +79,7 @@ impl AppView {
             preview_max_edge: Some(self.preview_max_edge),
             preview_background: self.preview_background,
             output_folder: self.params.output_folder.clone(),
+            jpeg_quality: self.params.quality,
             default_font: self.params.default_font.clone(),
             builtin_presets_collapsed: self.builtin_presets_collapsed,
             preset_order: self.preset_order.clone(),
