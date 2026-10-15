@@ -8,7 +8,7 @@ use crate::{
 };
 use gpui_kit::component::{WindowExt as _, notification::Notification};
 use gpui_kit::{AnyWindowHandle, AppContext as _, Context, SharedString, Subscription, Window};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 pub(in crate::ui::app) enum PaletteStatus {
     Loading,
@@ -25,7 +25,7 @@ pub(in crate::ui::app) struct GradientStopControl {
 #[derive(Default)]
 pub(in crate::ui::app) struct BackgroundState {
     pub palettes: HashMap<(PhotoId, PaletteTheme), PaletteStatus>,
-    pub selected: BTreeSet<usize>,
+    pub editor: Option<u64>,
     pub colors: Vec<GradientStopControl>,
     next_color_id: u64,
     window: Option<AnyWindowHandle>,
@@ -121,7 +121,7 @@ impl AppView {
     ) {
         // 旧照片的输入事件可能已排队，分配新身份以免落到新照片的同一位置。
         self.background_state.colors.clear();
-        self.background_state.selected.clear();
+        self.background_state.editor = None;
         self.sync_gradient_controls(window, cx);
         if self.params.gradient_background
             && self.params.gradient_palette.uses_palette()
@@ -148,7 +148,7 @@ impl AppView {
         self.background_state
             .palettes
             .insert((id, theme), PaletteStatus::Loading);
-        self.background_state.selected.clear();
+        self.background_state.editor = None;
         let handle = window.window_handle();
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -202,7 +202,7 @@ impl AppView {
             .gradient_palette
             .slots(self.params.gradient.colors().len());
         self.params.gradient_palette = GradientPalette::new(theme, slots);
-        self.background_state.selected.clear();
+        self.background_state.editor = None;
         self.sync_gradient_controls(window, cx);
         if self.selected_palette().is_none() {
             self.extract_photo_palette(window, cx);
@@ -258,7 +258,7 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         self.params.gradient = BackgroundGradient::new(self.params.gradient.angle(), colors)
-            .expect("at least two colors");
+            .expect("at least one color");
         self.params.gradient_palette =
             GradientPalette::new(self.params.gradient_palette.theme(), slots);
         self.params.set_background_kind(BackgroundKind::Gradient);
@@ -285,7 +285,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.params.gradient.colors().len() <= 2 {
+        if self.params.gradient.colors().len() <= 1 {
             return;
         }
         let Some(index) = self
@@ -304,35 +304,97 @@ impl AppView {
         self.replace_gradient_colors(colors, slots, window, cx);
     }
 
-    pub(in crate::ui::app) fn append_palette_colors(
+    /// 勾选状态直接由来源规则推导，避免 UI 选择和实际渐变变成两份状态。
+    pub(in crate::ui::app) fn palette_color_selected(&self, rank: usize) -> bool {
+        self.params
+            .gradient_palette
+            .slots(self.params.gradient.colors().len())
+            .contains(&Some(rank))
+    }
+
+    pub(in crate::ui::app) fn toggle_palette_color(
         &mut self,
-        all: bool,
+        rank: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(PaletteStatus::Ready(swatches)) = self.selected_palette() else {
             return;
         };
-        let ranks: Vec<_> = if all {
-            (0..swatches.len()).collect()
-        } else {
-            self.background_state
-                .selected
-                .iter()
-                .copied()
-                .filter(|&i| i < swatches.len())
-                .collect()
+        let Some(swatch) = swatches.get(rank) else {
+            return;
         };
-        if ranks.is_empty() {
+        let rgb = swatch.rgb();
+        let mut colors = self.gradient_display_colors();
+        let mut slots = self.params.gradient_palette.slots(colors.len());
+        if slots.contains(&Some(rank)) {
+            for index in (0..slots.len()).rev() {
+                if slots[index] == Some(rank) {
+                    colors.remove(index);
+                    slots.remove(index);
+                    self.background_state.colors.remove(index);
+                }
+            }
+            // 最后一个勾选取消后保留单色，解除色卡来源，保证预览始终有背景。
+            if colors.is_empty() {
+                colors.push(rgb);
+                slots.push(None);
+            }
+        } else {
+            // 首次选择色卡替换初始/手动颜色，随后按选择顺序加入。
+            if !slots.iter().any(Option::is_some) {
+                colors.clear();
+                slots.clear();
+                self.background_state.colors.clear();
+            }
+            colors.push(rgb);
+            slots.push(Some(rank));
+        }
+        self.background_state.editor = None;
+        self.replace_gradient_colors(colors, slots, window, cx);
+    }
+
+    pub(in crate::ui::app) fn select_all_palette_colors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(PaletteStatus::Ready(swatches)) = self.selected_palette() else {
+            return;
+        };
+        if swatches.is_empty() {
+            return;
+        }
+        let colors = swatches.iter().map(PaletteSwatch::rgb).collect();
+        let slots = (0..swatches.len()).map(Some).collect();
+        self.background_state.editor = None;
+        self.background_state.colors.clear();
+        self.replace_gradient_colors(colors, slots, window, cx);
+    }
+
+    pub(in crate::ui::app) fn swap_gradient_colors(
+        &mut self,
+        from: u64,
+        to: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let controls = &self.background_state.colors;
+        let (Some(a), Some(b)) = (
+            controls.iter().position(|control| control.id == from),
+            controls.iter().position(|control| control.id == to),
+        ) else {
+            return;
+        };
+        if a == b {
             return;
         }
         let mut colors = self.gradient_display_colors();
         let mut slots = self.params.gradient_palette.slots(colors.len());
-        for rank in ranks {
-            colors.push(swatches[rank].rgb());
-            slots.push(Some(rank));
-        }
-        self.background_state.selected.clear();
+        colors.swap(a, b);
+        slots.swap(a, b);
+        self.background_state.colors.swap(a, b);
+        self.background_state.editor = None;
         self.replace_gradient_colors(colors, slots, window, cx);
     }
 
@@ -421,7 +483,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn gradient_directions_and_manual_color_rows_use_real_controls(cx: &mut TestAppContext) {
+    fn gradient_direction_grid_and_hover_color_editor_use_real_controls(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         assert_eq!(
             view.read_with(cx, |view, _| view.params.gradient.angle()),
@@ -433,6 +495,18 @@ mod tests {
         );
         cx.update(|window, cx| {
             assert!(window.try_find("background-gradient-css").is_none());
+            let up_left = window.find(("gradient-direction", 315_usize)).bounds();
+            let up = window.find(("gradient-direction", 0_usize)).bounds();
+            let down = window.find(("gradient-direction", 180_usize)).bounds();
+            assert_eq!(up_left.origin.y, up.origin.y);
+            assert_eq!(up.origin.x, down.origin.x);
+            assert!(down.origin.y > up.origin.y);
+            window.click("gradient-direction-center", cx);
+            let input = window
+                .within("gradient-angle")
+                .find("number-input")
+                .bounds();
+            assert!(input.right() < up_left.left());
             window.click(("gradient-direction", 90_usize), cx);
         });
         cx.run_until_parked();
@@ -442,8 +516,10 @@ mod tests {
         );
         let first = view.read_with(cx, |view, _| view.background_state.colors[0].id);
         cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", first), cx);
+            window.render_frame(cx);
             window
-                .within(("gradient-stop", first))
+                .within(("gradient-color-actions", first))
                 .click("gradient-color-hex", cx);
             window.press("cmd-a", cx);
             window.input("#123456", cx);
@@ -459,23 +535,120 @@ mod tests {
             view.read_with(cx, |view, _| view.params.gradient.colors().len()),
             3
         );
-        cx.update(|window, cx| window.click(("gradient-color-remove", first), cx));
+        cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", first), cx);
+            window.click(("gradient-color-remove", first), cx);
+        });
         cx.run_until_parked();
         let remaining = view.read_with(cx, |view, _| view.background_state.colors[0].id);
         assert_ne!(first, remaining);
-        cx.update(|window, cx| window.click(("gradient-color-remove", remaining), cx));
+        cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", remaining), cx);
+            window.click(("gradient-color-remove", remaining), cx);
+        });
+        let remaining = view.read_with(cx, |view, _| view.background_state.colors[0].id);
+        cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", remaining), cx);
+            window.click(("gradient-color-remove", remaining), cx);
+        });
         assert_eq!(
             view.read_with(cx, |view, _| view.params.gradient.colors().len()),
-            2
+            1
         );
         // 色标超过 16 个仍可添加，且删除其它色标不会改变剩余控件身份。
         view.update_in(cx, |view, window, cx| {
             for _ in 0..17 {
                 view.add_gradient_color(window, cx);
             }
-            assert_eq!(view.params.gradient.colors().len(), 19);
+            assert_eq!(view.params.gradient.colors().len(), 18);
             assert_eq!(view.background_state.colors[0].id, remaining);
         });
+    }
+
+    #[gpui_kit::test]
+    fn palette_selection_drag_and_edit_keep_sources_in_sync(cx: &mut TestAppContext) {
+        let (view, cx) = workspace(cx);
+        cx.update(|window, cx| window.click("photo-palette-extract", cx));
+        settle_palette(&view, cx);
+        cx.update(|window, cx| {
+            window.click(("photo-palette-color", 0_usize), cx);
+            window.click(("photo-palette-color", 2_usize), cx);
+            window.click(("photo-palette-color", 4_usize), cx);
+        });
+        cx.run_until_parked();
+        let ids = view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.params.gradient_palette.slots(3),
+                [Some(0), Some(2), Some(4)]
+            );
+            view.background_state
+                .colors
+                .iter()
+                .map(|control| control.id)
+                .collect::<Vec<_>>()
+        });
+        cx.update(|window, cx| {
+            window.drag_to(
+                ("gradient-color-swatch", ids[0]),
+                ("gradient-color-swatch", ids[2]),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.params.gradient_palette.slots(3),
+                [Some(4), Some(2), Some(0)]
+            );
+            assert_eq!(view.background_state.colors[2].id, ids[0]);
+            for rank in [0, 2, 4] {
+                assert!(view.palette_color_selected(rank));
+            }
+        });
+        cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", ids[0]), cx);
+            window
+                .within(("gradient-color-actions", ids[0]))
+                .click("gradient-color-hex", cx);
+            window.press("cmd-a", cx);
+            window.input("#123456", cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.params.gradient.colors()[2], [0x12, 0x34, 0x56]);
+            assert_eq!(
+                view.params.gradient_palette.slots(3),
+                [Some(4), Some(2), None]
+            );
+            assert!(!view.palette_color_selected(0));
+        });
+        cx.update(|window, cx| {
+            window.press("escape", cx);
+            window.click(("photo-palette-color", 2_usize), cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.params.gradient_palette.slots(2), [Some(4), None]);
+            assert!(!view.palette_color_selected(2));
+        });
+        cx.update(|window, cx| window.click("photo-palette-add-all", cx));
+        cx.run_until_parked();
+        let count = view.read_with(cx, |view, _| {
+            let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
+                panic!()
+            };
+            let count = swatches.len();
+            assert_eq!(view.params.gradient.colors().len(), count);
+            for rank in 0..count {
+                assert!(view.palette_color_selected(rank));
+            }
+            count
+        });
+        cx.update(|window, cx| window.click("photo-palette-add-all", cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view.params.gradient.colors().len()),
+            count
+        );
     }
 
     #[gpui_kit::test]
@@ -502,15 +675,12 @@ mod tests {
             window.render_frame(cx);
             window.click(("photo-palette-color", 0_usize), cx);
             window.click(("photo-palette-color", 2_usize), cx);
-            window.click("photo-palette-add-selected", cx);
+            assert!(window.try_find("photo-palette-add-selected").is_none());
         });
         cx.run_until_parked();
         view.read_with(cx, |view, _| {
-            assert_eq!(view.params.gradient.colors().len(), 4);
-            assert_eq!(
-                view.params.gradient_palette.slots(4),
-                [None, None, Some(0), Some(2)]
-            );
+            assert_eq!(view.params.gradient.colors().len(), 2);
+            assert_eq!(view.params.gradient_palette.slots(2), [Some(0), Some(2)]);
         });
         view.update_in(cx, |view, _, _| {
             view.params.custom_text = "第一张独立文字".into()
@@ -527,36 +697,32 @@ mod tests {
         settle_palette(&view, cx);
         view.read_with(cx, |view, cx| {
             assert_eq!(view.params.custom_text, "第二张独立文字");
-            assert_eq!(
-                view.params.gradient_palette.slots(4),
-                [None, None, Some(0), Some(2)]
-            );
+            assert_eq!(view.params.gradient_palette.slots(2), [Some(0), Some(2)]);
             assert_eq!(view.params.gradient_palette.theme(), PaletteTheme::Basic);
             let display = view.gradient_display_colors();
             let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
                 panic!()
             };
-            assert_eq!(display[2], swatches[0].rgb());
-            assert_eq!(display[3], swatches[2.min(swatches.len() - 1)].rgb());
+            assert_eq!(display[0], swatches[0].rgb());
+            assert_eq!(display[1], swatches[2.min(swatches.len() - 1)].rgb());
             let first = photo_palette::resolve(
                 view.workspace.photo(first_id).unwrap().path(),
                 &view.watermark_for_photo(first_id, cx).params,
             )
             .unwrap();
-            assert_ne!(display[2], first.gradient.colors()[2]);
+            assert_ne!(display[0], first.gradient.colors()[0]);
             // 异步同步颜色编辑器不能把动态来源误改为固定颜色。
-            assert_eq!(view.params.gradient_palette.slots(4)[2], Some(0));
+            assert_eq!(view.params.gradient_palette.slots(2)[0], Some(0));
         });
         view.update_in(cx, |view, window, cx| {
-            let before = view.params.gradient.colors().len();
             let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
                 panic!()
             };
             let count = swatches.len();
-            view.append_palette_colors(true, window, cx);
-            assert_eq!(view.params.gradient.colors().len(), before + count);
+            view.select_all_palette_colors(window, cx);
+            assert_eq!(view.params.gradient.colors().len(), count);
             assert_eq!(
-                view.params.gradient_palette.slots(before + count)[before..],
+                view.params.gradient_palette.slots(count),
                 (0..count).map(Some).collect::<Vec<_>>()
             );
             view.clear_photos(window, cx);
@@ -571,8 +737,8 @@ mod tests {
             let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
                 panic!()
             };
-            assert_eq!(view.gradient_display_colors()[2], swatches[0].rgb());
-            assert_eq!(view.params.gradient_palette.slots(4)[2], Some(0));
+            assert_eq!(view.gradient_display_colors()[0], swatches[0].rgb());
+            assert_eq!(view.params.gradient_palette.slots(2)[0], Some(0));
         });
     }
 }

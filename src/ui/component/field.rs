@@ -87,6 +87,14 @@ pub(in crate::ui::app) struct NumberField {
 }
 
 impl NumberField {
+    /// 只呈现精确输入，适用于已有方向等快捷操作的参数。
+    pub(in crate::ui::app) fn render_input(&self) -> impl IntoElement {
+        h_flex()
+            .gap_1()
+            .child(Input::new(&self.input).id("number-input").small().w_20())
+            .child(div().text_sm().child(self.unit))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::ui::app) fn new(
         value: f64,
@@ -236,6 +244,7 @@ impl NumberField {
 ///
 /// 十六进制输入是并列的第二条路径，不是取色器的替代：取色器崩了或者只是懒得点开时，
 /// 直接敲 `#1A2B3C` 一样能改。
+#[derive(Clone)]
 pub(in crate::ui::app) struct ColorField {
     picker: Entity<ColorPickerState>,
     hex: Entity<InputState>,

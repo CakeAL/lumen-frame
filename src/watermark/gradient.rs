@@ -15,7 +15,7 @@ pub struct BackgroundGradient {
 impl BackgroundGradient {
     pub fn new(angle: f64, colors: Vec<[u8; 3]>) -> Result<Self> {
         ensure!(angle.is_finite(), "渐变角度必须是有限数值");
-        ensure!(colors.len() >= 2, "渐变至少需要两个颜色");
+        ensure!(!colors.is_empty(), "请至少保留一个颜色");
         Ok(Self {
             angle: angle.rem_euclid(360.0),
             colors,
@@ -30,6 +30,9 @@ impl BackgroundGradient {
     }
 
     pub fn color_at(&self, fraction: f64) -> [u8; 3] {
+        if self.colors.len() == 1 {
+            return self.colors[0];
+        }
         let position = fraction.clamp(0.0, 1.0) * (self.colors.len() - 1) as f64;
         let index = (position.floor() as usize).min(self.colors.len() - 2);
         let t = position - index as f64;
@@ -174,7 +177,7 @@ mod tests {
     fn rejects_invalid_or_unsupported_gradients() {
         for text in [
             "linear-gradient(NaNdeg,#000,#fff)",
-            "linear-gradient(90deg,#fff)",
+            "linear-gradient(90deg)",
             "linear-gradient(90deg,#ffff,#000)",
             "linear-gradient(90deg,#000 20%,#fff)",
             "red",
@@ -192,5 +195,15 @@ mod tests {
         let restored: GradientPalette = toml::from_str(&toml::to_string(&recipe).unwrap()).unwrap();
         assert_eq!(restored, recipe);
         assert_eq!(restored.slots(4), [None, Some(0), Some(3), None]);
+    }
+
+    #[test]
+    fn single_color_is_constant_and_roundtrips() {
+        let gradient = BackgroundGradient::new(135.0, vec![[10, 20, 30]]).unwrap();
+        for fraction in [0.0, 0.5, 1.0] {
+            assert_eq!(gradient.color_at(fraction), [10, 20, 30]);
+        }
+        assert_eq!(gradient, gradient.to_string().parse().unwrap());
+        assert!(BackgroundGradient::new(135.0, vec![]).is_err());
     }
 }
