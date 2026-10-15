@@ -35,7 +35,7 @@ use super::field::{
     select_state, warning,
 };
 use super::inspector::POSITIONS;
-use super::rich_text::{RichTextEditor, token_content};
+use super::rich_text::{RichTextEditor, token_content, toolbar_button};
 
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("左对齐", TextAlign::Left),
@@ -1098,6 +1098,7 @@ impl AppView {
         input: Entity<TextareaState>,
         view: Entity<AppView>,
         line_id: u64,
+        cx: &App,
     ) -> impl IntoElement {
         let logo_fields = self
             .params
@@ -1105,35 +1106,35 @@ impl AppView {
             .keys()
             .map(|name| (name.clone(), format!("{{{name}}}")))
             .collect::<Vec<_>>();
-        Button::new(("template-field-options", line_id))
-            .icon(gpui_kit::assets::IconName::Braces)
-            .accessibility_label("插入字段")
-            .tooltip("插入字段")
-            .ghost()
-            .small()
-            .dropdown_menu(move |menu, _, _| {
-                let menu = TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
-                    let input = input.clone();
-                    let view = view.clone();
-                    menu.item(PopupMenuItem::new(*label).on_click(move |_, window, cx| {
+        toolbar_button(
+            ("template-field-options", line_id),
+            gpui_kit::assets::IconName::Braces,
+            "插入字段",
+            cx,
+        )
+        .dropdown_menu(move |menu, _, _| {
+            let menu = TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
+                let input = input.clone();
+                let view = view.clone();
+                menu.item(PopupMenuItem::new(*label).on_click(move |_, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.insert_template_field(&input, value, window, cx)
+                    });
+                }))
+            });
+            logo_fields.iter().fold(menu, |menu, (label, value)| {
+                let input = input.clone();
+                let view = view.clone();
+                let value = value.clone();
+                menu.item(
+                    PopupMenuItem::new(label.clone()).on_click(move |_, window, cx| {
                         view.update(cx, |this, cx| {
-                            this.insert_template_field(&input, value, window, cx)
+                            this.insert_template_field(&input, &value, window, cx)
                         });
-                    }))
-                });
-                logo_fields.iter().fold(menu, |menu, (label, value)| {
-                    let input = input.clone();
-                    let view = view.clone();
-                    let value = value.clone();
-                    menu.item(
-                        PopupMenuItem::new(label.clone()).on_click(move |_, window, cx| {
-                            view.update(cx, |this, cx| {
-                                this.insert_template_field(&input, &value, window, cx)
-                            });
-                        }),
-                    )
-                })
+                    }),
+                )
             })
+        })
     }
 
     fn set_input_value(

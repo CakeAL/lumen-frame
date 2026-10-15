@@ -253,17 +253,21 @@ pub(in crate::ui::app) struct ColorField {
 impl ColorField {
     /// 用于已有行标签的紧凑颜色编辑器。
     pub(in crate::ui::app) fn render_control(&self) -> impl IntoElement {
-        h_flex()
-            .gap_2()
-            .items_center()
-            .child(ColorPicker::new(&self.picker))
-            .child(
-                Input::new(&self.hex)
-                    .id("gradient-color-hex")
-                    .aria_label("颜色值")
-                    .small()
-                    .w_24(),
-            )
+        let picker = div()
+            .id("field-color-picker")
+            .child(ColorPicker::new(&self.picker));
+        #[cfg(test)]
+        let picker = {
+            use gpui_kit::test::TestSupportExt as _;
+            picker.test_support()
+        };
+        h_flex().gap_2().items_center().child(picker).child(
+            Input::new(&self.hex)
+                .id("gradient-color-hex")
+                .aria_label("颜色值")
+                .small()
+                .w_24(),
+        )
     }
 
     pub(in crate::ui::app) fn new(
@@ -278,6 +282,10 @@ impl ColorField {
                 .placeholder("#RRGGBB")
         });
         Self { picker, hex }
+    }
+
+    pub(super) fn is_open(&self, cx: &App) -> bool {
+        self.picker.read(cx).is_open()
     }
 
     pub(super) fn value(&self, cx: &App) -> [u8; 3] {
@@ -339,7 +347,10 @@ impl ColorField {
             })
         };
 
-        vec![from_picker, from_hex]
+        // ColorPicker 是 RenderOnce，打开面板、悬浮预览和切换选色模式只通知 picker 状态。
+        // 拥有控件的视图也要重绘，才能把这些状态更新到弹层里。
+        let picker_observer = cx.observe(&self.picker, |_, _, cx| cx.notify());
+        vec![from_picker, from_hex, picker_observer]
     }
 
     pub(in crate::ui::app) fn sync(&self, rgb: [u8; 3], window: &mut Window, cx: &mut App) {

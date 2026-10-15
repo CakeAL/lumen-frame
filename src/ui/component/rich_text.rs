@@ -16,7 +16,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::input::{InlineToken, InputContent};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IndexPath, Selectable as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    button::Button,
     combobox::{Combobox, ComboboxEvent, ComboboxState},
     h_flex,
     input::{Textarea, TextareaState},
@@ -25,14 +25,31 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, Context, Entity, EntityInputHandler as _, Focusable as _, Font, FontStyle,
-    FontWeight, IntoElement, RenderOnce, SharedString, StyledText, Subscription, TextRun,
-    UnderlineStyle, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, App, Context, ElementId, Entity, EntityInputHandler as _, Focusable as _, Font,
+    FontStyle, FontWeight, IntoElement, RenderOnce, SharedString, StyledText, Subscription,
+    TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*, px,
 };
 use std::{ops::Range, sync::LazyLock};
 
 static TEMPLATE_FIELDS: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\{[^{}\r\n]+\}").unwrap());
+
+pub(super) fn toolbar_button(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    label: &'static str,
+    cx: &App,
+) -> Button {
+    let hover_background = cx.theme().tokens.button_secondary_hover;
+    Button::new(id)
+        .icon(icon)
+        .accessibility_label(label)
+        .tooltip(label)
+        .small()
+        .outline()
+        .size_8()
+        .hover(move |style| style.bg(hover_background).shadow_sm())
+}
 
 pub(super) struct RichTextEditor {
     pub spans: Vec<TextSpan>,
@@ -520,43 +537,47 @@ impl AppView {
         let mut toolbar = h_flex()
             .w_full()
             .gap_1()
+            .items_center()
             .child(
-                div().w_7().h_7().flex_shrink_0().child(
-                    Combobox::new(&line.rich.font)
-                        .appearance(false)
-                        .small()
-                        .p_0()
-                        .border_0()
-                        .search_placeholder("搜索字体…")
-                        .menu_width(gpui_kit::rems(18.))
-                        .render_trigger(move |trigger, _, _| {
-                            Button::new(("rich-text-font", id))
-                                .icon(IconName::Type)
-                                .accessibility_label("字体")
-                                .tooltip("字体")
-                                .small()
-                                .ghost()
-                                .selected(trigger.is_open())
-                        }),
-                ),
+                div()
+                    .size_8()
+                    .flex_shrink_0()
+                    // Combobox 的内部裁切会截断触发按钮的投影，由外层补上。
+                    .hover(|style| style.shadow_sm())
+                    .child(
+                        Combobox::new(&line.rich.font)
+                            .appearance(false)
+                            .small()
+                            .p_0()
+                            .border_0()
+                            // 自定义触发器后仍有一格尾部间距，让它落在按钮间隙中，避免裁掉描边。
+                            .h_8()
+                            .w_9()
+                            .search_placeholder("搜索字体…")
+                            .menu_width(gpui_kit::rems(18.))
+                            .render_trigger(move |trigger, _, cx| {
+                                toolbar_button(("rich-text-font", id), IconName::Type, "字体", cx)
+                                    .selected(trigger.is_open())
+                            }),
+                    ),
             )
             .child(
                 Popover::new(("rich-text-color-popup", id))
-                    .trigger(
-                        Button::new(("rich-text-color", id))
-                            .icon(IconName::Baseline)
-                            .accessibility_label("文字颜色")
-                            .tooltip("文字颜色")
-                            .small()
-                            .ghost(),
-                    )
+                    // 选色面板绘制在外层弹层之外，不能把它的点击当成关闭外层的操作。
+                    .overlay_closable(!color.is_open(cx))
+                    .trigger(toolbar_button(
+                        ("rich-text-color", id),
+                        IconName::Baseline,
+                        "文字颜色",
+                        cx,
+                    ))
                     .content(move |_, _, _| {
                         let view = color_view.clone();
                         v_flex().gap_2().child(color.render_control()).child(
                             Button::new(("rich-text-inherit-color", id))
                                 .label(inherit_label)
                                 .small()
-                                .ghost()
+                                .outline()
                                 .on_click(move |_, window, cx| {
                                     view.update(cx, |this, cx| {
                                         this.format_rich_text(
@@ -595,12 +616,7 @@ impl AppView {
         ] {
             let view = view.clone();
             toolbar = toolbar.child(
-                Button::new((name, id))
-                    .icon(icon)
-                    .accessibility_label(label)
-                    .tooltip(label)
-                    .small()
-                    .ghost()
+                toolbar_button((name, id), icon, label, cx)
                     .selected(selected)
                     .on_click(move |_, window, cx| {
                         view.update(cx, |this, cx| {
@@ -610,20 +626,20 @@ impl AppView {
             );
         }
         toolbar
-            .child(self.render_template_field_menu(line.template.clone(), view.clone(), id))
+            .child(self.render_template_field_menu(line.template.clone(), view.clone(), id, cx))
             .child(div().flex_1())
             .child(
-                Button::new(("rich-text-reset", id))
-                    .icon(IconName::RemoveFormatting)
-                    .accessibility_label("清除格式")
-                    .tooltip("清除格式")
-                    .small()
-                    .ghost()
-                    .on_click(move |_, window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.format_rich_text(id, TextStyleChange::Reset, window, cx)
-                        });
-                    }),
+                toolbar_button(
+                    ("rich-text-reset", id),
+                    IconName::RemoveFormatting,
+                    "清除格式",
+                    cx,
+                )
+                .on_click(move |_, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.format_rich_text(id, TextStyleChange::Reset, window, cx)
+                    });
+                }),
             )
     }
 
@@ -673,7 +689,7 @@ mod tests {
     use super::*;
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{Render, TestAppContext};
+    use gpui_kit::{InputEvent as _, Render, TestAppContext};
     use std::{cell::RefCell, rc::Rc};
     struct Harness {
         app: Entity<AppView>,
@@ -681,13 +697,39 @@ mod tests {
     }
     impl Render for Harness {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            let app = self.app.read(cx);
-            let line = &app.text_groups[0].lines[0];
-            v_flex()
-                .p_4()
-                .gap_2()
-                .child(app.render_rich_composer(line, self.app.clone(), cx))
+            let composer = {
+                let app = self.app.read(cx);
+                app.render_rich_composer(&app.text_groups[0].lines[0], self.app.clone(), cx)
+                    .into_any_element()
+            };
+            let background = self.app.update(cx, |app, cx| {
+                app.render_background_section(cx).into_any_element()
+            });
+            v_flex().p_4().gap_2().child(composer).child(background)
         }
+    }
+    fn click_first_palette_color(cx: &mut gpui_kit::VisualTestContext) {
+        cx.update(|window, cx| {
+            let tab = window.within("mode").find(0_usize).bounds();
+            let rem = window.rem_size();
+            let target = gpui_kit::point(tab.origin.x + rem * 0.625, tab.bottom() + rem * 1.375);
+            window.dispatch_event(
+                gpui_kit::MouseMoveEvent {
+                    position: target,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+        });
+        let target = cx.update(|window, _| {
+            let tab = window.within("mode").find(0_usize).bounds();
+            let rem = window.rem_size();
+            gpui_kit::point(tab.origin.x + rem * 0.625, tab.bottom() + rem * 1.375)
+        });
+        cx.simulate_click(target, Default::default());
+        cx.run_until_parked();
     }
     #[gpui_kit::test]
     fn direct_rich_editor_preserves_selection_and_atomic_token_history(cx: &mut TestAppContext) {
@@ -698,6 +740,8 @@ mod tests {
             move |window, cx| {
                 let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
                 app.update(cx, |app, cx| {
+                    app.params
+                        .set_background_kind(crate::watermark::BackgroundKind::Gradient);
                     app.text_groups[0].lines[0]
                         .template
                         .update(cx, |input, cx| {
@@ -721,6 +765,19 @@ mod tests {
         cx.run_until_parked();
         let id = app.read_with(cx, |app, _| app.text_groups[0].lines[0].id);
         cx.update(|window, cx| {
+            let expected = window.find(("rich-text-bold", id)).bounds();
+            for name in [
+                "rich-text-font",
+                "rich-text-color",
+                "rich-text-italic",
+                "rich-text-underline",
+                "template-field-options",
+                "rich-text-reset",
+            ] {
+                let actual = window.find((name, id)).bounds();
+                assert_eq!(actual.size, expected.size);
+                assert_eq!(actual.center().y, expected.center().y);
+            }
             window.click(("rich-text-italic", id), cx);
             app.update(cx, |app, cx| {
                 app.text_groups[0].lines[0]
@@ -770,6 +827,18 @@ mod tests {
             assert!(!line.underline, "选区只设置局部下划线");
         });
         cx.update(|window, cx| {
+            window.click("field-color-picker", cx);
+        });
+        cx.run_until_parked();
+        click_first_palette_color(cx);
+        app.read_with(cx, |app, cx| {
+            let line = &app.text_groups[0].lines[0];
+            assert_eq!(
+                style_at(&line.rich.spans, 0).color,
+                Some(super::super::field::hsla_to_rgb(cx.theme().red))
+            );
+        });
+        cx.update(|window, cx| {
             window.press("escape", cx);
         });
         cx.run_until_parked();
@@ -796,6 +865,20 @@ mod tests {
             let input = app.text_groups[0].lines[0].template.read(cx);
             assert_eq!(input.value().as_ref(), "AB{型号}中文");
             assert_eq!(input.tokens()[0].token().text().as_ref(), "{型号}");
+        });
+        let gradient_id = app.read_with(cx, |app, _| app.background_state.colors[0].id);
+        cx.update(|window, cx| {
+            window.hover(("gradient-color-swatch", gradient_id), cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.click("field-color-picker", cx));
+        cx.run_until_parked();
+        click_first_palette_color(cx);
+        app.read_with(cx, |app, cx| {
+            assert_eq!(
+                app.params.gradient.colors()[0],
+                super::super::field::hsla_to_rgb(cx.theme().red)
+            );
         });
     }
 }
