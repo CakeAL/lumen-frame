@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::rotation::Rotation;
 
 mod gradient;
+pub(crate) mod rich_text;
 pub use gradient::{BackgroundGradient, GradientPalette, PaletteTheme};
+pub use rich_text::{TextSpan, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundKind {
@@ -187,8 +189,12 @@ pub struct TextParams {
     pub line_spacing: f64,
     pub color: Option<[u8; 3]>,
     pub italic: bool,
+    pub underline: bool,
     pub bold: bool,
     pub align: TextAlign,
+    /// 模板内局部样式；空列表沿用旧版整行样式。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spans: Vec<TextSpan>,
 }
 
 impl Default for TextParams {
@@ -200,8 +206,10 @@ impl Default for TextParams {
             line_spacing: 1.3,
             color: None,
             italic: false,
+            underline: false,
             bold: false,
             align: TextAlign::default(),
+            spans: Vec::new(),
         }
     }
 }

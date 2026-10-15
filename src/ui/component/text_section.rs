@@ -7,15 +7,14 @@ use gpui_kit::component::{
     ActiveTheme as _, IconName, IndexPath, Sizable as _, TitleBar,
     accordion::{Accordion, AccordionItem},
     button::{Button, ButtonVariants as _},
-    combobox::{Combobox, ComboboxEvent, ComboboxState},
+    combobox::{ComboboxEvent, ComboboxState},
     group_box::GroupBox,
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, TextareaState},
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
-    switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -25,7 +24,7 @@ use gpui_kit::{
 };
 
 use crate::media::ExifInfo;
-use crate::render::text::{TIME_FORMAT_EXAMPLES, render_watermark_template, time_format_is_valid};
+use crate::render::text::{TIME_FORMAT_EXAMPLES, time_format_is_valid};
 use crate::watermark::{
     GroupAttachment, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
 };
@@ -36,6 +35,7 @@ use super::field::{
     select_state, warning,
 };
 use super::inspector::POSITIONS;
+use super::rich_text::{RichTextEditor, token_content};
 
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("左对齐", TextAlign::Left),
@@ -85,7 +85,7 @@ pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
 pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
-const INHERIT_FONT_LABEL: &str = "跟随默认字体";
+pub(super) const INHERIT_FONT_LABEL: &str = "跟随默认字体";
 
 fn group_aligns(position: Placement) -> &'static [(&'static str, TextAlign)] {
     match position {
@@ -143,7 +143,8 @@ impl Render for TextGroupWindow {
 
 pub(in crate::ui::app) struct TextLine {
     pub id: u64,
-    pub template: Entity<InputState>,
+    pub template: Entity<TextareaState>,
+    pub(super) rich: RichTextEditor,
     pub size: NumberField,
     pub logo_size: NumberField,
     pub line_spacing: NumberField,
@@ -153,6 +154,7 @@ pub(in crate::ui::app) struct TextLine {
     pub auto_color: bool,
     pub bold: bool,
     pub italic: bool,
+    pub underline: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -166,9 +168,11 @@ impl TextLine {
         cx: &mut Context<AppView>,
     ) -> Self {
         let template_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .default_value(template.to_owned())
-                .placeholder("例如 {Logo} {型号}")
+            let mut state = TextareaState::new(window, cx)
+                .auto_grow(2, 6)
+                .placeholder("例如 {Logo} {型号}");
+            state.set_value(token_content(template, None), window, cx);
+            state
         });
         let size = NumberField::new(params.size, 1.0, 12.0, 0.1, 1, 100.0, "%", window, cx);
         let logo_size = NumberField::new(
@@ -220,14 +224,33 @@ impl TextLine {
         let color = ColorField::new(params.color.unwrap_or([255, 255, 255]), window, cx);
 
         let mut subscriptions = Vec::new();
-        subscriptions.push(
-            cx.subscribe_in(&template_input, window, |this, _, event, _, cx| {
+        subscriptions.push(cx.subscribe_in(
+            &template_input,
+            window,
+            move |this, state, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.rich_text_changed(id, &state.read(cx).value(), cx);
                     this.refresh_preview(cx);
                     cx.notify();
+                } else if matches!(event, InputEvent::Blur) {
+                    this.finish_rich_token_edit(id, window, cx);
                 }
-            }),
-        );
+            },
+        ));
+        // 模板在独立编辑窗口中显示，不能把选区同步绑定到创建控件的主窗口。
+        subscriptions.push(cx.observe(&template_input, move |_, _, cx| {
+            let view = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                for window in cx.windows() {
+                    window
+                        .update(cx, |_, window, cx| {
+                            view.update(cx, |this, cx| this.sync_rich_toolbar(id, window, cx))
+                                .ok();
+                        })
+                        .ok();
+                }
+            });
+        }));
         subscriptions.extend(size.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(logo_size.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(line_spacing.subscribe(window, cx, |_, _| {}));
@@ -243,6 +266,7 @@ impl TextLine {
         Self {
             id,
             template: template_input,
+            rich: RichTextEditor::new(id, template, params, fonts, window, cx),
             size,
             logo_size,
             line_spacing,
@@ -252,11 +276,12 @@ impl TextLine {
             auto_color: params.color.is_none(),
             bold: params.bold,
             italic: params.italic,
+            underline: params.underline,
             _subscriptions: subscriptions,
         }
     }
 
-    fn to_params(&self, cx: &App) -> TextParams {
+    pub(super) fn to_params(&self, cx: &App) -> TextParams {
         let selected_font = self
             .font
             .read(cx)
@@ -266,6 +291,7 @@ impl TextLine {
             .unwrap_or_default()
             .to_string();
         TextParams {
+            spans: self.rich.spans.clone(),
             font: if selected_font == INHERIT_FONT_LABEL {
                 String::new()
             } else {
@@ -280,6 +306,7 @@ impl TextLine {
                 Some(self.color.value(cx))
             },
             italic: self.italic,
+            underline: self.underline,
             bold: self.bold,
             align: self
                 .align
@@ -1005,9 +1032,6 @@ impl AppView {
             template.clone()
         };
         let remove_view = view.clone();
-        let auto_color_view = view.clone();
-        let bold_view = view.clone();
-        let italic_view = view.clone();
         let title = h_flex()
             .w_full()
             .min_w_0()
@@ -1049,26 +1073,7 @@ impl AppView {
             (template.contains("{自定义文本}") || template.contains("{自定义logo"))
                 .then_some(&empty_exif)
         });
-        let resolved = match exif {
-            None => warning("选中的照片没有 EXIF 信息，这一行不会渲染。", cx),
-            Some(exif) => {
-                let mut preview = template.replace("{Logo}", "[品牌 Logo]");
-                for name in self.params.custom_logos.keys() {
-                    preview = preview.replace(&format!("{{{name}}}"), &format!("[{name}]"));
-                }
-                let resolved = render_watermark_template(
-                    &preview,
-                    exif,
-                    time_format,
-                    &self.params.custom_text,
-                );
-                if resolved.is_empty() {
-                    warning("当前模板解析结果为空，这一行不会渲染。", cx)
-                } else {
-                    muted_text(format!("解析结果：{resolved}"), cx)
-                }
-            }
-        };
+        let resolved = self.render_rich_text_result(line, exif, time_format, cx);
         let open = self
             .text_groups
             .iter()
@@ -1077,17 +1082,7 @@ impl AppView {
 
         item.open(open)
             .title(title)
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&line.template)))
-                    .child(self.render_template_field_menu(
-                        line.template.clone(),
-                        view.clone(),
-                        id,
-                    )),
-            )
+            .child(self.render_rich_composer(line, view, cx))
             .child(resolved)
             .child(line.size.render("字号", false, cx))
             .when(template.contains("{自定义logo"), |this| {
@@ -1095,56 +1090,12 @@ impl AppView {
                     .child(description("按照片高度计算，仅缩放 Logo 的可见内容。"))
             })
             .child(line.line_spacing.render("行距", false, cx))
-            .child(field(
-                "字体",
-                Combobox::new(&line.font)
-                    .search_placeholder("搜索字体…")
-                    .w_full(),
-                cx,
-            ))
             .child(field("行对齐", Select::new(&line.align).w_full(), cx))
-            .child(line.color.render("文字颜色", line.auto_color, cx))
-            .child(
-                Switch::new(("text-auto-color", id))
-                    .checked(line.auto_color)
-                    .label("自动颜色（按背景取黑或白）")
-                    .on_click(move |checked: &bool, _, cx| {
-                        auto_color_view.update(cx, |this, cx| {
-                            this.set_text_line_auto_color(id, *checked, cx)
-                        });
-                    }),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_4()
-                    .pt_2()
-                    .child(
-                        Switch::new(("text-bold", id))
-                            .checked(line.bold)
-                            .label("加粗")
-                            .on_click(move |checked: &bool, _, cx| {
-                                bold_view.update(cx, |this, cx| {
-                                    this.set_text_line_style(id, Some(*checked), None, cx)
-                                });
-                            }),
-                    )
-                    .child(
-                        Switch::new(("text-italic", id))
-                            .checked(line.italic)
-                            .label("斜体")
-                            .on_click(move |checked: &bool, _, cx| {
-                                italic_view.update(cx, |this, cx| {
-                                    this.set_text_line_style(id, None, Some(*checked), cx)
-                                });
-                            }),
-                    ),
-            )
     }
 
-    fn render_template_field_menu(
+    pub(super) fn render_template_field_menu(
         &self,
-        input: Entity<InputState>,
+        input: Entity<TextareaState>,
         view: Entity<AppView>,
         line_id: u64,
     ) -> impl IntoElement {
@@ -1155,9 +1106,10 @@ impl AppView {
             .map(|name| (name.clone(), format!("{{{name}}}")))
             .collect::<Vec<_>>();
         Button::new(("template-field-options", line_id))
-            .label("插入字段")
-            .dropdown_caret(true)
-            .outline()
+            .icon(gpui_kit::assets::IconName::Braces)
+            .accessibility_label("插入字段")
+            .tooltip("插入字段")
+            .ghost()
             .small()
             .dropdown_menu(move |menu, _, _| {
                 let menu = TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {
@@ -1165,7 +1117,7 @@ impl AppView {
                     let view = view.clone();
                     menu.item(PopupMenuItem::new(*label).on_click(move |_, window, cx| {
                         view.update(cx, |this, cx| {
-                            this.append_to_input(&input, value, window, cx)
+                            this.insert_template_field(&input, value, window, cx)
                         });
                     }))
                 });
@@ -1176,7 +1128,7 @@ impl AppView {
                     menu.item(
                         PopupMenuItem::new(label.clone()).on_click(move |_, window, cx| {
                             view.update(cx, |this, cx| {
-                                this.append_to_input(&input, &value, window, cx)
+                                this.insert_template_field(&input, &value, window, cx)
                             });
                         }),
                     )
@@ -1196,15 +1148,26 @@ impl AppView {
         cx.notify();
     }
 
-    fn append_to_input(
+    fn insert_template_field(
         &mut self,
-        input: &Entity<InputState>,
+        input: &Entity<TextareaState>,
         suffix: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let value = format!("{}{}", input.read(cx).value(), suffix);
-        self.set_input_value(input, &value, window, cx);
+        use gpui_kit::base::input::InlineToken;
+        input.update(cx, |state, cx| {
+            let label = suffix.trim_start_matches('{').trim_end_matches('}');
+            state
+                .replace_with_token(
+                    InlineToken::new(format!("field:{suffix}"), suffix.to_owned())
+                        .with_label(label.to_owned()),
+                    window,
+                    cx,
+                )
+                .ok();
+            state.focus(window, cx);
+        });
     }
 
     pub(super) fn add_text_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1257,11 +1220,12 @@ impl AppView {
         else {
             return;
         };
-        let inherited = group
+        let mut inherited = group
             .lines
             .last()
             .map(|line| line.to_params(cx))
             .unwrap_or_default();
+        inherited.spans.clear();
         let id = self.next_text_line_id;
         self.next_text_line_id += 1;
         group.lines.push(TextLine::new(
@@ -1307,44 +1271,6 @@ impl AppView {
             self.refresh_preview(cx);
             cx.notify();
             return;
-        }
-    }
-
-    pub(super) fn set_text_line_auto_color(
-        &mut self,
-        id: u64,
-        auto_color: bool,
-        cx: &mut Context<Self>,
-    ) {
-        for group in &mut self.text_groups {
-            if let Some(line) = group.lines.iter_mut().find(|line| line.id == id) {
-                line.auto_color = auto_color;
-                self.refresh_preview(cx);
-                cx.notify();
-                return;
-            }
-        }
-    }
-
-    pub(super) fn set_text_line_style(
-        &mut self,
-        id: u64,
-        bold: Option<bool>,
-        italic: Option<bool>,
-        cx: &mut Context<Self>,
-    ) {
-        for group in &mut self.text_groups {
-            if let Some(line) = group.lines.iter_mut().find(|line| line.id == id) {
-                if let Some(bold) = bold {
-                    line.bold = bold;
-                }
-                if let Some(italic) = italic {
-                    line.italic = italic;
-                }
-                self.refresh_preview(cx);
-                cx.notify();
-                return;
-            }
         }
     }
 }

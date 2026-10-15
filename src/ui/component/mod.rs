@@ -12,5 +12,6 @@ pub(super) mod location_picker;
 pub(super) mod motion_photo_preview;
 pub(super) mod preview;
 pub(super) mod queue;
+mod rich_text;
 pub(super) mod text_section;
 pub(super) mod title_bar;

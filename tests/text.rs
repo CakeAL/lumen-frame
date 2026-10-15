@@ -279,3 +279,119 @@ fn templates_preserve_trailing_punctuation_even_when_fields_are_missing() {
     }
     assert_eq!(render_exif_template(",", &exif, "%Y/%m/%d"), ",");
 }
+
+#[test]
+fn rich_text_renders_multiple_fonts_and_colors_in_one_line() {
+    use lumen_frame::watermark::{TextSpan, TextStyle};
+    lumen_frame::media::ensure_vips();
+    let text = Text {
+        template: vec!["WWWWiiii".into()],
+        text_params: vec![TextParams {
+            font: "Arial".into(),
+            size: 0.08,
+            color: Some([0, 0, 255]),
+            spans: vec![TextSpan {
+                start: 0,
+                end: 4,
+                style: TextStyle {
+                    font: Some("Menlo".into()),
+                    color: Some([255, 0, 0]),
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
+        }],
+    };
+    let render = |text: &Text| {
+        text.render_text(
+            &ExifInfo::default(),
+            1000,
+            &WatermarkParams::default(),
+            "%Y/%m/%d",
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let rich = render(&text);
+    let pixels = lumen_frame::media::image_write_to_memory(&rich).unwrap();
+    assert!(
+        pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > 240 && p[1] < 10 && p[2] < 10 && p[3] > 128)
+            .count()
+            > 100
+    );
+    assert!(
+        pixels
+            .chunks_exact(4)
+            .filter(|p| p[2] > 240 && p[1] < 10 && p[0] < 10 && p[3] > 128)
+            .count()
+            > 100
+    );
+    let mut without_font = text.clone();
+    without_font.text_params[0].spans[0].style.font = None;
+    assert_ne!(
+        rich.width(),
+        render(&without_font).width(),
+        "局部字体应改变字形宽度"
+    );
+}
+
+#[test]
+fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
+    use lumen_frame::watermark::{TextSpan, TextStyle};
+    lumen_frame::media::ensure_vips();
+    let text = Text {
+        template: vec!["{ISO} Blue".into()],
+        text_params: vec![TextParams {
+            size: 0.08,
+            color: Some([0, 0, 255]),
+            spans: vec![TextSpan {
+                start: 0,
+                end: 5,
+                style: TextStyle {
+                    color: Some([255, 0, 0]),
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
+        }],
+    };
+    let mut red_counts = vec![];
+    for iso in [9, 12345] {
+        let exif = ExifInfo {
+            isospeed_ratings: Some(iso),
+            ..Default::default()
+        };
+        let image = text
+            .render_text(&exif, 1000, &WatermarkParams::default(), "%Y/%m/%d")
+            .unwrap()
+            .unwrap();
+        let pixels = lumen_frame::media::image_write_to_memory(&image).unwrap();
+        red_counts.push(
+            pixels
+                .chunks_exact(4)
+                .filter(|p| p[0] > 240 && p[2] < 10 && p[3] > 128)
+                .count(),
+        );
+        let first_blue = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, p)| p[2] > 240 && p[0] < 10 && p[3] > 128)
+            .map(|(i, _)| i % image.width() as usize)
+            .min()
+            .unwrap();
+        let last_red = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, p)| p[0] > 240 && p[2] < 10 && p[3] > 128)
+            .map(|(i, _)| i % image.width() as usize)
+            .max()
+            .unwrap();
+        assert!(
+            last_red < first_blue,
+            "字段替换后不能让红色溢出到后面的蓝色文字"
+        );
+    }
+    assert!(red_counts[1] > red_counts[0] * 3);
+}

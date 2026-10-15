@@ -10,7 +10,8 @@ use lumen_frame::{
         WatermarkPreset, builtin, delete_in, directory, list_in, load_in, save_in,
     },
     watermark::{
-        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
+        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, TextSpan, TextStyle,
+        WatermarkParams,
     },
 };
 
@@ -67,7 +68,16 @@ fn colourful_preset() -> WatermarkPreset {
 #[test]
 fn preset_round_trips_through_a_file() {
     let dir = scratch_dir("round-trip");
-    let original = colourful_preset();
+    let mut original = colourful_preset();
+    original.text_groups[0].text.text_params[0].spans = vec![TextSpan {
+        start: 7,
+        end: 15,
+        style: TextStyle {
+            font: Some("Menlo".into()),
+            color: Some([220, 40, 80]),
+            ..Default::default()
+        },
+    }];
 
     let path = save_in(&dir, "旅拍 5:3", &original).expect("保存失败");
     assert!(path.exists(), "保存后文件应该存在：{}", path.display());

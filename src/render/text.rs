@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
+    ops::Range,
     sync::{Mutex, OnceLock},
 };
 
@@ -25,7 +26,7 @@ use crate::{
     },
     watermark::{
         DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
-        WatermarkParams,
+        TextSpan, TextStyle, WatermarkParams, rich_text::style_at,
     },
 };
 
@@ -144,7 +145,10 @@ impl Text {
             .template
             .iter()
             .take(line_count)
-            .map(|t| parse_template(t, exif, time_format, &watermark_params.custom_text))
+            .zip(&self.text_params)
+            .map(|(t, params)| {
+                parse_template(t, params, exif, time_format, &watermark_params.custom_text)
+            })
             .collect();
 
         let mut font_ctx = FontContext::new();
@@ -369,12 +373,13 @@ enum Segment {
     Logo,
     CustomLogo(String),
     /// 已经用 EXIF 渲染好的普通文本
-    Text(String),
+    Text(String, TextStyle),
 }
 
 /// 把模板中的 `{Logo}` 识别出来，其余文本用 EXIF 模板渲染。
 fn parse_template(
     template: &str,
+    params: &TextParams,
     exif: &ExifInfo,
     time_format: &str,
     custom_text: &str,
@@ -385,15 +390,14 @@ fn parse_template(
 
     for m in re.find_iter(template) {
         if m.start() > last {
-            let text = render_watermark_template(
+            segments.extend(styled_template_segments(
                 &template[last..m.start()],
+                last,
+                &params.spans,
                 exif,
                 time_format,
                 custom_text,
-            );
-            if !text.is_empty() {
-                segments.push(Segment::Text(text));
-            }
+            ));
         }
         segments.push(if m.as_str() == "{Logo}" {
             Segment::Logo
@@ -404,12 +408,113 @@ fn parse_template(
     }
 
     if last < template.len() {
-        let text = render_watermark_template(&template[last..], exif, time_format, custom_text);
-        if !text.is_empty() {
-            segments.push(Segment::Text(text));
+        segments.extend(styled_template_segments(
+            &template[last..],
+            last,
+            &params.spans,
+            exif,
+            time_format,
+            custom_text,
+        ));
+    }
+    segments
+}
+
+/// 字段值的字数可能因照片而异，必须在替换字段时携带模板样式，不能直接沿用输出字节索引。
+fn styled_template_segments(
+    template: &str,
+    base: usize,
+    spans: &[TextSpan],
+    exif: &ExifInfo,
+    time_format: &str,
+    custom_text: &str,
+) -> Vec<Segment> {
+    let mut chars = Vec::new();
+    let fields = Regex::new(r"\{([^{}]+)\}").unwrap();
+    let mut last = 0;
+    for caps in fields.captures_iter(template) {
+        let token = caps.get(0).unwrap();
+        for (offset, ch) in template[last..token.start()].char_indices() {
+            chars.push((ch, style_at(spans, base + last + offset)));
+        }
+        let value = if &caps[1] == "自定义文本" {
+            Some(custom_text.to_owned())
+        } else {
+            resolve_exif_key_name(&caps[1], exif, time_format)
+        };
+        if let Some(value) = value {
+            let style = style_at(spans, base + token.start());
+            chars.extend(value.chars().map(|ch| (ch, style.clone())));
+        }
+        last = token.end();
+    }
+    for (offset, ch) in template[last..].char_indices() {
+        chars.push((ch, style_at(spans, base + last + offset)));
+    }
+    // 与普通模板相同：折叠 ASCII 空白，保留标点，移除片段末尾空格。
+    let mut collapsed: Vec<(char, TextStyle)> = Vec::new();
+    for (mut ch, style) in chars {
+        if matches!(ch, ' ' | '\t' | '\r' | '\n') {
+            ch = ' ';
+            if collapsed.last().is_some_and(|(last, _)| *last == ' ') {
+                continue;
+            }
+        }
+        collapsed.push((ch, style));
+    }
+    if collapsed.last().is_some_and(|(ch, _)| *ch == ' ') {
+        collapsed.pop();
+    }
+    let mut segments = Vec::new();
+    for (ch, style) in collapsed {
+        if let Some(Segment::Text(text, last_style)) = segments.last_mut()
+            && *last_style == style
+        {
+            text.push(ch);
+        } else {
+            segments.push(Segment::Text(ch.to_string(), style));
         }
     }
     segments
+}
+
+fn append_styled_text(
+    text: &mut String,
+    spans: &mut Vec<TextSpan>,
+    value: &str,
+    style: &TextStyle,
+) {
+    let start = text.len();
+    text.push_str(value);
+    if *style != TextStyle::default() {
+        spans.push(TextSpan {
+            start,
+            end: text.len(),
+            style: style.clone(),
+        });
+    }
+}
+
+/// 编辑器的已解析富文本；范围属于解析后的内容，与照片排版使用同一模板解析。
+pub fn render_styled_template_preview(
+    template: &str,
+    params: &TextParams,
+    exif: &ExifInfo,
+    time_format: &str,
+    custom_text: &str,
+) -> (String, Vec<TextSpan>) {
+    let mut text = String::new();
+    let mut spans = Vec::new();
+    for segment in parse_template(template, params, exif, time_format, custom_text) {
+        match segment {
+            Segment::Text(value, style) => {
+                append_styled_text(&mut text, &mut spans, &value, &style)
+            }
+            Segment::Logo => text.push_str("[品牌 Logo]"),
+            Segment::CustomLogo(name) => text.push_str(&format!("[{name}]")),
+        }
+    }
+    (text, spans)
 }
 
 /// 一个已加载的相机 logo（已经缩放到目标尺寸、RGBA/uchar）。
@@ -440,14 +545,18 @@ fn prepare_line(
     // 先用占位字符构建一次纯文本布局，量出该行文字的实际字形高度（cap height），
     // 让 Logo 高度与文字高度相等，而不是用整个 em 高度（那样会显得比字高）。
     let mut probe_text = String::new();
+    let mut probe_spans = Vec::new();
     for segment in segments {
         match segment {
-            Segment::Text(text) => probe_text.push_str(text),
+            Segment::Text(text, style) => {
+                append_styled_text(&mut probe_text, &mut probe_spans, text, style)
+            }
             Segment::Logo | Segment::CustomLogo(_) => probe_text.push('\u{200b}'),
         }
     }
     let probe_layout = build_parley_layout(
         &probe_text,
+        &probe_spans,
         params,
         font_size,
         None,
@@ -464,6 +573,7 @@ fn prepare_line(
         .max(1.0);
 
     let mut layout_text = String::new();
+    let mut layout_spans = Vec::new();
     let mut boxes: Vec<InlineBox> = Vec::new();
     let mut slots: Vec<LogoSlot> = Vec::new();
     let mut next_id = 0u64;
@@ -471,7 +581,9 @@ fn prepare_line(
 
     for segment in segments {
         match segment {
-            Segment::Text(text) => layout_text.push_str(text),
+            Segment::Text(text, style) => {
+                append_styled_text(&mut layout_text, &mut layout_spans, text, style)
+            }
             Segment::Logo | Segment::CustomLogo(_) => {
                 let make = exif.make.as_deref().unwrap_or_default();
                 let index = layout_text.len();
@@ -526,8 +638,13 @@ fn prepare_line(
         inline_box.index -= trim_len;
     }
 
+    for span in &mut layout_spans {
+        span.start = span.start.saturating_sub(trim_len);
+        span.end = span.end.saturating_sub(trim_len);
+    }
     let layout = build_parley_layout(
         &layout_text,
+        &layout_spans,
         params,
         font_size,
         None,
@@ -555,6 +672,7 @@ fn prepare_line(
 #[allow(clippy::too_many_arguments)]
 fn build_parley_layout(
     text: &str,
+    spans: &[TextSpan],
     params: &TextParams,
     font_size: f32,
     max_advance: Option<f32>,
@@ -589,6 +707,53 @@ fn build_parley_layout(
         params.line_spacing as f32,
     )));
     builder.push_default(StyleProperty::Brush(text_brush(params, watermark_params)));
+    builder.push_default(StyleProperty::Underline(params.underline));
+    for span in spans {
+        let range: Range<usize> = span.start..span.end;
+        if range.is_empty()
+            || range.end > text.len()
+            || !text.is_char_boundary(range.start)
+            || !text.is_char_boundary(range.end)
+        {
+            continue;
+        }
+        if let Some(font) = &span.style.font {
+            let family = format!(
+                "{font}, Menlo, Arial Unicode MS, Fira Code, sans-serif, Segoe UI Symbol, Cambria"
+            );
+            builder.push(
+                StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(family))),
+                range.clone(),
+            );
+        }
+        if let Some([r, g, b]) = span.style.color {
+            let color: peniko::Color = peniko::color::Rgba8::from_u8_array([r, g, b, 255]).into();
+            builder.push(StyleProperty::Brush(color.into()), range.clone());
+        }
+        if let Some(bold) = span.style.bold {
+            builder.push(
+                StyleProperty::FontWeight(if bold {
+                    FontWeight::BOLD
+                } else {
+                    FontWeight::NORMAL
+                }),
+                range.clone(),
+            );
+        }
+        if let Some(underline) = span.style.underline {
+            builder.push(StyleProperty::Underline(underline), range.clone());
+        }
+        if let Some(italic) = span.style.italic {
+            builder.push(
+                StyleProperty::FontStyle(if italic {
+                    FontStyle::Italic
+                } else {
+                    FontStyle::Normal
+                }),
+                range,
+            );
+        }
+    }
     for ibox in boxes {
         builder.push_inline_box(ibox.clone());
     }
@@ -668,6 +833,27 @@ fn render_line_into(
                         .hint(true)
                         .build();
                     let color = brush_to_rgba(glyph_run.style().brush.clone());
+
+                    if let Some(decoration) = &glyph_run.style().underline {
+                        let metrics = run.metrics();
+                        let y = glyph_run.baseline()
+                            - decoration.offset.unwrap_or(metrics.underline_offset);
+                        let thickness = decoration.size.unwrap_or(metrics.underline_size).max(1.0);
+                        let [r, g, b, _] = brush_to_rgba(decoration.brush.clone());
+                        let x0 = glyph_run.offset().floor().max(0.0) as i32;
+                        let x1 = (glyph_run.offset() + glyph_run.advance())
+                            .ceil()
+                            .min(canvas_w as f32) as i32;
+                        for row in y.floor() as i32..(y + thickness).ceil() as i32 {
+                            let dy = row + y_off;
+                            if !(0..canvas_h).contains(&dy) {
+                                continue;
+                            }
+                            for x in x0..x1 {
+                                blend_pixel(canvas, canvas_w, x, dy, r, g, b, 255);
+                            }
+                        }
+                    }
 
                     for glyph in glyph_run.positioned_glyphs() {
                         let mut render = Render::new(&[Source::Outline]);

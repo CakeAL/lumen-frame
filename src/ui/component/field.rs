@@ -290,6 +290,15 @@ impl ColorField {
         cx: &mut Context<AppView>,
         apply: impl Fn(&mut AppView, [u8; 3]) + Clone + 'static,
     ) -> Vec<Subscription> {
+        self.subscribe_edit(window, cx, move |this, rgb, _, _| apply(this, rgb))
+    }
+
+    pub(in crate::ui::app) fn subscribe_edit(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+        apply: impl Fn(&mut AppView, [u8; 3], &mut Window, &mut Context<AppView>) + Clone + 'static,
+    ) -> Vec<Subscription> {
         let from_picker = {
             let hex = self.hex.clone();
             let apply = apply.clone();
@@ -298,7 +307,7 @@ impl ColorField {
                     return;
                 };
                 let rgb = hsla_to_rgb(*color);
-                apply(this, rgb);
+                apply(this, rgb, window, cx);
 
                 // 输入框里已经是这个颜色就别动它，免得打字打到一半被规范化。
                 let typed = hex.read(cx).value().to_string();
@@ -320,7 +329,7 @@ impl ColorField {
                 let Some(rgb) = parse_hex(&text) else {
                     return;
                 };
-                apply(this, rgb);
+                apply(this, rgb, window, cx);
                 let color = rgb_to_hsla(rgb);
                 if picker.read(cx).value() != Some(color) {
                     picker.update(cx, |state, cx| state.update_color(color, window, cx));
