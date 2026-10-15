@@ -1098,7 +1098,6 @@ impl AppView {
         input: Entity<TextareaState>,
         view: Entity<AppView>,
         line_id: u64,
-        cx: &App,
     ) -> impl IntoElement {
         let logo_fields = self
             .params
@@ -1110,7 +1109,6 @@ impl AppView {
             ("template-field-options", line_id),
             gpui_kit::assets::IconName::Braces,
             "插入字段",
-            cx,
         )
         .dropdown_menu(move |menu, _, _| {
             let menu = TEMPLATE_FIELDS.iter().fold(menu, |menu, (label, value)| {

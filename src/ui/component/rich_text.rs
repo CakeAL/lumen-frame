@@ -16,7 +16,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::input::{InlineToken, InputContent};
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IndexPath, Selectable as _, Sizable as _,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     combobox::{Combobox, ComboboxEvent, ComboboxState},
     h_flex,
     input::{Textarea, TextareaState},
@@ -38,17 +38,14 @@ pub(super) fn toolbar_button(
     id: impl Into<ElementId>,
     icon: IconName,
     label: &'static str,
-    cx: &App,
 ) -> Button {
-    let hover_background = cx.theme().tokens.button_secondary_hover;
     Button::new(id)
         .icon(icon)
         .accessibility_label(label)
         .tooltip(label)
         .small()
-        .outline()
+        .ghost()
         .size_8()
-        .hover(move |style| style.bg(hover_background).shadow_sm())
 }
 
 pub(super) struct RichTextEditor {
@@ -539,27 +536,22 @@ impl AppView {
             .gap_1()
             .items_center()
             .child(
-                div()
-                    .size_8()
-                    .flex_shrink_0()
-                    // Combobox 的内部裁切会截断触发按钮的投影，由外层补上。
-                    .hover(|style| style.shadow_sm())
-                    .child(
-                        Combobox::new(&line.rich.font)
-                            .appearance(false)
-                            .small()
-                            .p_0()
-                            .border_0()
-                            // 自定义触发器后仍有一格尾部间距，让它落在按钮间隙中，避免裁掉描边。
-                            .h_8()
-                            .w_9()
-                            .search_placeholder("搜索字体…")
-                            .menu_width(gpui_kit::rems(18.))
-                            .render_trigger(move |trigger, _, cx| {
-                                toolbar_button(("rich-text-font", id), IconName::Type, "字体", cx)
-                                    .selected(trigger.is_open())
-                            }),
-                    ),
+                div().size_8().flex_shrink_0().child(
+                    Combobox::new(&line.rich.font)
+                        .appearance(false)
+                        .small()
+                        .p_0()
+                        .border_0()
+                        // 自定义触发器后仍有一格尾部间距，让它落在按钮间隙中，避免裁切按钮的悬浮背景。
+                        .h_8()
+                        .w_9()
+                        .search_placeholder("搜索字体…")
+                        .menu_width(gpui_kit::rems(18.))
+                        .render_trigger(move |trigger, _, _| {
+                            toolbar_button(("rich-text-font", id), IconName::Type, "字体")
+                                .selected(trigger.is_open())
+                        }),
+                ),
             )
             .child(
                 Popover::new(("rich-text-color-popup", id))
@@ -569,7 +561,6 @@ impl AppView {
                         ("rich-text-color", id),
                         IconName::Baseline,
                         "文字颜色",
-                        cx,
                     ))
                     .content(move |_, _, _| {
                         let view = color_view.clone();
@@ -616,7 +607,7 @@ impl AppView {
         ] {
             let view = view.clone();
             toolbar = toolbar.child(
-                toolbar_button((name, id), icon, label, cx)
+                toolbar_button((name, id), icon, label)
                     .selected(selected)
                     .on_click(move |_, window, cx| {
                         view.update(cx, |this, cx| {
@@ -626,14 +617,13 @@ impl AppView {
             );
         }
         toolbar
-            .child(self.render_template_field_menu(line.template.clone(), view.clone(), id, cx))
+            .child(self.render_template_field_menu(line.template.clone(), view.clone(), id))
             .child(div().flex_1())
             .child(
                 toolbar_button(
                     ("rich-text-reset", id),
                     IconName::RemoveFormatting,
                     "清除格式",
-                    cx,
                 )
                 .on_click(move |_, window, cx| {
                     view.update(cx, |this, cx| {
@@ -777,6 +767,7 @@ mod tests {
                 let actual = window.find((name, id)).bounds();
                 assert_eq!(actual.size, expected.size);
                 assert_eq!(actual.center().y, expected.center().y);
+                window.hover((name, id), cx);
             }
             window.click(("rich-text-italic", id), cx);
             app.update(cx, |app, cx| {
