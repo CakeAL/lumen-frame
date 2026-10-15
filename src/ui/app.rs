@@ -115,6 +115,7 @@ pub struct AppView {
     aspect_choice: AspectRatioChoice,
 
     controls: ParameterControls,
+    background_state: behavior::palette::BackgroundState,
     preview: Entity<WatermarkPreview>,
     /// 与水印工作区完全隔离的 HDR 解析页状态。
     gainmap: GainMapPageState,
@@ -256,6 +257,7 @@ impl AppView {
             border_width_open: false,
             aspect_choice,
             controls,
+            background_state: Default::default(),
             preview,
             gainmap,
             other_tools,
@@ -292,6 +294,7 @@ impl AppView {
         view.apply_appearance(window, cx);
         view.start_automatic_update_check(window, cx);
         view.load_logo_thumbnails(cx);
+        view.sync_gradient_controls(window, cx);
         view
     }
 
@@ -864,6 +867,7 @@ impl AppView {
             // 空队列时控件本来就在编辑全局默认配置，不必重建。
             self.photo_watermarks.remove(&first);
             self.refresh_preview(cx);
+            self.schedule_palette_for_selected(cx);
         }
         cx.notify();
     }
@@ -899,6 +903,9 @@ impl AppView {
         };
         self.thumbnails.remove(&id);
         self.photo_watermarks.remove(&id);
+        self.background_state
+            .palettes
+            .retain(|(photo_id, _), _| *photo_id != id);
         self.restore_selected_watermark(window, cx);
         self.preset_feedback = None;
         cx.notify();
@@ -912,6 +919,7 @@ impl AppView {
             return;
         }
         self.thumbnails.clear();
+        self.background_state.palettes.clear();
         self.photo_watermarks.clear();
         // 导出任务拥有冻结的照片快照，清空队列不结束任务，也不能解除重复导出的锁。
         if !matches!(self.export, ExportState::Running { .. }) {
@@ -1225,6 +1233,7 @@ impl AppView {
     /// 参数是唯一真值来源，控件只是它的入口；载入预设相当于从外部改写了参数，所以每个
     /// 入口都要重新对齐一次。
     fn sync_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_gradient_controls(window, cx);
         let params = self.params.clone();
         let controls = &self.controls;
         controls.custom_text.update(cx, |state, cx| {

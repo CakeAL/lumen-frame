@@ -60,7 +60,8 @@ pub struct PreviewJob {
 pub fn render_preview(job: &PreviewJob) -> Result<Arc<RenderImage>> {
     ensure_vips();
     let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;
-    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &job.params, &job.text_groups)
+    let params = crate::features::photo_palette::resolve(&job.path, &job.params)?;
+    let composed = Photo::compose_watermark(base, job.exif.as_ref(), &params, &job.text_groups)
         .context("合成预览")?;
     to_render_image(&composed).context("转换预览位图")
 }
@@ -75,13 +76,10 @@ pub(crate) struct RenderedPreview {
 pub(crate) fn render_preview_with_regions(job: &PreviewJob) -> Result<RenderedPreview> {
     ensure_vips();
     let base = load_scaled(&job.path, job.max_edge).context("读取预览底图")?;
-    let (composed, text_regions) = Photo::compose_watermark_with_regions(
-        base,
-        job.exif.as_ref(),
-        &job.params,
-        &job.text_groups,
-    )
-    .context("合成预览")?;
+    let params = crate::features::photo_palette::resolve(&job.path, &job.params)?;
+    let (composed, text_regions) =
+        Photo::compose_watermark_with_regions(base, job.exif.as_ref(), &params, &job.text_groups)
+            .context("合成预览")?;
     Ok(RenderedPreview {
         image: to_render_image(&composed).context("转换预览位图")?,
         text_regions,

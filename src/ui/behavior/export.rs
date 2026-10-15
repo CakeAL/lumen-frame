@@ -199,6 +199,61 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn applying_current_settings_keeps_empty_text_and_freezes_palette_rules_for_every_export(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::watermark::{GradientPalette, PaletteTheme};
+        let (view, cx) = rendered_workspace(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.add_photos(
+                vec![
+                    "test_images/DSC_4587.jpg".into(),
+                    "test_images/ultra_hdr.jpg".into(),
+                ],
+                cx,
+            );
+            view.params.custom_text = "原始照片内容".into();
+            view.select_photo_at(1, window, cx);
+            view.params.custom_text = "目标照片内容".into();
+            view.select_photo_at(0, window, cx);
+            view.text_groups.clear();
+            view.params.gradient_background = true;
+            view.params.gradient_palette =
+                GradientPalette::new(PaletteTheme::Dark, vec![Some(0), Some(1)]);
+            view.params.border_radius = 0.12;
+            view.apply_current_settings_to_all(window, cx);
+            let jobs = view.photo_export_jobs(ExportScope::AllPhotos, cx);
+            assert_eq!(jobs.len(), 2);
+            for job in &jobs {
+                assert!(job.watermark.text_groups.is_empty());
+                assert_eq!(job.watermark.params.border_radius, 0.12);
+                assert_eq!(
+                    job.watermark.params.gradient_palette,
+                    view.params.gradient_palette
+                );
+            }
+            assert_eq!(jobs[1].watermark.params.custom_text, "目标照片内容");
+            view.set_palette_theme(PaletteTheme::Vivid, window, cx);
+            assert_eq!(
+                jobs[1].watermark.params.gradient_palette.theme(),
+                PaletteTheme::Dark
+            );
+            view.select_photo_at(1, window, cx);
+            assert!(view.text_groups.is_empty());
+            assert_eq!(view.params.custom_text, "目标照片内容");
+            view.add_photos(vec!["future.jpg".into()], cx);
+            let future = view.photos().last().unwrap().id();
+            let watermark = view.watermark_for_photo(future, cx);
+            assert!(watermark.text_groups.is_empty());
+            assert!(watermark.params.custom_text.is_empty());
+            assert_eq!(
+                watermark.params.gradient_palette.theme(),
+                PaletteTheme::Dark
+            );
+        });
+    }
+
+    #[gpui_kit::test]
     fn custom_photo_text_survives_selection_and_presets_and_is_frozen_for_export(
         cx: &mut TestAppContext,
     ) {

@@ -3,3 +3,4 @@
 pub mod colour_gainmap;
 pub mod geolocation;
 pub mod motion_photo;
+pub mod photo_palette;

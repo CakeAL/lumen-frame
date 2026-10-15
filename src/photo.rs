@@ -54,13 +54,15 @@ impl Photo {
         text_groups: &[TextGroup],
     ) -> Result<VipsImage> {
         let img = load_base_image(&self.path)?;
-        Self::compose_watermark(img, self.exif.as_ref(), params, text_groups)
+        let params = crate::features::photo_palette::resolve(&self.path, params)?;
+        Self::compose_watermark(img, self.exif.as_ref(), &params, text_groups)
     }
 
     /// 在给定的底图上合成水印。
     ///
     /// 与 [`Self::generate_watermark`] 的区别只有底图来源：导出时是原图，实时预览时
     /// 是缩略后的底图。把这条管线抽出来，预览才能复用导出完全相同的合成逻辑。
+    /// 照片色卡来源由导出和预览入口先按原照片解析，再传入这条共用合成管线。
     pub fn compose_watermark(
         img: VipsImage,
         exif: Option<&ExifInfo>,

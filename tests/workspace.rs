@@ -319,8 +319,8 @@ fn empty_photo_text_and_editor_lifetime_survive_switching(cx: &mut TestAppContex
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.scroll(
-            "solid-background",
+        window.within("background-mode").scroll(
+            0_usize,
             ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
             cx,
         );
@@ -531,8 +531,8 @@ fn text_group_editor_opens_in_a_separate_window(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update(|window, cx| {
-        window.scroll(
-            "solid-background",
+        window.within("background-mode").scroll(
+            0_usize,
             ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
             cx,
         );
@@ -555,8 +555,8 @@ fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
 
     assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 1);
     cx.update(|window, cx| {
-        window.scroll(
-            "solid-background",
+        window.within("background-mode").scroll(
+            0_usize,
             ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
             cx,
         );

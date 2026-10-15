@@ -9,7 +9,7 @@ use crate::{
     },
     render::{canvas, image as photo_image, text::TextGroupRegion},
     rotation::Rotation,
-    watermark::TextGroup,
+    watermark::{BackgroundGradient, TextGroup},
 };
 use anyhow::{Context as _, Result};
 use gpui_kit::{DevicePixels, RenderImage, Size, size};
@@ -101,6 +101,7 @@ struct BackgroundKey {
     solid: bool,
     color: [u8; 3],
     blur: f64,
+    gradient: Option<BackgroundGradient>,
 }
 
 #[derive(PartialEq)]
@@ -142,6 +143,11 @@ impl PreviewLayerCache {
 
     pub(crate) fn render(&mut self, job: &PreviewJob) -> Result<Arc<LayeredPreview>> {
         ensure_vips();
+        let resolved_job = PreviewJob {
+            params: crate::features::photo_palette::resolve(&job.path, &job.params)?,
+            ..job.clone()
+        };
+        let job = &resolved_job;
         let metadata = std::fs::metadata(&job.path).context("读取预览照片信息")?;
         let key = SourceKey {
             path: job.path.clone(),
@@ -318,8 +324,12 @@ impl LayerRenderer for CachedRenderer<'_> {
                 ..group.clone()
             },
             default_font: self.job.params.default_font.clone(),
-            background: self.job.params.background,
-            solid: self.job.params.solid_background,
+            background: self
+                .job
+                .params
+                .text_background_color()
+                .unwrap_or(self.job.params.background),
+            solid: self.job.params.text_background_color().is_some(),
             exif: format!("{:?}", self.job.exif),
             custom_logos: group
                 .custom_logo_names()
@@ -367,17 +377,18 @@ impl LayerRenderer for CachedRenderer<'_> {
         let params = &self.job.params;
         let key = BackgroundKey {
             size,
-            solid: params.solid_background,
-            color: if params.solid_background {
+            solid: !params.gradient_background && params.solid_background,
+            color: if !params.gradient_background && params.solid_background {
                 params.background
             } else {
                 [0; 3]
             },
-            blur: if params.solid_background {
+            blur: if params.solid_background || params.gradient_background {
                 0.0
             } else {
                 params.blur_sigma
             },
+            gradient: params.gradient_background.then(|| params.gradient.clone()),
         };
         let image = if let Some((_, image)) = self
             .cache
@@ -619,6 +630,33 @@ mod tests {
     }
 
     #[test]
+    fn gradient_changes_refresh_background_without_rebuilding_unaffected_layers() {
+        let mut job = job();
+        job.params.gradient_background = true;
+        let mut cache = PreviewLayerCache::default();
+        let first = cache.render(&job).unwrap();
+        job.params.gradient =
+            crate::watermark::BackgroundGradient::new(270.0, job.params.gradient.colors().to_vec())
+                .unwrap();
+        let rotated = cache.render(&job).unwrap();
+        assert!(!same(&first, &rotated, 0));
+        for ix in 1..first.layers.len() {
+            assert!(same(&first, &rotated, ix));
+        }
+        job.params.blur_sigma += 10.0;
+        job.params.background = [1, 2, 3];
+        let unchanged = cache.render(&job).unwrap();
+        for ix in 0..rotated.layers.len() {
+            assert!(same(&rotated, &unchanged, ix));
+        }
+        job.params.gradient = "linear-gradient(270deg,#000,#ff0000,#000)".parse().unwrap();
+        let recolored = cache.render(&job).unwrap();
+        assert!(!same(&unchanged, &recolored, 0));
+        assert!(same(&unchanged, &recolored, 1));
+        assert!(same(&unchanged, &recolored, 2));
+    }
+
+    #[test]
     fn parameter_changes_only_invalidate_their_dependent_layers() {
         let mut job = job();
         let mut cache = PreviewLayerCache::default();
@@ -775,12 +813,16 @@ mod tests {
                 Rotation::HalfTurn,
                 Rotation::CounterClockwise90,
             ] {
-                for solid in [false, true] {
+                for kind in [
+                    crate::watermark::BackgroundKind::Photo,
+                    crate::watermark::BackgroundKind::Solid,
+                    crate::watermark::BackgroundKind::Gradient,
+                ] {
                     let mut job = job();
                     job.path = path.into();
                     job.exif = ExifInfo::read(&job.path).ok();
                     job.params.rotation = rotation;
-                    job.params.solid_background = solid;
+                    job.params.set_background_kind(kind);
                     job.max_edge = 240;
                     job.text_groups[0].text.template[0] = "{Logo} {型号}".into();
                     job.text_groups[0].position = Placement::Right;
@@ -802,7 +844,7 @@ mod tests {
                         .unwrap();
                     assert!(
                         max_error <= 2,
-                        "{path} {rotation:?} solid={solid}: 像素误差 {max_error}"
+                        "{path} {rotation:?} background={kind:?}: 像素误差 {max_error}"
                     );
                 }
             }

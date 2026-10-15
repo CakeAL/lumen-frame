@@ -1273,10 +1273,11 @@ fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<Vips
     unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr())).ok() }
 }
 
-/// 浅色纯色背景使用黑色自动文字；其它背景使用白色。
+/// 浅色纯色背景或渐变中点使用黑色自动文字；其它背景使用白色。
 fn auto_color(watermark_params: &WatermarkParams) -> bool {
-    let [red, green, blue] = watermark_params.background;
-    watermark_params.solid_background && !is_dark_color(red, green, blue)
+    watermark_params
+        .text_background_color()
+        .is_some_and(|[red, green, blue]| !is_dark_color(red, green, blue))
 }
 
 fn is_dark_color(red: u8, green: u8, blue: u8) -> bool {

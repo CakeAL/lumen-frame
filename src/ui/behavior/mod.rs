@@ -3,4 +3,5 @@
 mod appearance;
 mod export;
 pub(super) mod import;
+pub(super) mod palette;
 pub(super) mod update;

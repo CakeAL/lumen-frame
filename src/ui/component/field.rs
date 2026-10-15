@@ -242,6 +242,21 @@ pub(in crate::ui::app) struct ColorField {
 }
 
 impl ColorField {
+    /// 用于已有行标签的紧凑颜色编辑器。
+    pub(in crate::ui::app) fn render_control(&self) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(ColorPicker::new(&self.picker))
+            .child(
+                Input::new(&self.hex)
+                    .id("gradient-color-hex")
+                    .aria_label("颜色值")
+                    .small()
+                    .w_24(),
+            )
+    }
+
     pub(in crate::ui::app) fn new(
         rgb: [u8; 3],
         window: &mut Window,

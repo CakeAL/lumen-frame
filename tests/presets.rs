@@ -93,6 +93,37 @@ fn preset_round_trips_through_a_file() {
 }
 
 #[test]
+fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
+    use lumen_frame::watermark::{
+        BackgroundGradient, BackgroundKind, GradientPalette, PaletteTheme,
+    };
+    let dir = scratch_dir("gradient");
+    let mut preset = colourful_preset();
+    preset.params.gradient = "linear-gradient(135deg,#f02fc2,#6094ea,#fff)"
+        .parse::<BackgroundGradient>()
+        .unwrap();
+    preset.params.set_background_kind(BackgroundKind::Gradient);
+    preset.params.gradient_palette =
+        GradientPalette::new(PaletteTheme::Vivid, vec![None, Some(0), Some(2)]);
+    save_in(&dir, "多色渐变", &preset).unwrap();
+    let loaded = load_in(&dir, "多色渐变").unwrap();
+    assert_eq!(loaded.params.background_kind(), BackgroundKind::Gradient);
+    assert_eq!(loaded.params.gradient, preset.params.gradient);
+    assert_eq!(
+        loaded.params.gradient_palette,
+        preset.params.gradient_palette
+    );
+    let old: WatermarkParams =
+        toml::from_str("solid_background = true\nbackground = [18,52,86]").unwrap();
+    assert_eq!(old.background_kind(), BackgroundKind::Solid);
+    assert_eq!(
+        WatermarkParams::default().background_kind(),
+        BackgroundKind::Photo
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn output_folder_is_not_part_of_a_preset() {
     let dir = scratch_dir("output-folder");
     let preset = colourful_preset();

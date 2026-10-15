@@ -7,6 +7,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::rotation::Rotation;
 
+mod gradient;
+pub use gradient::{BackgroundGradient, GradientPalette, PaletteTheme};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundKind {
+    Photo,
+    Solid,
+    Gradient,
+}
+
 /// 元素相对于照片内容的放置边。
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +54,11 @@ pub struct WatermarkParams {
     pub shadow_size: f64,
     pub shadow_density: f64,
     pub solid_background: bool,
+    /// 单独保留旧纯色开关，旧预设无需迁移；渐变启用时优先使用渐变。
+    pub gradient_background: bool,
+    pub gradient: BackgroundGradient,
+    /// 色卡来源保留代表色序号，应用到其它照片时由那张照片重新求值。
+    pub gradient_palette: GradientPalette,
     pub blur_sigma: f64,
     /// 全部照片共用的本机 JPEG 导出质量，不写入预设。
     #[serde(skip, default = "default_jpeg_quality")]
@@ -67,9 +82,38 @@ impl Default for WatermarkParams {
             shadow_size: 0.06,
             shadow_density: 1.2,
             solid_background: false,
+            gradient_background: false,
+            gradient: BackgroundGradient::default(),
+            gradient_palette: GradientPalette::default(),
             blur_sigma: 15.0,
             quality: DEFAULT_JPEG_QUALITY,
             rotation: Rotation::None,
+        }
+    }
+}
+
+impl WatermarkParams {
+    pub fn background_kind(&self) -> BackgroundKind {
+        if self.gradient_background {
+            BackgroundKind::Gradient
+        } else if self.solid_background {
+            BackgroundKind::Solid
+        } else {
+            BackgroundKind::Photo
+        }
+    }
+
+    pub fn set_background_kind(&mut self, kind: BackgroundKind) {
+        self.gradient_background = kind == BackgroundKind::Gradient;
+        self.solid_background = kind == BackgroundKind::Solid;
+    }
+
+    /// 自动文字颜色以渐变中点作参考，用户仍可为文字组指定固定颜色。
+    pub(crate) fn text_background_color(&self) -> Option<[u8; 3]> {
+        match self.background_kind() {
+            BackgroundKind::Gradient => Some(self.gradient.color_at(0.5)),
+            BackgroundKind::Solid => Some(self.background),
+            BackgroundKind::Photo => None,
         }
     }
 }

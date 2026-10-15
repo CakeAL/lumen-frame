@@ -15,7 +15,7 @@ use gpui_kit::component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
-    select::{Select, SelectState},
+    select::{Select, SelectEvent, SelectState},
     switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
@@ -29,7 +29,10 @@ use gpui_kit::{
     linear_color_stop, linear_gradient, relative, rgba, white,
 };
 
-use crate::watermark::{Placement, TextAlign, TextDirection, TextGroup, WatermarkParams};
+use crate::watermark::{
+    BackgroundGradient, PaletteTheme, Placement, TextAlign, TextDirection, TextGroup,
+    WatermarkParams,
+};
 
 use super::super::{AppView, ExportState, PresetScope};
 use super::field::{
@@ -192,6 +195,8 @@ pub(in crate::ui::app) struct ParameterControls {
     pub output_folder: Entity<InputState>,
     pub preset_name: Entity<InputState>,
     pub custom_text: Entity<InputState>,
+    pub gradient_angle: NumberField,
+    pub palette_theme: Entity<SelectState<Vec<Choice<PaletteTheme>>>>,
 }
 
 impl ParameterControls {
@@ -304,6 +309,38 @@ impl ParameterControls {
             cx,
         );
         let background = ColorField::new(params.background, window, cx);
+        let gradient_angle = NumberField::new(
+            params.gradient.angle(),
+            0.0,
+            359.0,
+            1.0,
+            0,
+            1.0,
+            "°",
+            window,
+            cx,
+        );
+        subscriptions.extend(gradient_angle.subscribe(window, cx, |this, value| {
+            this.params.gradient =
+                BackgroundGradient::new(value, this.params.gradient.colors().to_vec())
+                    .expect("valid gradient angle");
+        }));
+        let themes = super::background::PALETTE_THEMES;
+        let palette_theme = select_state(
+            choices(themes),
+            index_of(themes, &params.gradient_palette.theme()),
+            window,
+            cx,
+        );
+        subscriptions.push(cx.subscribe_in(
+            &palette_theme,
+            window,
+            |this, _, event, window, cx| {
+                if let SelectEvent::Confirm(Some(theme)) = event {
+                    this.set_palette_theme(*theme, window, cx);
+                }
+            },
+        ));
 
         subscriptions.extend(border_top.subscribe(window, cx, |this, value| {
             this.params.border_ratio.0 = value;
@@ -430,6 +467,8 @@ impl ParameterControls {
                 blur_sigma,
                 quality,
                 background,
+                gradient_angle,
+                palette_theme,
                 aspect_ratio,
                 aspect_width,
                 aspect_height,
@@ -500,7 +539,21 @@ impl AppView {
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(cx.theme().foreground)
+                            .flex_1()
+                            .min_w_0()
                             .child("水印参数"),
+                    )
+                    .child(
+                        Button::new("apply-settings-to-all")
+                            .label("应用到全部")
+                            .small()
+                            .outline()
+                            .tooltip("应用当前设置到所有照片")
+                            .accessibility_label("应用当前设置到所有照片")
+                            .disabled(self.selected_photo_id().is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.apply_current_settings_to_all(window, cx)
+                            })),
                     ),
             )
             .child(
@@ -1030,13 +1083,19 @@ impl AppView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let params = &preset.params;
-        let background = rgb_to_hsla(params.background);
-        let luminance = 0.2126 * f32::from(params.background[0])
-            + 0.7152 * f32::from(params.background[1])
-            + 0.0722 * f32::from(params.background[2]);
+        let rgb = params.text_background_color().unwrap_or(params.background);
+        let background = rgb_to_hsla(rgb);
+        let luminance =
+            0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2]);
         let ink = if luminance < 128.0 { white() } else { black() };
         // 这里的固定色是用户指定的“高斯模糊”预览图例，不是应用主题色。
-        let canvas_background = if params.solid_background {
+        let canvas_background = if params.gradient_background {
+            linear_gradient(
+                params.gradient.angle() as f32,
+                linear_color_stop(rgb_to_hsla(params.gradient.color_at(0.0)), 0.0),
+                linear_color_stop(rgb_to_hsla(params.gradient.color_at(1.0)), 1.0),
+            )
+        } else if params.solid_background {
             background.into()
         } else {
             linear_gradient(
@@ -1196,27 +1255,6 @@ impl AppView {
     }
 
     // MARK: 背景
-
-    fn render_background_section(&self, cx: &Context<Self>) -> impl IntoElement {
-        let controls = &self.controls;
-        let solid = self.params.solid_background;
-
-        GroupBox::new()
-            .id("background-section")
-            .title("背景")
-            .child(
-                Switch::new("solid-background")
-                    .checked(solid)
-                    .label("纯色背景")
-                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                        this.params.solid_background = *checked;
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-            )
-            .child(controls.background.render("背景颜色", !solid, cx))
-            .child(controls.blur_sigma.render("模糊强度", solid, cx))
-    }
 
     // MARK: 图片细节
 

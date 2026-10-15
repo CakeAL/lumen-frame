@@ -112,8 +112,11 @@ pub fn new_canvas(
     img: &VipsImage,
     params: &WatermarkParams,
 ) -> Result<VipsImage> {
+    ensure_vips();
     let (img_w, img_h) = (img.width() as i32, img.height() as i32);
-    let canvas = if params.solid_background {
+    let canvas = if params.gradient_background {
+        super::gradient::render(canvas_w, canvas_h, &params.gradient)
+    } else if params.solid_background {
         // 纯色背景
         let [r, g, b] = params.background;
         let background = image_op(|out| unsafe {
