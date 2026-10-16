@@ -25,6 +25,7 @@ pub struct LayeredPreview {
     size: Size<DevicePixels>,
     pub(crate) layers: Vec<PositionedLayer<Arc<RenderImage>>>,
     pub(crate) text_regions: Vec<TextGroupRegion>,
+    pub(crate) palette_region: Option<TextGroupRegion>,
     flattened: OnceLock<Arc<RenderImage>>,
 }
 
@@ -194,8 +195,14 @@ impl PreviewLayerCache {
         renderer.cache.texts = renderer.next_texts;
         let mut layers = Vec::with_capacity(scene.layers.len());
         let mut regions = Vec::new();
+        let mut palette_region = None;
         let mut next_rotated = Vec::new();
-        for layer in scene.layers {
+        for (layer_ix, layer) in scene.layers.into_iter().enumerate() {
+            if Some(layer_ix) == scene.palette_layer_ix {
+                palette_region = layer.image.visible.and_then(|region| {
+                    region.positioned(0, (layer.x, layer.y), scene.size, job.params.rotation)
+                });
+            }
             if let Some(group_ix) = layer.group_ix
                 && let Some(region) = layer.image.visible
                 && let Some(region) = region.positioned(
@@ -248,6 +255,7 @@ impl PreviewLayerCache {
             size: size(DevicePixels(w), DevicePixels(h)),
             layers,
             text_regions: regions,
+            palette_region,
             flattened: OnceLock::new(),
         }))
     }
@@ -398,9 +406,16 @@ impl LayerRenderer for CachedRenderer<'_> {
         }
         let image = crate::render::palette_card::render(self.dimensions, params)?
             .map(|image| {
+                let visible = TextGroupRegion::from_layer(
+                    &image,
+                    0,
+                    (0, 0),
+                    (image.width() as i32, image.height() as i32),
+                    Rotation::None,
+                )?;
                 Ok::<_, anyhow::Error>(TextLayer {
                     image: to_render_image(&image)?,
-                    visible: None,
+                    visible,
                 })
             })
             .transpose()?;

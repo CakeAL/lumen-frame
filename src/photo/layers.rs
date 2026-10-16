@@ -18,6 +18,7 @@ pub(crate) struct WatermarkLayers<I> {
     pub size: (i32, i32),
     pub photo_origin: (i32, i32),
     pub layers: Vec<PositionedLayer<I>>,
+    pub palette_layer_ix: Option<usize>,
 }
 
 pub(crate) trait LayerRenderer {
@@ -257,10 +258,12 @@ pub(crate) fn prepare<R: LayerRenderer>(
         };
         cluster_origins[root] = (x - left, y - top);
     }
+    let mut palette_layer_ix = None;
     for (group_ix, image) in texts {
         let (root, x, y) = origins[group_ix].unwrap();
         let mut origin = cluster_origins[root];
         if group_ix == palette_ix {
+            palette_layer_ix = Some(layers.len());
             origin.0 += palette_offset.0;
             origin.1 += palette_offset.1;
         }
@@ -275,6 +278,7 @@ pub(crate) fn prepare<R: LayerRenderer>(
         size,
         photo_origin: (img_x, img_y),
         layers,
+        palette_layer_ix,
     })
 }
 

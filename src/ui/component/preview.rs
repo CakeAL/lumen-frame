@@ -17,8 +17,8 @@ use gpui_kit::prelude::*;
 #[cfg(test)]
 use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
-    AvailableSpace, Bounds, Context, FontWeight, ObjectFit, Pixels, RenderImage, SharedString,
-    Task, canvas, div, point, px, size,
+    AvailableSpace, Bounds, Context, ElementId, FontWeight, ObjectFit, Pixels, RenderImage,
+    SharedString, Task, canvas, div, point, px, size,
 };
 
 use super::super::AppView;
@@ -31,6 +31,12 @@ use crate::ui::image::{LayeredPreview, PreviewJob, PreviewLayerCache};
 /// 这个值决定「跟手」和「算得少」的平衡：太小则拖动滑块时排满后台任务，太大则有明显
 /// 的延迟感。
 const DEBOUNCE: Duration = Duration::from_millis(80);
+
+#[derive(Clone, Copy)]
+enum PreviewEditTarget {
+    Text(u64),
+    Palette,
+}
 
 /// 分层预览的状态。
 ///
@@ -70,6 +76,7 @@ pub struct WatermarkPreview {
     pending: Option<(PreviewJob, Vec<u64>)>,
     /// 仅最新请求的位图可以编辑；旧图仍显示时不保留它的交互区域。
     text_regions: Vec<(u64, TextGroupRegion)>,
+    palette_region: Option<TextGroupRegion>,
     worker: Option<Task<()>>,
     cache: Option<PreviewLayerCache>,
 }
@@ -81,6 +88,7 @@ impl WatermarkPreview {
             generation: 0,
             pending: None,
             text_regions: Vec::new(),
+            palette_region: None,
             worker: None,
             cache: Some(PreviewLayerCache::default()),
         }
@@ -95,6 +103,7 @@ impl WatermarkPreview {
         self.pending = Some((job, group_ids));
         self.generation = self.generation.wrapping_add(1);
         self.text_regions.clear();
+        self.palette_region = None;
         cx.notify();
 
         // 已经有循环在跑时什么都不用做：它会在下一轮取走刚存下的请求。
@@ -155,6 +164,7 @@ impl WatermarkPreview {
                     }
                     this.state = match rendered {
                         Ok(rendered) => {
+                            this.palette_region = rendered.palette_region;
                             this.text_regions = rendered
                                 .text_regions
                                 .iter()
@@ -181,6 +191,7 @@ impl WatermarkPreview {
         self.pending = None;
         self.cache = Some(PreviewLayerCache::default());
         self.text_regions.clear();
+        self.palette_region = None;
         self.generation = self.generation.wrapping_add(1);
         if !matches!(self.state, PreviewState::Empty) {
             self.state = PreviewState::Empty;
@@ -235,9 +246,11 @@ impl AppView {
                 h_flex()
                     .flex_shrink_0()
                     .gap_2()
-                    .when(!self.preview.read(cx).text_regions.is_empty(), |this| {
-                        this.child(description("点击预览中的文字组可编辑"))
-                    })
+                    .when(
+                        !self.preview.read(cx).text_regions.is_empty()
+                            || self.preview.read(cx).palette_region.is_some(),
+                        |this| this.child(description("点击预览中的文字组或色卡可编辑")),
+                    )
                     .child(self.render_preview_status(cx))
                     .child(
                         Button::new("preview-exif")
@@ -342,7 +355,15 @@ impl AppView {
     ) -> impl IntoElement {
         let preview = self.preview.read(cx);
         let generation = preview.generation;
-        let regions = preview.text_regions.clone();
+        let mut regions = preview
+            .text_regions
+            .iter()
+            .map(|(id, region)| (PreviewEditTarget::Text(*id), *region))
+            .collect::<Vec<_>>();
+        if let Some(region) = preview.palette_region {
+            // 色卡最后绘制，命中区域也位于文字组之上。
+            regions.push((PreviewEditTarget::Palette, region));
+        }
         let image_size = image.size();
         let app = cx.entity().downgrade();
 
@@ -358,17 +379,25 @@ impl AppView {
             .child(render_bitmap(image))
             .child(
                 // 在布局完成后使用与各图层完全相同的 contain 变换，
-                // 为每个可见文字组摆放标准 Button，复用键盘、焦点、提示和无障碍语义。
+                // 为每个可编辑图层摆放标准 Button，复用键盘、焦点、提示和无障碍语义。
                 canvas(
                     move |bounds, window, cx| {
                         let fitted = ObjectFit::Contain.get_bounds(bounds, image_size);
                         let mut elements = Vec::with_capacity(regions.len());
-                        for (id, region) in regions {
+                        for (target, region) in regions {
                             let rect = preview_region_bounds(fitted, image_size, region);
                             let app = app.clone();
-                            let label = format!("编辑文字组 {}…", region.group_ix + 1);
+                            let (id, label): (ElementId, String) = match target {
+                                PreviewEditTarget::Text(id) => (
+                                    ("preview-text-group", id).into(),
+                                    format!("编辑文字组 {}…", region.group_ix + 1),
+                                ),
+                                PreviewEditTarget::Palette => {
+                                    ("preview-palette-card".into(), "编辑照片色卡…".into())
+                                }
+                            };
                             let primary = cx.theme().primary;
-                            let mut element = Button::new(("preview-text-group", id))
+                            let mut element = Button::new(id)
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .foreground(primary)
@@ -385,14 +414,27 @@ impl AppView {
                                         // 事件可能来自上一帧；删除文字组或切换照片后不能
                                         // 让旧的命中区域打开另一个配置的编辑窗口。
                                         let preview = this.preview.read(cx);
-                                        if preview.generation == generation
-                                            && preview
-                                                .text_regions
-                                                .iter()
-                                                .any(|(group_id, _)| *group_id == id)
-                                        {
-                                            this.open_text_group_editor(id, window, cx);
-                                            // 重叠的文字按绘制顺序命中最上层，不继续打开下层组。
+                                        let current = preview.generation == generation
+                                            && match target {
+                                                PreviewEditTarget::Text(id) => preview
+                                                    .text_regions
+                                                    .iter()
+                                                    .any(|(group_id, _)| *group_id == id),
+                                                PreviewEditTarget::Palette => {
+                                                    preview.palette_region.is_some()
+                                                        && this.params.palette_card.enabled()
+                                                }
+                                            };
+                                        if current {
+                                            match target {
+                                                PreviewEditTarget::Text(id) => {
+                                                    this.open_text_group_editor(id, window, cx)
+                                                }
+                                                PreviewEditTarget::Palette => {
+                                                    this.open_palette_card(window, cx)
+                                                }
+                                            }
+                                            // 重叠图层只打开最上层的编辑器。
                                             cx.stop_propagation();
                                         }
                                     })
@@ -616,6 +658,86 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn clicking_palette_opens_its_editor_and_stale_regions_are_disabled(cx: &mut TestAppContext) {
+        let (view, cx) = workspace(cx, vec![text_group(Placement::Bottom)]);
+        view.update_in(cx, |view, _, cx| {
+            view.params.palette_card.set_enabled(true);
+            view.params
+                .palette_card
+                .set_attachment(Some(crate::watermark::GroupAttachment {
+                    target: 0,
+                    side: Placement::Right,
+                    gap: 0.01,
+                }));
+            view.params.rotation = Rotation::Clockwise90;
+            view.refresh_preview(cx);
+        });
+        settle(&view, cx);
+        cx.simulate_resize(size(px(1300.), px(780.)));
+        cx.run_until_parked();
+        let bounds = cx.update(|window, cx| {
+            window.render_frame(cx);
+            let preview = view.read(cx).preview.read(cx);
+            let image_size = preview.state.layers().unwrap().size();
+            let fitted =
+                ObjectFit::Contain.get_bounds(window.find("preview-bitmap").bounds(), image_size);
+            let expected =
+                preview_region_bounds(fitted, image_size, preview.palette_region.unwrap());
+            let actual = window.find("preview-palette-card").bounds();
+            let tolerance = 0.5 / window.scale_factor() + f32::EPSILON;
+            // 原点和尺寸分别取整，右/下边缘会累积两次取整误差。
+            for (a, b) in [
+                (actual.left(), expected.left()),
+                (actual.top(), expected.top()),
+                (actual.size.width, expected.size.width),
+                (actual.size.height, expected.size.height),
+            ] {
+                assert!(
+                    (a - b).as_f32().abs() <= tolerance,
+                    "色卡点击区域偏移：{actual:?}，期望 {expected:?}"
+                );
+            }
+            actual
+        });
+        cx.simulate_click(bounds.center(), Default::default());
+        cx.run_until_parked();
+        let handle = view.read_with(cx, |view, _| {
+            assert_eq!(view.text_editor_window_count(), 0);
+            view.palette_editor_window()
+                .expect("点击色卡应打开编辑窗口")
+        });
+        cx.update(|window, cx| window.click("preview-palette-card", cx));
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .palette_editor_window()
+                .unwrap()
+                .window_id()),
+            handle.window_id()
+        );
+        cx.update(|_, cx| {
+            handle
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap()
+        });
+        cx.run_until_parked();
+        let windows = cx.update(|_, cx| cx.windows().len());
+        cx.update(|window, cx| view.update(cx, |view, cx| view.select_photo_at(1, window, cx)));
+        view.read_with(cx, |view, cx| {
+            assert!(view.preview.read(cx).palette_region.is_none())
+        });
+        cx.simulate_click(bounds.center(), Default::default());
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| cx.windows().len()),
+            windows,
+            "旧图的色卡不能打开新照片的编辑器"
+        );
+        settle(&view, cx);
+        cx.update(|window, _| assert!(window.try_find("preview-palette-card").is_none()));
+    }
+
+    #[gpui_kit::test]
     fn blank_preview_and_stale_photo_regions_do_not_open_editors(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx, vec![text_group(Placement::Bottom)]);
         settle(&view, cx);
@@ -704,13 +826,13 @@ mod tests {
                 ObjectFit::Contain.get_bounds(window.find("preview-bitmap").bounds(), image_size);
             let actual = window.find(("preview-text-group", id)).bounds();
             let expected = preview_region_bounds(fitted, image_size, region);
-            // GPUI 的布局会对边界做物理像素取整，误差应小于半个设备像素。
+            // GPUI 的布局分别对原点和尺寸取整，各自误差应小于半个设备像素。
             let tolerance = 0.5 / window.scale_factor() + f32::EPSILON;
             for (actual, expected) in [
                 (actual.left(), expected.left()),
                 (actual.top(), expected.top()),
-                (actual.right(), expected.right()),
-                (actual.bottom(), expected.bottom()),
+                (actual.size.width, expected.size.width),
+                (actual.size.height, expected.size.height),
             ] {
                 assert!((actual - expected).as_f32().abs() <= tolerance);
             }

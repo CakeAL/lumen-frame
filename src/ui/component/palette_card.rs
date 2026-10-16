@@ -716,7 +716,7 @@ impl AppView {
             ))
     }
 
-    fn open_palette_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_palette_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let theme = self.params.palette_card.theme();
         if self.palette_status(theme).is_none() {
             self.extract_palette_with_theme(theme, window, cx);
@@ -767,6 +767,11 @@ impl AppView {
                 cx.notify();
             });
         });
+    }
+
+    #[cfg(test)]
+    pub(in crate::ui::app) fn palette_editor_window(&self) -> Option<AnyWindowHandle> {
+        self.palette_card_editor.window
     }
 }
 
