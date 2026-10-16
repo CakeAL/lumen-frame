@@ -85,12 +85,17 @@ impl AppView {
         }
     }
 
+    fn needs_photo_palette(&self) -> bool {
+        matches!(
+            self.params.background_kind(),
+            BackgroundKind::Solid | BackgroundKind::Gradient
+        ) && self.selected_photo_id().is_some()
+            && self.selected_palette().is_none()
+    }
+
     /// 空队列重新导入时也要刷新颜色编辑器，不能继续显示上一张照片的已求值颜色。
     pub(in crate::ui::app) fn schedule_palette_for_selected(&mut self, cx: &mut Context<Self>) {
-        if !self.params.gradient_background
-            || !self.params.gradient_palette.uses_palette()
-            || self.selected_palette().is_some()
-        {
+        if !self.needs_photo_palette() {
             return;
         }
         let Some(handle) = self.background_state.window else {
@@ -101,10 +106,7 @@ impl AppView {
             handle
                 .update(cx, |_, window, cx| {
                     view.update(cx, |this, cx| {
-                        if this.params.gradient_background
-                            && this.params.gradient_palette.uses_palette()
-                            && this.selected_palette().is_none()
-                        {
+                        if this.needs_photo_palette() {
                             this.extract_photo_palette(window, cx);
                         }
                     })
@@ -123,10 +125,7 @@ impl AppView {
         self.background_state.colors.clear();
         self.background_state.editor = None;
         self.sync_gradient_controls(window, cx);
-        if self.params.gradient_background
-            && self.params.gradient_palette.uses_palette()
-            && self.selected_palette().is_none()
-        {
+        if self.needs_photo_palette() {
             self.extract_photo_palette(window, cx);
         }
     }
@@ -312,6 +311,25 @@ impl AppView {
             .contains(&Some(rank))
     }
 
+    pub(in crate::ui::app) fn select_solid_palette_color(
+        &mut self,
+        rank: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(PaletteStatus::Ready(swatches)) = self.selected_palette() else {
+            return;
+        };
+        let Some(swatch) = swatches.get(rank) else {
+            return;
+        };
+        let rgb = swatch.rgb();
+        self.params.background = rgb;
+        self.controls.background.sync(rgb, window, cx);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
     pub(in crate::ui::app) fn toggle_palette_color(
         &mut self,
         rank: usize,
@@ -483,6 +501,40 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn solid_background_uses_single_palette_color(cx: &mut TestAppContext) {
+        let (view, cx) = workspace(cx);
+        let gradient = view.read_with(cx, |view, _| view.params.gradient.clone());
+        cx.update(|window, cx| {
+            window.within("background-mode").click(1_usize, cx);
+            assert!(window.try_find("photo-palette-extract").is_none());
+        });
+        settle_palette(&view, cx);
+        cx.update(|window, cx| {
+            assert!(window.try_find("photo-palette-add-all").is_none());
+            window.click(("photo-palette-color", 0_usize), cx);
+            window.click(("photo-palette-color", 2_usize), cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
+                panic!("缺少色卡");
+            };
+            assert_eq!(view.params.background_kind(), BackgroundKind::Solid);
+            assert_eq!(view.params.background, swatches[2].rgb());
+            assert_eq!(view.params.gradient, gradient);
+        });
+        cx.update(|window, cx| {
+            window.within("background-mode").click(2_usize, cx);
+            window.within("background-mode").click(1_usize, cx);
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| matches!(
+            view.selected_palette(),
+            Some(PaletteStatus::Ready(_))
+        )));
+    }
+
+    #[gpui_kit::test]
     fn gradient_direction_grid_and_hover_color_editor_use_real_controls(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         assert_eq!(
@@ -568,7 +620,6 @@ mod tests {
     #[gpui_kit::test]
     fn palette_selection_drag_and_edit_keep_sources_in_sync(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
-        cx.update(|window, cx| window.click("photo-palette-extract", cx));
         settle_palette(&view, cx);
         cx.update(|window, cx| {
             window.click(("photo-palette-color", 0_usize), cx);
@@ -668,7 +719,7 @@ mod tests {
         );
         cx.update(|window, cx| {
             window.scroll(
-                "photo-palette-extract",
+                "photo-palette-theme",
                 ScrollDelta::Pixels(point(px(0.), px(-220.))),
                 cx,
             );

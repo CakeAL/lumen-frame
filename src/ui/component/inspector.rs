@@ -212,7 +212,7 @@ impl ParameterControls {
         let border_top = NumberField::new(
             params.border_ratio.0,
             0.0,
-            40.0,
+            200.0,
             0.5,
             1,
             100.0,
@@ -223,7 +223,7 @@ impl ParameterControls {
         let border_bottom = NumberField::new(
             params.border_ratio.1,
             0.0,
-            40.0,
+            200.0,
             0.5,
             1,
             100.0,
@@ -234,7 +234,7 @@ impl ParameterControls {
         let border_left = NumberField::new(
             params.border_ratio.2,
             0.0,
-            40.0,
+            200.0,
             0.5,
             1,
             100.0,
@@ -245,7 +245,7 @@ impl ParameterControls {
         let border_right = NumberField::new(
             params.border_ratio.3,
             0.0,
-            40.0,
+            200.0,
             0.5,
             1,
             100.0,

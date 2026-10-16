@@ -103,6 +103,7 @@ impl AppView {
             })
             .when(kind == BackgroundKind::Solid, |this| {
                 this.child(self.controls.background.render("背景颜色", false, cx))
+                    .child(self.render_photo_palette(cx))
             })
             .when(kind == BackgroundKind::Gradient, |this| {
                 this.child(self.render_gradient_controls(cx))
@@ -329,6 +330,7 @@ impl AppView {
     fn render_photo_palette(&self, cx: &Context<Self>) -> impl IntoElement {
         let status = self.selected_palette();
         let loading = matches!(status, Some(PaletteStatus::Loading));
+        let solid = self.params.background_kind() == BackgroundKind::Solid;
         v_flex()
             .w_full()
             .gap_3()
@@ -339,20 +341,7 @@ impl AppView {
                     .w_full(),
                 cx,
             ))
-            .child(
-                Button::new("photo-palette-extract")
-                    .label(if loading {
-                        "正在取色…"
-                    } else {
-                        "提取照片色卡"
-                    })
-                    .outline()
-                    .small()
-                    .disabled(self.selected_photo_id().is_none() || loading)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.extract_photo_palette(window, cx)),
-                    ),
-            )
+            .when(loading, |this| this.child(description("正在提取照片色卡…")))
             .when(self.selected_photo_id().is_none(), |this| {
                 this.child(description("添加照片后可提取色卡"))
             })
@@ -362,7 +351,17 @@ impl AppView {
                 } else {
                     None
                 },
-                |this, error| this.child(warning(error, cx)),
+                |this, error| {
+                    this.child(warning(error, cx)).child(
+                        Button::new("photo-palette-retry")
+                            .label("重新取色")
+                            .small()
+                            .ghost()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.extract_photo_palette(window, cx)
+                            })),
+                    )
+                },
             )
             .when_some(
                 if let Some(PaletteStatus::Ready(swatches)) = status {
@@ -375,7 +374,11 @@ impl AppView {
                         |(rank, swatch)| {
                             let rgb = swatch.rgb();
                             let [r, g, b] = rgb;
-                            let selected = self.palette_color_selected(rank);
+                            let selected = if solid {
+                                self.params.background == rgb
+                            } else {
+                                self.palette_color_selected(rank)
+                            };
                             let ink = if u32::from(r) + u32::from(g) + u32::from(b) > 384 {
                                 black()
                             } else {
@@ -407,22 +410,28 @@ impl AppView {
                                     rank + 1
                                 ))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.toggle_palette_color(rank, window, cx);
+                                    if solid {
+                                        this.select_solid_palette_color(rank, window, cx);
+                                    } else {
+                                        this.toggle_palette_color(rank, window, cx);
+                                    }
                                 }))
                         },
                     )))
-                    .child(
-                        Button::new("photo-palette-add-all")
-                            .label("全部添加")
-                            .small()
-                            .outline()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.select_all_palette_colors(window, cx)
-                            })),
-                    )
-                    .child(description(
-                        "色卡颜色随照片匹配；应用到其它照片时，使用那张照片的对应代表色",
-                    ))
+                    .when(!solid, |this| {
+                        this.child(
+                            Button::new("photo-palette-add-all")
+                                .label("全部添加")
+                                .small()
+                                .outline()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.select_all_palette_colors(window, cx)
+                                })),
+                        )
+                        .child(description(
+                            "色卡颜色随照片匹配；应用到其它照片时，使用那张照片的对应代表色",
+                        ))
+                    })
                 },
             )
     }
