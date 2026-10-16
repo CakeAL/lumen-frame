@@ -32,6 +32,7 @@ fn colourful_preset() -> WatermarkPreset {
             solid_background: true,
             border_radius: 0.035,
             shadow_size: 0.07,
+            shadow_color: [255; 3],
             blur_sigma: 88.0,
             quality: 82,
             output_folder: Some(PathBuf::from("/should/not/be/saved")),
@@ -102,6 +103,7 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.border_ratio, original.params.border_ratio);
     assert_eq!(loaded.params.aspect_ratio, original.params.aspect_ratio);
     assert_eq!(loaded.params.background, original.params.background);
+    assert_eq!(loaded.params.shadow_color, original.params.shadow_color);
     assert_eq!(loaded.params.photo_border, original.params.photo_border);
     assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
@@ -142,6 +144,7 @@ fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
     let old: WatermarkParams =
         toml::from_str("solid_background = true\nbackground = [18,52,86]").unwrap();
     assert_eq!(old.background_kind(), BackgroundKind::Solid);
+    assert_eq!(old.shadow_color, [0; 3]);
     assert_eq!(
         WatermarkParams::default().background_kind(),
         BackgroundKind::Photo

@@ -62,6 +62,7 @@ pub struct WatermarkParams {
     pub photo_border: PhotoBorder,
     pub shadow_size: f64,
     pub shadow_density: f64,
+    pub shadow_color: [u8; 3],
     pub solid_background: bool,
     /// 单独保留旧纯色开关，旧预设无需迁移；渐变启用时优先使用渐变。
     pub gradient_background: bool,
@@ -91,6 +92,7 @@ impl Default for WatermarkParams {
             photo_border: PhotoBorder::default(),
             shadow_size: 0.06,
             shadow_density: 1.2,
+            shadow_color: [0; 3],
             solid_background: false,
             gradient_background: false,
             gradient: BackgroundGradient::default(),

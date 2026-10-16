@@ -367,13 +367,13 @@ pub(crate) fn shadow_layer(
     } else {
         shadow_alpha
     };
-    // 生成与 mask 同尺寸的黑色 RGB（3 band）。注意不能对 VipsImage 使用 `.clone()`
+    // 生成与 mask 同尺寸的阴影 RGB（3 band）。注意不能对 VipsImage 使用 `.clone()`
     // 来复制 band：该 crate 的 Clone 是浅拷贝（不增加 GObject 引用计数），而 Drop
     // 会 unref，多次 clone 会导致 double-free / use-after-free。
     let shadow_rgb = unsafe {
         from_owned_ptr(vips_sys::vips_image_new_from_image(
             shadow_alpha.as_ptr(),
-            [0.0; 3].as_ptr(),
+            params.shadow_color.map(f64::from).as_ptr(),
             3,
         ))?
     };

@@ -109,6 +109,7 @@ struct ShadowKey {
     radius: f64,
     size: f64,
     density: f64,
+    color: [u8; 3],
     border: i32,
 }
 
@@ -449,6 +450,7 @@ impl LayerRenderer for CachedRenderer<'_> {
             radius: p.border_radius,
             size: p.shadow_size,
             density: p.shadow_density,
+            color: p.shadow_color,
             border: p.photo_border.pixels(self.dimensions.1),
         };
         let image = if let Some(image) = self
@@ -590,6 +592,8 @@ mod tests {
         job.path = "test_images/ultra_hdr.jpg".into();
         job.text_groups.clear();
         job.params.solid_background = true;
+        job.params.background = [24; 3];
+        job.params.shadow_color = [255; 3];
         job.params.border_radius = 0.08;
         job.params.photo_border.set_enabled(true);
         job.params.photo_border.set_width(0.05);
@@ -782,13 +786,19 @@ mod tests {
         for ix in [0, 2, 3, 4] {
             assert!(same(&blurred, &shadowed, ix));
         }
+        job.params.shadow_color = [255; 3];
+        let white = cache.render(&job).unwrap();
+        assert!(!same(&shadowed, &white, 1));
+        for ix in [0, 2, 3, 4] {
+            assert!(same(&shadowed, &white, ix));
+        }
         job.params.border_radius += 0.03;
         let rounded = cache.render(&job).unwrap();
         for ix in [1, 2] {
-            assert!(!same(&shadowed, &rounded, ix));
+            assert!(!same(&white, &rounded, ix));
         }
         for ix in [0, 3, 4] {
-            assert!(same(&shadowed, &rounded, ix));
+            assert!(same(&white, &rounded, ix));
         }
         job.text_groups[0].text.text_params[0].size *= 2.0;
         let larger = cache.render(&job).unwrap();

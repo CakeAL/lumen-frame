@@ -25,12 +25,25 @@ fn photo(width: u32, height: u32, alpha: u8) -> (vips::VipsImage<'static>, Fixtu
 }
 
 fn shadow(width: u32, height: u32, alpha: u8, size: f64, density: f64) -> image::RgbaImage {
+    colored_shadow(width, height, alpha, size, density, [0; 3], [255; 3])
+}
+
+fn colored_shadow(
+    width: u32,
+    height: u32,
+    alpha: u8,
+    size: f64,
+    density: f64,
+    color: [u8; 3],
+    background: [u8; 3],
+) -> image::RgbaImage {
     let params = WatermarkParams {
         solid_background: true,
-        background: [255; 3],
+        background,
         border_radius: 0.015,
         shadow_size: size,
         shadow_density: density,
+        shadow_color: color,
         ..Default::default()
     };
     let (img, _fixture) = photo(width, height, alpha);
@@ -44,6 +57,21 @@ fn shadow(width: u32, height: u32, alpha: u8, size: f64, density: f64) -> image:
         rendered.write_to_memory().unwrap(),
     )
     .unwrap()
+}
+
+#[test]
+fn white_shadow_has_the_same_soft_coverage_as_black() {
+    let black = shadow(240, 180, 255, 0.1, 2.0);
+    let white = colored_shadow(240, 180, 255, 0.1, 2.0, [255; 3], [0; 3]);
+    assert!(white.get_pixel(79, 170)[0] > white.get_pixel(66, 170)[0]);
+    assert!(white.get_pixel(66, 170)[0] > 0);
+    assert_eq!(white.get_pixel(50, 170).0, [0, 0, 0, 255]);
+    for (dark, light) in black.pixels().zip(white.pixels()) {
+        for channel in 0..3 {
+            assert!((i16::from(dark[channel]) + i16::from(light[channel]) - 255).abs() <= 1);
+        }
+        assert_eq!(light[3], 255);
+    }
 }
 
 #[test]

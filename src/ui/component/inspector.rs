@@ -1320,6 +1320,23 @@ impl AppView {
             .child(controls.border_radius.render("圆角", false, cx))
             .child(controls.shadow_size.render("阴影大小", false, cx))
             .child(controls.shadow_density.render("阴影浓度", false, cx))
+            .child(field(
+                "阴影颜色",
+                TabBar::new("shadow-color")
+                    .segmented()
+                    .w_full()
+                    .children([
+                        Tab::new().label("黑色").flex_1(),
+                        Tab::new().label("白色").flex_1(),
+                    ])
+                    .selected_index(usize::from(self.params.shadow_color == [255; 3]))
+                    .on_click(cx.listener(|this, index: &usize, _, cx| {
+                        this.params.shadow_color = if *index == 1 { [255; 3] } else { [0; 3] };
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    })),
+                cx,
+            ))
     }
 
     fn render_output_controls(&self, cx: &Context<Self>) -> impl IntoElement {
