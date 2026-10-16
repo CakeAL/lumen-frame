@@ -395,3 +395,41 @@ fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
     }
     assert!(red_counts[1] > red_counts[0] * 3);
 }
+
+#[test]
+fn templates_preserve_internal_spaces_around_logo_fields() {
+    use lumen_frame::{
+        render::text::render_styled_template_preview,
+        watermark::{TextSpan, TextStyle},
+    };
+    let exif = ExifInfo {
+        model: Some("Camera".into()),
+        isospeed_ratings: Some(400),
+        ..Default::default()
+    };
+    let template = "{Logo} {型号}    {自定义logo1}  {ISO} ";
+    let start = template.find("{型号}").unwrap();
+    let params = TextParams {
+        spans: vec![TextSpan {
+            start,
+            end: start + "{型号}".len(),
+            style: TextStyle {
+                bold: Some(true),
+                ..Default::default()
+            },
+        }],
+        ..Default::default()
+    };
+    let (parsed, spans) = render_styled_template_preview(template, &params, &exif, "%Y/%m/%d", "");
+    assert_eq!(parsed, "[品牌 Logo] Camera    [自定义logo1]  400");
+    assert_eq!(&parsed[spans[0].start..spans[0].end], "Camera");
+    assert_eq!(spans[0].style.bold, Some(true));
+    assert_eq!(
+        render_watermark_template("{型号}    {ISO} ", &exif, "%Y/%m/%d", ""),
+        "Camera    400"
+    );
+    assert_eq!(
+        render_watermark_template("{自定义文本}", &exif, "%Y/%m/%d", "A   B"),
+        "A   B"
+    );
+}

@@ -417,6 +417,14 @@ fn parse_template(
             custom_text,
         ));
     }
+    // 只清理整行末尾，Logo 前的空格属于行内间隔，不能按文本片段裁掉。
+    while let Some(Segment::Text(text, _)) = segments.last_mut() {
+        text.truncate(text.trim_end_matches(' ').len());
+        if !text.is_empty() {
+            break;
+        }
+        segments.pop();
+    }
     segments
 }
 
@@ -451,22 +459,9 @@ fn styled_template_segments(
     for (offset, ch) in template[last..].char_indices() {
         chars.push((ch, style_at(spans, base + last + offset)));
     }
-    // 与普通模板相同：折叠 ASCII 空白，保留标点，移除片段末尾空格。
-    let mut collapsed: Vec<(char, TextStyle)> = Vec::new();
-    for (mut ch, style) in chars {
-        if matches!(ch, ' ' | '\t' | '\r' | '\n') {
-            ch = ' ';
-            if collapsed.last().is_some_and(|(last, _)| *last == ' ') {
-                continue;
-            }
-        }
-        collapsed.push((ch, style));
-    }
-    if collapsed.last().is_some_and(|(ch, _)| *ch == ' ') {
-        collapsed.pop();
-    }
+    // 用户输入的行内空白按原样保留，字段替换只改变内容及其样式范围。
     let mut segments = Vec::new();
-    for (ch, style) in collapsed {
+    for (ch, style) in chars {
         if let Some(Segment::Text(text, last_style)) = segments.last_mut()
             && *last_style == style
         {
@@ -1189,13 +1184,9 @@ pub fn render_watermark_template(
     cleanup_template(&out)
 }
 
-/// 只折叠空白，模板中的标点和连接符按原文保留。
+/// 只去掉整行末尾的空格，保留用户输入的行内间距、标点和连接符。
 fn cleanup_template(s: &str) -> String {
-    Regex::new(r"[ \t\r\n]+")
-        .unwrap()
-        .replace_all(s, " ")
-        .trim_end_matches(' ')
-        .to_owned()
+    s.trim_end_matches(' ').to_owned()
 }
 
 fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Option<String> {
