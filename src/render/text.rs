@@ -312,6 +312,7 @@ impl TextGroup {
         } else {
             image
         };
+        let image = super::text_border::apply(image, &self.border, img_h)?;
         let padding = (img_h as f64 * self.padding.max(0.0)).round() as i32;
         if padding == 0 || !matches!(self.align, TextAlign::Left | TextAlign::Right) {
             return Ok(Some(image));

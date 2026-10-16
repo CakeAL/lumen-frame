@@ -13,5 +13,6 @@ pub(super) mod motion_photo_preview;
 pub(super) mod preview;
 pub(super) mod queue;
 mod rich_text;
+mod text_border;
 pub(super) mod text_section;
 pub(super) mod title_bar;

@@ -695,6 +695,12 @@ mod tests {
     #[test]
     fn custom_text_updates_only_referencing_groups_and_renders_without_exif() {
         let mut job = job();
+        job.path = "test_images/ultra_hdr.jpg".into();
+        job.exif = ExifInfo::read(&job.path).ok();
+        job.text_groups[0].border.set_enabled(true);
+        job.text_groups[0].border.set_side(Placement::Up, false);
+        job.text_groups[0].border.set_side(Placement::Right, false);
+        job.text_groups[0].border.set_side(Placement::Bottom, false);
         job.text_groups[0].text.template[0] = "{自定义文本}".into();
         job.params.custom_text = "First title".into();
         let mut cache = PreviewLayerCache::default();

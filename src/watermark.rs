@@ -14,6 +14,8 @@ pub use rich_text::{TextSpan, TextStyle};
 
 mod photo_border;
 pub use photo_border::PhotoBorder;
+mod text_border;
+pub use text_border::TextBorder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundKind {
@@ -147,6 +149,8 @@ pub struct TextGroup {
     /// 文字与相邻图片边缘的留白比例；上下位置沿水平方向，左右位置沿垂直方向。
     #[serde(default)]
     pub padding: f64,
+    #[serde(default)]
+    pub border: TextBorder,
     pub time_format: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<GroupAttachment>,
@@ -282,6 +286,7 @@ impl Default for TextGroup {
             direction: TextDirection::Horizontal,
             align: TextAlign::Center,
             padding: 0.0,
+            border: TextBorder::default(),
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
             attachment: None,
         }

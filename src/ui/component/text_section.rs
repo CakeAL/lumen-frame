@@ -36,6 +36,7 @@ use super::field::{
 };
 use super::inspector::POSITIONS;
 use super::rich_text::{RichTextEditor, token_content, toolbar_button};
+use super::text_border::TextBorderControls;
 
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("左对齐", TextAlign::Left),
@@ -324,6 +325,7 @@ pub(in crate::ui::app) struct TextGroupEditor {
     pub align: Entity<AlignSelect>,
     pub direction: Entity<DirectionSelect>,
     pub padding: NumberField,
+    pub border: TextBorderControls,
     pub time_format: Entity<InputState>,
     pub lines: Vec<TextLine>,
     pub expanded_line_ids: Vec<u64>,
@@ -362,6 +364,7 @@ impl TextGroupEditor {
             cx,
         );
         let padding = NumberField::new(group.padding, 0.0, 30.0, 0.5, 1, 100.0, "%", window, cx);
+        let border = TextBorderControls::new(&group.border, window, cx);
         let attachment_side = group
             .attachment
             .as_ref()
@@ -434,6 +437,7 @@ impl TextGroupEditor {
             align,
             direction,
             padding,
+            border,
             time_format,
             lines,
             expanded_line_ids: Vec::new(),
@@ -481,6 +485,7 @@ impl TextGroupEditor {
                 .copied()
                 .unwrap_or_default(),
             padding: self.padding.value(cx),
+            border: self.border.to_border(cx),
             time_format: self.time_format.read(cx).value().to_string(),
             attachment: None,
         }
@@ -922,6 +927,7 @@ impl AppView {
                             .render("文字与图片边缘留白", !show_padding, cx),
                     )
                     .child(field("方向", Select::new(&group.direction).w_full(), cx))
+                    .child(group.border.render(group_id, view.clone(), cx))
                     .child(field(
                         "时间格式",
                         h_flex()
@@ -1277,6 +1283,51 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui_kit::test]
+    fn text_border_buttons_keep_group_settings_independent(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::component::Root;
+        use gpui_kit::test::TestWindowExt as _;
+        cx.update(gpui_kit::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+            let editor = cx.new(|cx| TextGroupWindow::new(0, "文字组".into(), app, cx));
+            Root::new(editor, window, cx)
+        });
+        let editor = root.read_with(cx, |root, _| {
+            root.view()
+                .clone()
+                .downcast::<TextGroupWindow>()
+                .ok()
+                .unwrap()
+        });
+        let app = editor.read_with(cx, |editor, _| editor.app.clone());
+        cx.simulate_resize(size(px(1280.), px(1000.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.click(("text-border-enabled", 0_u64), cx));
+        cx.run_until_parked();
+        for key in ["text-border-top", "text-border-right", "text-border-bottom"] {
+            cx.update(|window, cx| window.click((key, 0_u64), cx));
+            cx.run_until_parked();
+        }
+        app.update_in(cx, |app, window, cx| {
+            let snapshot = app.current_watermark(cx);
+            let border = &snapshot.text_groups[0].border;
+            assert!(border.enabled());
+            assert_eq!(border.color(), [192; 3]);
+            assert!(border.side(Placement::Left));
+            for side in [Placement::Up, Placement::Right, Placement::Bottom] {
+                assert!(!border.side(side));
+            }
+            app.add_text_group(window, cx);
+            assert!(!app.build_text_groups(cx)[1].border.enabled());
+            app.restore_watermark(snapshot.clone(), window, cx);
+            assert_eq!(
+                app.build_text_groups(cx)[0].border,
+                snapshot.text_groups[0].border
+            );
+        });
+    }
 
     #[gpui_kit::test]
     fn custom_logo_attachment_keeps_identity_and_rejects_cycles(cx: &mut gpui_kit::TestAppContext) {

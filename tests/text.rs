@@ -30,6 +30,86 @@ fn test_render_exif_template() {
     dbg!(text);
 }
 
+#[test]
+fn text_group_border_keeps_each_side_independent_after_rotation() {
+    use lumen_frame::media::image_write_to_memory;
+    let params = WatermarkParams::default();
+    let sides = [
+        Placement::Up,
+        Placement::Right,
+        Placement::Bottom,
+        Placement::Left,
+    ];
+    for direction in [TextDirection::Horizontal, TextDirection::Vertical] {
+        let mut group = TextGroup {
+            direction,
+            ..Default::default()
+        };
+        group.text.template = vec!["50".into()];
+        group.text.text_params.truncate(1);
+        let plain = group
+            .render_text(&ExifInfo::default(), 1000, &params)
+            .unwrap()
+            .unwrap();
+        let plain_pixels = image_write_to_memory(&plain).unwrap();
+        group.border.set_enabled(true);
+        group.border.set_width(0.002);
+        group.border.set_radius(0.01);
+        group.border.set_color([190, 180, 170]);
+        for mask in 0..16 {
+            for (ix, side) in sides.iter().enumerate() {
+                group.border.set_side(*side, mask & (1 << ix) != 0);
+            }
+            let image = group
+                .render_text(&ExifInfo::default(), 1000, &params)
+                .unwrap()
+                .unwrap();
+            if mask == 0 {
+                assert_eq!(
+                    (image.width(), image.height()),
+                    (plain.width(), plain.height())
+                );
+                continue;
+            }
+            let (w, h) = (image.width() as usize, image.height() as usize);
+            let offsets =
+                std::array::from_fn::<_, 4, _>(|ix| if mask & (1 << ix) != 0 { 6 } else { 0 });
+            assert_eq!(
+                (w, h),
+                (
+                    plain.width() as usize + offsets[3] + offsets[1],
+                    plain.height() as usize + offsets[0] + offsets[2]
+                )
+            );
+            let pixels = image_write_to_memory(&image).unwrap();
+            for (ix, (x, y)) in [(w / 2, 0), (w - 1, h / 2), (w / 2, h - 1), (0, h / 2)]
+                .into_iter()
+                .enumerate()
+            {
+                let pixel = &pixels[(y * w + x) * 4..(y * w + x) * 4 + 4];
+                if mask & (1 << ix) != 0 {
+                    assert_eq!(
+                        pixel,
+                        &[190, 180, 170, 255],
+                        "{direction:?} mask={mask} side={ix}"
+                    );
+                } else {
+                    let original_alpha = x
+                        .checked_sub(offsets[3])
+                        .zip(y.checked_sub(offsets[0]))
+                        .filter(|&(x, y)| x < plain.width() as usize && y < plain.height() as usize)
+                        .map(|(x, y)| plain_pixels[(y * plain.width() as usize + x) * 4 + 3])
+                        .unwrap_or(0);
+                    assert_eq!(pixel[3], original_alpha, "未启用的边只保留原文字");
+                }
+            }
+            if mask == 15 {
+                assert_eq!(pixels[3], 0, "圆角之外应透明");
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn vertical_text_group_rotates_the_complete_group() {
     let photo = Photo::new("./test_images/DSC_4587.jpg").await.unwrap();

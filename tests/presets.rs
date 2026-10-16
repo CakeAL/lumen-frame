@@ -61,6 +61,7 @@ fn colourful_preset() -> WatermarkPreset {
             padding: 0.04,
             time_format: "%Y年%m月%d日".to_owned(),
             attachment: None,
+            border: Default::default(),
         }],
     }
 }
@@ -71,6 +72,14 @@ fn preset_round_trips_through_a_file() {
     let mut original = colourful_preset();
     original.params.photo_border.set_enabled(true);
     original.params.photo_border.set_width(0.017);
+    original.text_groups[0].border.set_enabled(true);
+    original.text_groups[0].border.set_width(0.0012);
+    original.text_groups[0].border.set_radius(0.006);
+    original.text_groups[0].border.set_inset(0.008);
+    original.text_groups[0].border.set_color([160, 165, 170]);
+    original.text_groups[0]
+        .border
+        .set_side(Placement::Up, false);
     original
         .params
         .photo_border

@@ -356,6 +356,7 @@ fn simple_group(position: Placement, align: TextAlign, direction: TextDirection)
         padding: 0.0,
         time_format: "%Y/%m/%d".to_owned(),
         attachment: None,
+        border: Default::default(),
     }
 }
 
