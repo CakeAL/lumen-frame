@@ -90,15 +90,27 @@ fn point_vips_at_bundled_modules() {
     unsafe { std::env::set_var("VIPS_LIBDIR", &lib_dir) };
 }
 
+/// 主窗口拥有应用的窗口生命周期；子窗口持有 AppView，不能依赖它被释放来收尾。
+fn close_auxiliary_windows_with_main(main_window: AnyWindowHandle, cx: &App) {
+    cx.on_window_closed(move |cx, closed| {
+        if closed == main_window.window_id() {
+            // 等当前关闭通知完成后再关闭其它窗口，避免嵌套触发同一组关闭回调。
+            cx.defer(|cx| {
+                for handle in cx.windows() {
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+            });
+        }
+    })
+    .detach();
+}
+
 fn main() {
     point_vips_at_bundled_modules();
 
     let app = gpui_kit::application()
         .with_assets(AppAssets)
-        // GPUI 的默认退出策略是 `QuitMode::Default`，它的定义就是
-        // `cfg!(not(target_os = "macos"))` —— 也就是说 macOS 上关掉窗口后进程会留在
-        // Dock 里，这是框架刻意的平台默认值。一个单窗口的照片工具没有「关掉窗口还继续
-        // 待着」的理由，所以显式改成「最后一个窗口关掉就退出」。
+        // 主窗口关闭时会统一收起子窗口，最后一个窗口关闭后退出应用。
         .with_quit_mode(QuitMode::LastWindowClosed);
 
     app.run(move |cx| {
@@ -106,7 +118,7 @@ fn main() {
         // 组件内置文案（取色器、日历等）跟随应用语言。
         gpui_kit::component::set_locale("zh-CN");
 
-        gpui_kit::open_window(
+        let (main_window, _) = gpui_kit::open_window(
             WindowOptions {
                 // 预设、工作区与参数面板都需要保留可用宽度。
                 window_min_size: Some(size(px(1180.), px(680.))),
@@ -116,12 +128,13 @@ fn main() {
             |window, cx| cx.new(|cx| AppView::new(window, cx)),
         )
         .expect("无法打开主窗口");
+        close_auxiliary_windows_with_main(main_window, cx);
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AppAssets;
+    use super::{AppAssets, close_auxiliary_windows_with_main};
     use gpui_kit::AssetSource as _;
 
     #[test]
@@ -138,5 +151,33 @@ mod tests {
             image::load_from_memory(&bytes)
                 .unwrap_or_else(|error| panic!("{path} 不是有效图片：{error}"));
         }
+    }
+
+    #[gpui_kit::test]
+    fn main_window_closes_auxiliary_windows(cx: &mut gpui_kit::TestAppContext) {
+        cx.update(gpui_kit::init);
+        let main = cx.add_empty_window().update(|window, cx| {
+            let handle = window.window_handle();
+            close_auxiliary_windows_with_main(handle, cx);
+            handle
+        });
+        let child = cx
+            .add_empty_window()
+            .update(|window, _| window.window_handle());
+        cx.add_empty_window();
+        cx.update(|cx| {
+            child
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap()
+        });
+        cx.run_until_parked();
+        cx.read(|cx| assert_eq!(cx.windows().len(), 2, "单独关闭子窗口不应关闭主窗口"));
+        cx.add_empty_window();
+        cx.update(|cx| {
+            main.update(cx, |_, window, _| window.remove_window())
+                .unwrap()
+        });
+        cx.run_until_parked();
+        cx.read(|cx| assert!(cx.windows().is_empty(), "主窗口关闭后不得残留子窗口"));
     }
 }
