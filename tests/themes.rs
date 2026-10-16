@@ -10,9 +10,9 @@ mod font_backend;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::{SharedString, TestAppContext};
 
-use lumen_frame::persistence::settings::AppearanceMode;
-use lumen_frame::theme;
-use lumen_frame::ui::AppView;
+use lumen_frame_core::persistence::settings::AppearanceMode;
+use lumen_frame_ui::AppView;
+use lumen_frame_ui::theme;
 
 #[gpui_kit::test]
 fn bundled_themes_are_installed(cx: &mut TestAppContext) {

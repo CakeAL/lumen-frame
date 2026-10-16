@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use lumen_frame::{
+use lumen_frame_core::{
     persistence::presets::{
         WatermarkPreset, builtin, delete_in, directory, list_in, load_in, save_in,
     },
@@ -78,7 +78,7 @@ fn preset_round_trips_through_a_file() {
     original
         .params
         .palette_card
-        .set_shape(lumen_frame::watermark::PaletteShape::Rounded);
+        .set_shape(lumen_frame_core::watermark::PaletteShape::Rounded);
     original.params.palette_card.set_proportional(true);
     original.params.palette_card.set_show_hex(true);
     original.params.palette_card.set_show_ratio(true);
@@ -89,18 +89,17 @@ fn preset_round_trips_through_a_file() {
     original
         .params
         .palette_card
-        .set_theme(lumen_frame::watermark::PaletteTheme::Vivid);
+        .set_theme(lumen_frame_core::watermark::PaletteTheme::Vivid);
     original.params.palette_card.set_size(0.04);
     original.params.palette_card.set_gap(0.003);
     original.params.palette_card.set_position(Placement::Left);
-    original
-        .params
-        .palette_card
-        .set_attachment(Some(lumen_frame::watermark::GroupAttachment {
+    original.params.palette_card.set_attachment(Some(
+        lumen_frame_core::watermark::GroupAttachment {
             target: 0,
             side: Placement::Right,
             gap: 0.015,
-        }));
+        },
+    ));
     original.text_groups[0].border.set_enabled(true);
     original.text_groups[0].border.set_width(0.0012);
     original.text_groups[0].border.set_radius(0.006);
@@ -151,7 +150,7 @@ fn preset_round_trips_through_a_file() {
 
 #[test]
 fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
-    use lumen_frame::watermark::{
+    use lumen_frame_core::watermark::{
         BackgroundGradient, BackgroundKind, GradientPalette, PaletteTheme,
     };
     let dir = scratch_dir("gradient");

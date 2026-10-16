@@ -1,0 +1,19 @@
+[package]
+name = "lumen-frame-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+lumen-frame-core = { path = "../core" }
+gpui-kit = { workspace = true, features = ["component", "assets"] }
+nom-exif.workspace = true
+anyhow.workspace = true
+regex.workspace = true
+cartography.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+ctor = "1.0.13"
+lumen-frame-core = { path = "../core", features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }

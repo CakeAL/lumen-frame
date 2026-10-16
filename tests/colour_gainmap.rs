@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use lumen_frame::{
+use lumen_frame_core::{
     features::colour_gainmap::load_black_and_white_with_colour_gainmap,
     gainmap as gain_map,
     media::{ExifInfo, image_metadata_string, load_base_image},

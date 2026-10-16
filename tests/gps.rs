@@ -2,7 +2,7 @@
 #[path = "support/fonts.rs"]
 mod font_backend;
 
-use lumen_frame::{
+use lumen_frame_core::{
     features::geolocation::Location,
     gainmap,
     media::{ExifInfo, load_base_image},
@@ -77,7 +77,7 @@ fn gps_override_and_removal_preserve_hdr_and_original_file() {
 #[test]
 fn adds_gps_when_image_has_no_exif() {
     // 新建的小图没有源 EXIF，写入 GPS 时应让 libvips 创建 GPS IFD。
-    lumen_frame::media::ensure_vips();
+    lumen_frame_core::media::ensure_vips();
     let output = Output::new("new");
     let image = vips::VipsImage::from_memory(
         vec![255; 32 * 24 * 4],

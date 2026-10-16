@@ -4372,6 +4372,26 @@ name = "lumen-frame"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
+ "ctor",
+ "gpui-kit",
+ "image",
+ "lumen-frame-core",
+ "lumen-frame-ui",
+ "nom-exif",
+ "serde_json",
+ "tokio",
+ "toml 1.1.5+spec-1.1.0",
+ "vips",
+ "vips-sys",
+ "winresource",
+]
+
+[[package]]
+name = "lumen-frame-core"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
  "auto-palette",
  "cartography",
  "chrono",
@@ -4393,7 +4413,20 @@ dependencies = [
  "toml 1.1.5+spec-1.1.0",
  "vips",
  "vips-sys",
- "winresource",
+]
+
+[[package]]
+name = "lumen-frame-ui"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "cartography",
+ "ctor",
+ "gpui-kit",
+ "image",
+ "lumen-frame-core",
+ "nom-exif",
+ "regex",
 ]
 
 [[package]]

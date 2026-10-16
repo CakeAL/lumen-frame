@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use gpui_kit::component::*;
 use gpui_kit::*;
 
-use lumen_frame::ui::AppView;
+use lumen_frame_ui::AppView;
 
 #[derive(Clone, Copy)]
 struct AppAssets;
@@ -109,7 +109,7 @@ fn main() {
     point_vips_at_bundled_modules();
 
     let platform = gpui_kit::platform::current_platform(false);
-    lumen_frame::render::init_font_backend(platform.text_system());
+    lumen_frame_core::render::init_font_backend(platform.text_system());
     let app = gpui_kit::Application::with_platform(platform)
         .with_assets(AppAssets)
         // 主窗口关闭时会统一收起子窗口，最后一个窗口关闭后退出应用。

@@ -1,91 +1,82 @@
 # 架构与模块边界
 
-项目暂时保持单一 crate，但按能力和依赖方向组织。目录不是为了给文件分类，而是为了说明
-谁拥有状态、谁允许做 I/O，以及高层用例依赖哪些稳定边界。
+项目使用 Cargo workspace。根包是桌面应用壳，前端和后端是两个可独立编译的库 crate。
 
 ## 依赖方向
 
 ```text
-main
-  ↓
-ui ───────────────→ features
-  ↓                    ↓
-workspace / photo ─→ watermark
-  ↓                    ↓
-persistence        render / media / gainmap
+lumen-frame（src/main.rs：平台初始化、窗口生命周期、应用组装）
+  ├── lumen-frame-ui（GPUI 页面、控件、任务调度、纹理）
+  │     └── lumen-frame-core
+  └── lumen-frame-core（会话、命令、模型、渲染、文件与媒体操作）
 ```
 
-依赖只能大体向下：
-
-- `main.rs`：进程启动、窗口创建和打包后的平台定位。
-- `ui/`：GPUI 状态、交互、预览任务编排与页面组合；不实现文件格式和图像算法。
-- `features/`：拥有独立工作流的功能。目前包括 Motion Photo 和彩色 Gain Map。
-- `workspace.rs`：照片队列、稳定 `PhotoId`、选择与删除规则，不依赖 GPUI。
-- `photo.rs`：水印合成与照片导出用例；不再负责 EXIF 解析或 libvips 生命周期。
-- `watermark.rs`：唯一的水印输入模型，包含参数、文字组与放置枚举；不依赖 UI、文件系统
-  读写或图像后端。
-- `render/`：水印的 libvips/文字渲染实现，包括画布、图片几何和 EXIF 文字排版。
-- `media/`：外部媒体适配器。`vips.rs` 负责进程级 libvips 生命周期与基础解码，
-  `metadata.rs` 负责 EXIF 读取。
-- `gainmap.rs`：Ultra HDR gain map 元数据、MPF 标记和水印 gain map 重建。
-- `persistence/`：本机 TOML 持久化；应用设置与水印预设分别位于独立模块。
-- `update.rs`：无 UI 依赖的 GitHub Releases 更新后端；UI 生命周期位于
-  `ui/behavior/update.rs`。
+后端不依赖前端，也不持有 GPUI 窗口、控件实体或 GPU 位图。GPUI 平台字体接口仍是后端的
+原生文字渲染适配器，后端的 `gpui-kit` 关闭组件和图标素材默认 feature。独立宿主在主线程
+调用 `initialize_native_text()`，桌面宿主注入与窗口共用的字体接口。
 
 ## 目录结构
 
 ```text
 src/
-├── main.rs
-├── lib.rs
-├── watermark.rs
-├── workspace.rs
-├── photo.rs
-├── gainmap.rs
-├── update.rs
-├── features/
-│   ├── colour_gainmap.rs
-│   └── motion_photo/
-│       ├── mod.rs
-│       └── container.rs
-├── media/
-│   ├── metadata.rs
-│   └── vips.rs
-├── persistence/
-│   ├── presets.rs
-│   └── settings.rs
-├── render/
-│   ├── canvas.rs
-│   ├── image.rs
-│   └── text.rs
-└── ui/
-    ├── app.rs
-    ├── behavior/
-    ├── component/
-    └── page/
+└── main.rs                     # 应用启动、资源注册、窗口生命周期
+crates/
+├── core/                           # lumen-frame-core
+│   ├── Cargo.toml
+│   ├── examples/commands.rs        # 无窗口 JSON 命令宿主示例
+│   ├── tests/commands.rs           # 跨宿主业务契约
+│   └── src/
+│       ├── lib.rs                  # 核心库公开入口
+│       ├── session.rs              # 队列、当前参数、逐照片快照、默认值
+│       ├── command.rs              # 可序列化命令、结果、版本冲突与输入校验
+│       ├── import.rs / export.rs / metadata.rs / text.rs
+│       ├── image.rs                # RGBA 预览、缩略图与工具媒体操作
+│       ├── image/layers.rs         # RGBA 图层缓存、排版与延迟合成
+│       ├── watermark/              # 水印输入模型和富文本样式规则
+│       ├── workspace.rs            # PhotoId 与队列选择规则
+│       ├── photo/                  # 共享照片合成、图层排版和导出
+│       ├── render/                 # 画布、阴影、文字、SVG 色卡等渲染
+│       ├── media/                  # libvips 生命周期、解码与 EXIF
+│       ├── persistence/            # 设置、预设与 Logo 素材读写
+│       ├── features/               # 色卡、定位、Motion Photo、彩色 Gain Map
+│       └── gainmap.rs / rotation.rs / update.rs / storage.rs
+└── ui/                             # lumen-frame-ui
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs
+        ├── theme.rs                # GPUI 主题注册
+        ├── app.rs                  # 组合核心会话、页面状态与窗口资源
+        ├── behavior/               # 桌面任务调度与结果同步
+        ├── component/              # 控件与领域编辑器
+        ├── page/                   # 完整页面
+        ├── image.rs                # RGBA → GPUI BGRA 适配
+        └── image/layers.rs         # 按核心库像素身份复用 GPUI 纹理
 ```
+
+`assets/` 与 `test_images/` 仍在仓库根目录。版本和依赖版本集中在根 `Cargo.toml`；
+发布脚本和构建图标的 `build.rs` 属于根应用包。根 `tests/` 对真实前后端 crate 做应用集成验证。
 
 ## 状态归属
 
 | 状态 | 所有者 |
 | --- | --- |
 | 照片队列、选择、稳定身份 | `PhotoWorkspace` |
-| 当前照片的水印参数与文字组编辑真值 | `AppView` |
-| 未选中照片的配置快照、全局新照片默认配置 | `AppView`，照片快照按 `PhotoId` 索引 |
+| 当前照片的水印参数与文字组真值 | 后端 `Session`；控件仅保留输入草稿 |
+| 未选中照片的配置快照、全局新照片默认配置 | 后端 `Session`，快照按 `PhotoId` 索引 |
 | 缩略图缓存 | `AppView`，按 `PhotoId` 索引 |
-| 水印预览节奏、当前照片的分层位图缓存与过期任务 | `WatermarkPreview` 实体 |
+| 预览节奏、过期任务和 GPU 纹理 | 前端 `WatermarkPreview`；RGBA 图层缓存由后端持有 |
 | 小工具页的 Gain Map / Motion Photo 会话 | `OtherToolsState` |
-| 应用更新 UI 生命周期 | `UpdateState` + `ui/behavior/update.rs` |
+| 应用更新 UI 生命周期 | `UpdateState` + `crates/ui/src/behavior/update.rs` |
 | 可持久化的应用偏好 | `persistence::settings::AppSettings` |
 
 控件实体只保留输入、焦点、下拉开合等交互状态。业务值仍由上述所有者控制，避免第二份真值。
 
 预览框直接叠加背景、透明阴影、照片外边框、圆角照片及各个文字组的缓存纹理，不在每次修改时先合成
 整张位图。`Photo::prepare_watermark_layers` 是预览和 `Photo::compose_watermark` 共用的
-排版管线，图层的渲染仍使用 `render/` 的同一实现。导出继续完整合成并重建 Ultra HDR gain map。
+排版管线，图层的渲染仍使用 `crates/core/src/render/` 的同一实现。导出继续完整合成并重建 Ultra HDR gain map。
 
-缓存仅保留当前照片，保存的是已求值的 `Arc<RenderImage>`，不跨线程传递 libvips 句柄。
-水印文字通过 `render/fonts.rs` 复用 GPUI 的平台字体后端。应用在主线程创建平台后，
+后端缓存仅保留当前照片的已求值 `Arc<RasterImage>`，不跨线程传递 libvips 句柄。前端按像素对象身份复用 `Arc<RenderImage>`，保持未变图层的纹理身份。
+水印文字通过 `crates/core/src/render/fonts.rs` 复用 GPUI 的平台字体后端。应用在主线程创建平台后，
 把同一个 `PlatformTextSystem` 交给 `render::init_font_backend`；后台预览和导出只持有
 可共享的字体接口，不创建窗口或平台对象。独立调用照片渲染的宿主也须先在主线程初始化。
 字体选择与回退由 GPUI 处理，输出使用灰度抗锯齿覆盖率或彩色字形的 BGRA 像素，合成到
@@ -105,7 +96,7 @@ src/
 水印配置随照片独立保存：切换前将当前参数和文字组存为快照，切换后移出目标快照并恢复控件。
 批量导出在启动时逐张冻结配置。预设默认应用「全部照片」，载入预设会覆盖队列并更新
 后续导入的默认配置；也可以切换为「当前照片」。之后的手动画面调整仍只影响当前照片。
-导出旋转方向由 `AppView::params.rotation` 统一持有，预览与每张导出照片都使用当前角度，
+导出旋转方向由 `Session::params().rotation` 统一持有，预览与每张导出照片都使用当前角度，
 不随照片切换、载入预设或恢复画面默认值改变；启动导出时与其他参数一起冻结。
 输出目录和默认字体始终使用本机设置，不随照片切换。移除或清空队列时一并清理对应快照。
 JPEG 质量是全部照片共用的本机导出偏好，调整后立即保存到 `settings.toml`，重启时恢复。
@@ -124,7 +115,7 @@ JPEG 质量是全部照片共用的本机导出偏好，调整后立即保存到
 色块悬停或点击可编辑、删除，拖动交换位置时颜色及其来源一起移动，颜色控件使用稳定身份，
 删除其它色标或切换照片后，旧输入事件不能落到同一位置的新色标。
 渐变角度沿用 CSS：0° 向上、90° 向右；RGB 通道线性插值，预览和导出共享
-`render/gradient.rs` 的 libvips 投影与 16 位查找表，渐变参数纳入背景图层缓存键。
+`crates/core/src/render/gradient.rs` 的 libvips 投影与 16 位查找表，渐变参数纳入背景图层缓存键。
 自动文字颜色以渐变中点为参考，深浅跨度大的背景可手动指定文字颜色。
 
 `features::photo_palette::extract_with_theme` 是可复用的取色入口：libvips 将原图按 EXIF 摆正、
@@ -147,8 +138,8 @@ Theme 的候选色时回退到原图代表色。纯 Rust 聚类结果按路径�
 它与背景使用相同的取色缓存，但独立保存 Theme 和选中颜色的序号及顺序；应用到其它照片和导出时
 重新解析目标照片的 RGB 与面积占比，派生颜色不写入预设。按占比模式将所选颜色归一化分配色条
 长度，圆形使用等尺寸色块；色号图例等距排列，避免小面积色段的标签相互遮挡。
-`render/palette_card.rs` 先绘制 SVG 色块，色号通过同一 GPUI 字体后端叠加，再交给共享图层排版。
-色卡和文字组共用 `photo/layers.rs` 的排版描述与相邻树，相同位置共享一条区域。
+`crates/core/src/render/palette_card.rs` 先绘制 SVG 色块，色号通过同一 GPUI 字体后端叠加，再交给共享图层排版。
+色卡和文字组共用 `crates/core/src/photo/layers.rs` 的排版描述与相邻树，相同位置共享一条区域。
 色卡可通过「紧贴文字组」选择目标和上下左右方向，整体位置、对齐跟随目标组，组间距按照片高度计算。
 菜单操作捕获稳定组 ID，在应用时映射到当前快照序号；删除文字组会同步修正序号或解除依附。
 较大的相邻组合会扩展画布以保留首尾内容。分层预览单独缓存色卡，位置、依附和留白只更新坐标；
@@ -193,20 +184,20 @@ SVG 按可见内容的最终尺寸栅格化；包含自定义 Logo 的行只以�
 按相邻组整体的包围盒计算边框和对齐，组间距为照片高度的比例；每个组仍保留独立纹理和
 点击编辑区域。改变相邻位置只改变合成坐标，复用原有文字与背景缓存。
 
-「导出当前」与「导出全部」共用 `ui/behavior/export.rs` 的串行任务；当前照片按稳定
+「导出当前」与「导出全部」共用 `crates/ui/src/behavior/export.rs` 的串行任务；当前照片按稳定
 `PhotoId` 筛选，队列和输出目录在启动时冻结。清空队列不解除运行中的导出锁；成功导出
 至少一张后，通过 GPUI 的系统打开接口显示本次输出目录（macOS 访达、Windows 文件资源管理器）。
 
 预设面板的内置分组折叠状态与用户预设顺序属于应用偏好，保存到 `settings.toml`。
 顺序以预设名为身份，忽略已移除的项，新预设追加到末尾；内置预设保持固定顺序。
 
-文件夹导入由 `ui/behavior/import.rs` 在后台递归扫描，选择和拖放共用 `add_photos` 入口。
+文件夹扫描由后端 `import.rs` 实现，前端 `crates/ui/src/behavior/import.rs` 调度后台任务，选择和拖放共用 `add_photos` 入口。
 扫描按路径排序、过滤图片格式，并用规范化路径去重和阻止符号链接循环；扫描结果复用
 原有队列、缩略图与 EXIF 加载流程。清空队列会使之前的扫描结果失效。
 
 ## 新代码规则
 
-1. 可序列化的水印输入放在 `watermark.rs`，渲染方法放在 `render/`；持久化不得依赖渲染实现。
+1. 可序列化的水印输入放在 `crates/core/src/watermark/mod.rs`，渲染方法放在 `crates/core/src/render/`；持久化不得依赖渲染实现。
 2. libvips 初始化和基础加载只经 `media::ensure_vips` / `media::load_base_image`。
 3. EXIF 读取只经 `media::ExifInfo`；照片合成不自行解析文件容器。
 4. 新的完整工作流放入 `features/`，并通过少量输入/输出类型暴露能力；不要塞回泛化的
@@ -215,7 +206,8 @@ SVG 按可见内容的最终尺寸栅格化；包含自定义 Logo 的行只以�
 6. `AppView` 只组合 feature 状态和窗口级资源。新增独立页面状态时优先创建专有状态类型，
    不继续增加一组无关字段。
 7. 后台结果必须携带稳定身份或请求版本，旧任务不得覆盖新选择。
-8. 只有当一个 feature 已有稳定公共接缝、独立生命周期和明显编译收益时，才拆成 Cargo crate。
+8. 后端不得依赖前端 crate；新业务操作同时提供后端入口。前端只添加控件、系统交互和异步调度。
+9. 可外部调用的操作加入 `Command`，复用 `Session` 与现有媒体用例；不新增一份仅供 MCP 使用的状态。
 
 ## 测试边界
 
@@ -223,3 +215,16 @@ SVG 按可见内容的最终尺寸栅格化；包含自定义 Logo 的行只以�
 - `media`、`render`、`gainmap`：真实夹具集成测试，并保留并发首次初始化测试。
 - `persistence`：临时目录往返与损坏输入测试。
 - UI 状态与交互：GPUI 测试上下文；图像视觉事实由预览集成测试覆盖。
+
+## 独立构建与调用
+
+```bash
+cargo run
+cargo check --workspace --all-targets
+cargo check -p lumen-frame-core --lib
+cargo test -p lumen-frame-core --test commands
+cargo test -p lumen-frame-ui --lib
+cargo run -p lumen-frame-core --example commands -- /tmp/lumen-demo
+```
+
+后端命令、宿主调度与未来 MCP 接入约定见 [core.md](core.md)。

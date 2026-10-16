@@ -4,7 +4,7 @@ mod font_backend;
 use chrono::Local;
 use nom_exif::{Altitude, ExifDateTime, GPSInfo, URational};
 
-use lumen_frame::{
+use lumen_frame_core::{
     media::{ExifInfo, Rational},
     photo::Photo,
     render::{
@@ -35,7 +35,7 @@ fn test_render_exif_template() {
 
 #[test]
 fn text_group_border_keeps_each_side_independent_after_rotation() {
-    use lumen_frame::media::image_write_to_memory;
+    use lumen_frame_core::media::image_write_to_memory;
     let params = WatermarkParams::default();
     let sides = [
         Placement::Up,
@@ -268,7 +268,7 @@ async fn test_render_text_with_logo_mixed() {
         solid_background: true,
         ..Default::default()
     };
-    let img = lumen_frame::media::load_base_image(&photo.path).unwrap();
+    let img = lumen_frame_core::media::load_base_image(&photo.path).unwrap();
     let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let margin = Margin::cal_margin(img_w, img_h, &params);
     let (canvas_w, _canvas_h) = canvas::cal_size(&margin, img_w, img_h, &params);
@@ -365,8 +365,8 @@ fn templates_preserve_trailing_punctuation_even_when_fields_are_missing() {
 
 #[test]
 fn rich_text_renders_multiple_fonts_and_colors_in_one_line() {
-    use lumen_frame::watermark::{TextSpan, TextStyle};
-    lumen_frame::media::ensure_vips();
+    use lumen_frame_core::watermark::{TextSpan, TextStyle};
+    lumen_frame_core::media::ensure_vips();
     let text = Text {
         template: vec!["WWWWiiii".into()],
         text_params: vec![TextParams {
@@ -396,7 +396,7 @@ fn rich_text_renders_multiple_fonts_and_colors_in_one_line() {
         .unwrap()
     };
     let rich = render(&text);
-    let pixels = lumen_frame::media::image_write_to_memory(&rich).unwrap();
+    let pixels = lumen_frame_core::media::image_write_to_memory(&rich).unwrap();
     assert!(
         pixels
             .chunks_exact(4)
@@ -444,7 +444,7 @@ fn gpui_font_fallback_keeps_multiline_text_and_color_glyphs() {
         .unwrap()
     };
     let single = render(&text);
-    let pixels = lumen_frame::media::image_write_to_memory(&single).unwrap();
+    let pixels = lumen_frame_core::media::image_write_to_memory(&single).unwrap();
     assert!(
         pixels
             .as_chunks::<4>()
@@ -469,8 +469,8 @@ fn gpui_font_fallback_keeps_multiline_text_and_color_glyphs() {
 
 #[test]
 fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
-    use lumen_frame::watermark::{TextSpan, TextStyle};
-    lumen_frame::media::ensure_vips();
+    use lumen_frame_core::watermark::{TextSpan, TextStyle};
+    lumen_frame_core::media::ensure_vips();
     let text = Text {
         template: vec!["{ISO} Blue".into()],
         text_params: vec![TextParams {
@@ -497,7 +497,7 @@ fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
             .render_text(&exif, 1000, &WatermarkParams::default(), "%Y/%m/%d")
             .unwrap()
             .unwrap();
-        let pixels = lumen_frame::media::image_write_to_memory(&image).unwrap();
+        let pixels = lumen_frame_core::media::image_write_to_memory(&image).unwrap();
         red_counts.push(
             pixels
                 .chunks_exact(4)
@@ -528,7 +528,7 @@ fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
 
 #[test]
 fn templates_preserve_internal_spaces_around_logo_fields() {
-    use lumen_frame::{
+    use lumen_frame_core::{
         render::text::render_styled_template_preview,
         watermark::{TextSpan, TextStyle},
     };

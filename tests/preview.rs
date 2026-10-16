@@ -8,10 +8,9 @@ mod font_backend;
 
 use std::path::{Path, PathBuf};
 
-use lumen_frame::{
+use lumen_frame_core::{
     media::ExifInfo,
     rotation::Rotation,
-    ui::{PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail},
     watermark::{
         Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,
     },
@@ -405,3 +404,7 @@ fn diff_bounds(
 
     found.then_some((min_x, min_y, max_x, max_y))
 }
+
+use lumen_frame_ui::{
+    PreviewJob, export_gainmap, render_gainmap_preview, render_preview, render_thumbnail,
+};

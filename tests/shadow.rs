@@ -1,5 +1,5 @@
 //! 投影的像素契约：圆角覆盖率、连续尾部和高浓度渐变。
-use lumen_frame::{
+use lumen_frame_core::{
     media::load_base_image,
     render::{canvas, image as render_image},
     watermark::WatermarkParams,

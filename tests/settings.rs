@@ -4,10 +4,10 @@
 
 use std::path::PathBuf;
 
-use lumen_frame::persistence::settings::{
+use lumen_frame_core::persistence::settings::{
     AppSettings, AppearanceMode, load_at, save_at, settings_path,
 };
-use lumen_frame::watermark::{DEFAULT_FONT, DEFAULT_JPEG_QUALITY};
+use lumen_frame_core::watermark::{DEFAULT_FONT, DEFAULT_JPEG_QUALITY};
 
 fn scratch_file(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("lumen-frame-settings-{tag}"));
@@ -140,7 +140,7 @@ fn default_location_sits_under_the_user_config() {
 
 #[test]
 fn map_preferences_round_trip_and_old_settings_keep_defaults() {
-    use lumen_frame::features::geolocation::{MapProvider, MapSettings};
+    use lumen_frame_core::features::geolocation::{MapProvider, MapSettings};
     let path = scratch_file("map-source");
     for provider in [MapProvider::Tencent, MapProvider::OpenStreetMap] {
         let settings = AppSettings {

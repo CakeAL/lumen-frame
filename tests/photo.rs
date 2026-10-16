@@ -1,7 +1,7 @@
 #[path = "support/fonts.rs"]
 mod font_backend;
 
-use lumen_frame::{
+use lumen_frame_core::{
     photo::Photo,
     watermark::{
         Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, WatermarkParams,

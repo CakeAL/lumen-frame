@@ -2,7 +2,7 @@
 #[path = "support/fonts.rs"]
 mod font_backend;
 
-use lumen_frame::{
+use lumen_frame_core::{
     media::{ExifInfo, ensure_vips, image_write_to_memory},
     persistence::{
         logos,

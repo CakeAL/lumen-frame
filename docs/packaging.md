@@ -124,7 +124,7 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 | MATLAB / HDF5 / FITS / EXR / PDF / WSI | ❌ | ✅ |
 
 `web` 包含 libheif 和 AOM，已用 8.18.6 包验证 AVIF 编码与解码；它不含 libraw。
-`src/ui/component/queue.rs` 在 Windows 上接受 AVIF，但暂不接受 HEIC 和相机 RAW，
+`crates/core/src/import.rs` 在 Windows 上接受 AVIF，但暂不接受 HEIC 和相机 RAW，
 避免尚未验证的文件进入队列后才解码失败；macOS 继续接受这些格式。
 
 ### 构建

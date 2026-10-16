@@ -3,7 +3,7 @@ mod font_backend;
 
 use std::path::Path;
 
-use lumen_frame::{
+use lumen_frame_core::{
     gainmap,
     media::{ensure_vips, load_base_image},
     photo::Photo,
@@ -85,9 +85,10 @@ fn check_export_thumbnail(source: &str, hdr: bool, rotation: Rotation) {
             "缩略图应包含最终成片的边框背景"
         );
     }
-    let exported_exif =
-        lumen_frame::media::ExifInfo::read(&output_folder.join(format!("{stem}_watermark.jpg")))
-            .unwrap();
+    let exported_exif = lumen_frame_core::media::ExifInfo::read(
+        &output_folder.join(format!("{stem}_watermark.jpg")),
+    )
+    .unwrap();
     assert_eq!(exported_exif.make, photo.exif.as_ref().unwrap().make);
     assert_eq!(exported_exif.model, photo.exif.as_ref().unwrap().model);
     std::fs::remove_dir_all(output_folder).unwrap();

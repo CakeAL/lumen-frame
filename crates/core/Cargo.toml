@@ -1,0 +1,35 @@
+[package]
+name = "lumen-frame-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[features]
+# Extra observation helpers used only by the desktop interaction tests.
+test-support = []
+
+[dependencies]
+tokio.workspace = true
+nom-exif.workspace = true
+anyhow.workspace = true
+vips.workspace = true
+vips-sys.workspace = true
+dirs.workspace = true
+regex.workspace = true
+num-integer.workspace = true
+reverse-geocoder-cn.workspace = true
+cartography.workspace = true
+coordtransform.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+self_update.workspace = true
+chrono.workspace = true
+image.workspace = true
+auto-palette.workspace = true
+serde.workspace = true
+toml.workspace = true
+gpui-kit.workspace = true
+ffmpeg-sidecar.workspace = true
+
+[dev-dependencies]
+ctor = "1.0.13"

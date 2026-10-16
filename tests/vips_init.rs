@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use lumen_frame::ui::render_thumbnail;
+use lumen_frame_ui::render_thumbnail;
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
 

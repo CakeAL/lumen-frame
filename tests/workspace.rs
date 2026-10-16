@@ -20,7 +20,7 @@ use gpui_kit::{
     TestAppContext, VisualTestContext, point, px,
 };
 
-use lumen_frame::ui::{AppPage, AppView};
+use lumen_frame_ui::{AppPage, AppView};
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
 const OTHER_PHOTO: &str = "./test_images/ultra_hdr.jpg";

@@ -1,10 +1,10 @@
 use std::{path::Path, time::Duration};
 
-use lumen_frame::features::motion_photo::{
+use lumen_frame_core::features::motion_photo::{
     DEFAULT_MAX_OUTPUT_SIZE, MotionPhotoOptions, detect_ffmpeg, export_motion_photo,
     inspect_motion_photo_video,
 };
-use lumen_frame::rotation::Rotation;
+use lumen_frame_core::rotation::Rotation;
 use nom_exif::{MediaParser, MediaSource};
 
 /// 手动烟雾测试：使用用户提供的 AVC MP4，输出保留在仓库根目录，便于直接导入图库验证。

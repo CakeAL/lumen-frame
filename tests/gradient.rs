@@ -2,7 +2,7 @@
 #[path = "support/fonts.rs"]
 mod font_backend;
 
-use lumen_frame::{
+use lumen_frame_core::{
     features::photo_palette,
     gainmap,
     media::{image_write_to_memory, load_base_image},
@@ -24,7 +24,7 @@ fn hdr_gradient_background_keeps_gainmap_and_corners() {
     params.photo_border.set_enabled(true);
     params.photo_border.set_width(0.02);
     params.photo_border.set_color([24, 160, 92]);
-    let margin = lumen_frame::render::canvas::Margin::cal_margin(photo_w, photo_h, &params);
+    let margin = lumen_frame_core::render::canvas::Margin::cal_margin(photo_w, photo_h, &params);
     let image = Photo::compose_watermark(input, None, &params, &[]).unwrap();
     let map = gainmap::get_gainmap(&image).expect("渐变不能使 Ultra HDR 降为 SDR");
     let map_pixels = image_write_to_memory(&map).unwrap();
@@ -48,7 +48,7 @@ fn hdr_gradient_background_keeps_gainmap_and_corners() {
 
 #[test]
 fn palette_recipe_uses_the_target_photo_in_preview_and_hdr_export() {
-    use lumen_frame::ui::{PreviewJob, render_preview};
+    use lumen_frame_ui::{PreviewJob, render_preview};
     use std::{
         path::{Path, PathBuf},
         time::SystemTime,
