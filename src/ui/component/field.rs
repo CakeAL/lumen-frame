@@ -4,14 +4,14 @@
 //! 输入框负责给准数。两者共用同一条写回路径，因此不会出现读数与参数不一致的情况。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IndexPath, Sizable as _,
+    ActiveTheme as _, Disableable as _, IndexPath, Sizable as _,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     form::Field,
     h_flex,
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, NumberInput, NumberStep},
     searchable_list::SearchableListItem,
     select::{SelectEvent, SelectState},
-    slider::{Slider, SliderEvent, SliderState},
+    slider::{Slider, SliderEvent, SliderScale, SliderState},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -84,6 +84,8 @@ pub(in crate::ui::app) struct NumberField {
     decimals: usize,
     min: f64,
     max: f64,
+    /// 对数滑块内部使用正数，显示和业务值仍从原下限开始。
+    slider_offset: f64,
 }
 
 impl NumberField {
@@ -128,12 +130,44 @@ impl NumberField {
             decimals,
             min,
             max,
+            slider_offset: 0.0,
         }
+    }
+
+    /// 在订阅前配置原生对数刻度，把更多拖动空间留给常用的小数值。
+    pub(in crate::ui::app) fn logarithmic(
+        mut self,
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> Self {
+        let display = self.value(cx) * self.scale;
+        let step = self.slider.read(cx).step_value();
+        // 原生对数刻度不接受 0；平移区间保留真正的 0%，而不是抬高用户可设置的下限。
+        self.slider_offset = 1.0 - self.min;
+        self.input.update(cx, |state, cx| {
+            state.set_step(
+                Some(NumberStep::Fixed(10_f64.powi(-(self.decimals as i32)))),
+                window,
+                cx,
+            );
+            state.set_min(Some(self.min), window, cx);
+            state.set_max(Some(self.max), window, cx);
+        });
+        let offset = self.slider_offset;
+        self.slider = cx.new(|_| {
+            SliderState::new()
+                .max((self.max + offset) as f32)
+                .min(1.0)
+                .step(step)
+                .scale(SliderScale::Logarithmic)
+                .default_value((display + offset) as f32)
+        });
+        self
     }
 
     /// 模型值。
     pub(super) fn value(&self, cx: &App) -> f64 {
-        f64::from(self.slider.read(cx).value().end()) / self.scale
+        (f64::from(self.slider.read(cx).value().end()) - self.slider_offset) / self.scale
     }
 
     /// 把两条输入路径接到同一个写回动作上。
@@ -145,13 +179,13 @@ impl NumberField {
     ) -> Vec<Subscription> {
         let from_slider = {
             let input = self.input.clone();
-            let (scale, decimals) = (self.scale, self.decimals);
+            let (scale, decimals, offset) = (self.scale, self.decimals, self.slider_offset);
             let apply = apply.clone();
             cx.subscribe_in(&self.slider, window, move |this, _, event, window, cx| {
                 let SliderEvent::Change(value) = event else {
                     return;
                 };
-                let model = f64::from(value.end()) / scale;
+                let model = (f64::from(value.end()) - offset) / scale;
                 apply(this, model);
                 write_input(&input, model * scale, decimals, window, cx);
                 this.refresh_preview(cx);
@@ -160,7 +194,13 @@ impl NumberField {
 
         let from_input = {
             let slider = self.slider.clone();
-            let (min, max, scale, decimals) = (self.min, self.max, self.scale, self.decimals);
+            let (min, max, scale, decimals, offset) = (
+                self.min,
+                self.max,
+                self.scale,
+                self.decimals,
+                self.slider_offset,
+            );
             cx.subscribe_in(
                 &self.input,
                 window,
@@ -179,8 +219,11 @@ impl NumberField {
                     if (display - typed).abs() > f64::EPSILON {
                         write_input(state, display, decimals, window, cx);
                     }
-                    if (f64::from(slider.read(cx).value().end()) - display).abs() > 1e-9 {
-                        slider.update(cx, |state, cx| state.set_value(display as f32, window, cx));
+                    if (f64::from(slider.read(cx).value().end()) - (display + offset)).abs() > 1e-9
+                    {
+                        slider.update(cx, |state, cx| {
+                            state.set_value((display + offset) as f32, window, cx)
+                        });
                     }
                     this.refresh_preview(cx);
                 },
@@ -193,8 +236,9 @@ impl NumberField {
     /// 由外部（载入预设）改写数值，滑块与输入框一起跟上。
     pub(in crate::ui::app) fn sync(&self, value: f64, window: &mut Window, cx: &mut App) {
         let display = value * self.scale;
-        self.slider
-            .update(cx, |state, cx| state.set_value(display as f32, window, cx));
+        self.slider.update(cx, |state, cx| {
+            state.set_value((display + self.slider_offset) as f32, window, cx)
+        });
         write_input(&self.input, display, self.decimals, window, cx);
     }
 
@@ -224,7 +268,19 @@ impl NumberField {
                             .flex_shrink_0()
                             .gap_1()
                             .items_center()
-                            .child(Input::new(&self.input).small().w_20().disabled(disabled))
+                            .child(if self.slider_offset != 0.0 {
+                                NumberInput::new(&self.input)
+                                    .small()
+                                    .w_32()
+                                    .disabled(disabled)
+                                    .into_any_element()
+                            } else {
+                                Input::new(&self.input)
+                                    .small()
+                                    .w_20()
+                                    .disabled(disabled)
+                                    .into_any_element()
+                            })
                             .when(!self.unit.is_empty(), |this| {
                                 this.child(
                                     div()
@@ -548,4 +604,70 @@ where
         this.refresh_preview(cx);
         cx.notify();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{Render, TestAppContext};
+    struct BorderControl {
+        app: Entity<AppView>,
+    }
+    impl Render for BorderControl {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w_96()
+                .p_4()
+                .child(
+                    self.app
+                        .read(cx)
+                        .controls
+                        .border_top
+                        .render("上边框", false, cx),
+                )
+        }
+    }
+    #[gpui_kit::test]
+    fn border_slider_keeps_fine_steps_and_full_range(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+            let view = cx.new(|_| BorderControl { app });
+            Root::new(view, window, cx)
+        });
+        let view = view.read_with(cx, |root, _| {
+            root.view()
+                .clone()
+                .downcast::<BorderControl>()
+                .ok()
+                .unwrap()
+        });
+        let app = view.read_with(cx, |view, _| view.app.clone());
+        let input = app.read_with(cx, |app, _| app.controls.border_top.input.clone());
+        cx.run_until_parked();
+        for value in [0., 40., 100., 200.] {
+            cx.update(|window, cx| {
+                window.click(("input", input.entity_id()), cx);
+                window.press("cmd-a", cx);
+                window.input(&value.to_string(), cx);
+            });
+            cx.run_until_parked();
+            app.read_with(cx, |app, cx| {
+                assert!((app.params.border_ratio.0 * 100. - value).abs() < 0.0001);
+                assert!((app.controls.border_top.value(cx) * 100. - value).abs() < 0.0001);
+                if value == 40. {
+                    assert!(app.controls.border_top.slider.read(cx).percentage().end > 0.65);
+                }
+            });
+            cx.update(|window, cx| window.click("increment", cx));
+            cx.run_until_parked();
+            app.read_with(cx, |app, _| {
+                assert!(
+                    (app.params.border_ratio.0 * 100. - (value + 0.1_f64).min(200.)).abs() < 0.0001
+                )
+            });
+        }
+    }
 }

@@ -213,46 +213,50 @@ impl ParameterControls {
             params.border_ratio.0,
             0.0,
             200.0,
-            0.5,
+            0.1,
             1,
             100.0,
             "%",
             window,
             cx,
-        );
+        )
+        .logarithmic(window, cx);
         let border_bottom = NumberField::new(
             params.border_ratio.1,
             0.0,
             200.0,
-            0.5,
+            0.1,
             1,
             100.0,
             "%",
             window,
             cx,
-        );
+        )
+        .logarithmic(window, cx);
         let border_left = NumberField::new(
             params.border_ratio.2,
             0.0,
             200.0,
-            0.5,
+            0.1,
             1,
             100.0,
             "%",
             window,
             cx,
-        );
+        )
+        .logarithmic(window, cx);
         let border_right = NumberField::new(
             params.border_ratio.3,
             0.0,
             200.0,
-            0.5,
+            0.1,
             1,
             100.0,
             "%",
             window,
             cx,
-        );
+        )
+        .logarithmic(window, cx);
         let border_radius = NumberField::new(
             params.border_radius,
             0.0,
