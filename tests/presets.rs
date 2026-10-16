@@ -69,6 +69,12 @@ fn colourful_preset() -> WatermarkPreset {
 fn preset_round_trips_through_a_file() {
     let dir = scratch_dir("round-trip");
     let mut original = colourful_preset();
+    original.params.photo_border.set_enabled(true);
+    original.params.photo_border.set_width(0.017);
+    original
+        .params
+        .photo_border
+        .select_palette(2, [42, 82, 125]);
     original.text_groups[0].text.text_params[0].spans = vec![TextSpan {
         start: 7,
         end: 15,
@@ -87,6 +93,7 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.border_ratio, original.params.border_ratio);
     assert_eq!(loaded.params.aspect_ratio, original.params.aspect_ratio);
     assert_eq!(loaded.params.background, original.params.background);
+    assert_eq!(loaded.params.photo_border, original.params.photo_border);
     assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
     assert_eq!(loaded.text_groups, original.text_groups);

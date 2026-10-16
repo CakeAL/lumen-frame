@@ -15,6 +15,7 @@ use gpui_kit::component::{
     h_flex,
     popover::Popover,
     select::Select,
+    switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -44,6 +45,12 @@ const DIRECTIONS: &[(&str, &str, f64)] = &[
     ("↓", "向下", 180.0),
     ("↘", "向右下", 135.0),
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaletteTarget {
+    Background,
+    Border,
+}
 
 #[derive(Clone)]
 struct DraggedGradientColor {
@@ -103,10 +110,41 @@ impl AppView {
             })
             .when(kind == BackgroundKind::Solid, |this| {
                 this.child(self.controls.background.render("背景颜色", false, cx))
-                    .child(self.render_photo_palette(cx))
+                    .child(self.render_photo_palette(PaletteTarget::Background, cx))
             })
             .when(kind == BackgroundKind::Gradient, |this| {
                 this.child(self.render_gradient_controls(cx))
+            })
+    }
+
+    pub(in crate::ui::app) fn render_photo_border_section(
+        &self,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let enabled = self.params.photo_border.enabled();
+        GroupBox::new()
+            .id("photo-border-section")
+            .title("边框")
+            .child(
+                Switch::new("photo-border-enabled")
+                    .label("启用边框")
+                    .checked(enabled)
+                    .on_change(cx.listener(|this, enabled: &bool, _, cx| {
+                        this.params.photo_border.set_enabled(*enabled);
+                        this.schedule_palette_for_selected(cx);
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    })),
+            )
+            .when(enabled, |this| {
+                this.child(self.controls.photo_border_width.render("宽度", false, cx))
+                    .child(description("按照片高度的 0.1%–5% 向外扩展，圆角跟随照片"))
+                    .child(
+                        self.controls
+                            .photo_border_color
+                            .render("边框颜色", false, cx),
+                    )
+                    .child(self.render_photo_palette(PaletteTarget::Border, cx))
             })
     }
 
@@ -190,7 +228,7 @@ impl AppView {
                             .map(|(control, rgb)| self.render_gradient_color(control, rgb, cx)),
                     ),
             )
-            .child(self.render_photo_palette(cx))
+            .child(self.render_photo_palette(PaletteTarget::Background, cx))
     }
 
     fn render_gradient_color(
@@ -327,7 +365,18 @@ impl AppView {
             )
     }
 
-    fn render_photo_palette(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_photo_palette(&self, target: PaletteTarget, cx: &Context<Self>) -> impl IntoElement {
+        let border = target == PaletteTarget::Border;
+        let prefix = if border {
+            "border-palette-color"
+        } else {
+            "photo-palette-color"
+        };
+        let theme_control = if border {
+            &self.controls.border_palette_theme
+        } else {
+            &self.controls.palette_theme
+        };
         let status = self.selected_palette();
         let loading = matches!(status, Some(PaletteStatus::Loading));
         let solid = self.params.background_kind() == BackgroundKind::Solid;
@@ -336,8 +385,12 @@ impl AppView {
             .gap_3()
             .child(field(
                 "照片色卡风格",
-                Select::new(&self.controls.palette_theme)
-                    .id("photo-palette-theme")
+                Select::new(theme_control)
+                    .id(if border {
+                        "border-palette-theme"
+                    } else {
+                        "photo-palette-theme"
+                    })
                     .w_full(),
                 cx,
             ))
@@ -353,13 +406,19 @@ impl AppView {
                 },
                 |this, error| {
                     this.child(warning(error, cx)).child(
-                        Button::new("photo-palette-retry")
-                            .label("重新取色")
-                            .small()
-                            .ghost()
-                            .on_click(cx.listener(|this, _, window, cx| {
+                        Button::new(if border {
+                            "border-palette-retry"
+                        } else {
+                            "photo-palette-retry"
+                        })
+                        .label("重新取色")
+                        .small()
+                        .ghost()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| {
                                 this.extract_photo_palette(window, cx)
-                            })),
+                            }),
+                        ),
                     )
                 },
             )
@@ -374,7 +433,13 @@ impl AppView {
                         |(rank, swatch)| {
                             let rgb = swatch.rgb();
                             let [r, g, b] = rgb;
-                            let selected = if solid {
+                            let selected = if border {
+                                self.params
+                                    .photo_border
+                                    .palette_rank()
+                                    .map(|source| source.min(swatches.len() - 1))
+                                    == Some(rank)
+                            } else if solid {
                                 self.params.background == rgb
                             } else {
                                 self.palette_color_selected(rank)
@@ -384,7 +449,7 @@ impl AppView {
                             } else {
                                 white()
                             };
-                            Button::new(("photo-palette-color", rank))
+                            Button::new((prefix, rank))
                                 .size_8()
                                 .p_0()
                                 .outline()
@@ -410,7 +475,9 @@ impl AppView {
                                     rank + 1
                                 ))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    if solid {
+                                    if border {
+                                        this.select_border_palette_color(rank, window, cx);
+                                    } else if solid {
                                         this.select_solid_palette_color(rank, window, cx);
                                     } else {
                                         this.toggle_palette_color(rank, window, cx);
@@ -418,7 +485,12 @@ impl AppView {
                                 }))
                         },
                     )))
-                    .when(!solid, |this| {
+                    .when(border, |this| {
+                        this.child(description(
+                            "色卡风格与背景共用；应用到其它照片时匹配对应代表色",
+                        ))
+                    })
+                    .when(!solid && !border, |this| {
                         this.child(
                             Button::new("photo-palette-add-all")
                                 .label("全部添加")

@@ -39,6 +39,37 @@ impl AppView {
         ))
     }
 
+    pub(in crate::ui::app) fn photo_border_display_color(&self) -> [u8; 3] {
+        if let (Some(rank), Some(PaletteStatus::Ready(swatches))) = (
+            self.params.photo_border.palette_rank(),
+            self.selected_palette(),
+        ) {
+            if let Some(swatch) = swatches.get(rank.min(swatches.len().saturating_sub(1))) {
+                return swatch.rgb();
+            }
+        }
+        self.params.photo_border.color()
+    }
+
+    pub(in crate::ui::app) fn select_border_palette_color(
+        &mut self,
+        rank: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(PaletteStatus::Ready(swatches)) = self.selected_palette() else {
+            return;
+        };
+        let Some(swatch) = swatches.get(rank) else {
+            return;
+        };
+        let rgb = swatch.rgb();
+        self.params.photo_border.select_palette(rank, rgb);
+        self.controls.photo_border_color.sync(rgb, window, cx);
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+
     pub(in crate::ui::app) fn gradient_display_colors(&self) -> Vec<[u8; 3]> {
         match self.selected_palette() {
             Some(PaletteStatus::Ready(swatches)) => {
@@ -61,11 +92,19 @@ impl AppView {
             .gradient_angle
             .sync(self.params.gradient.angle(), window, cx);
         let theme = self.params.gradient_palette.theme();
-        if self.controls.palette_theme.read(cx).selected_value() != Some(&theme) {
-            self.controls.palette_theme.update(cx, |state, cx| {
-                state.set_selected_value(&theme, window, cx);
-            });
+        for control in [
+            &self.controls.palette_theme,
+            &self.controls.border_palette_theme,
+        ] {
+            if control.read(cx).selected_value() != Some(&theme) {
+                control.update(cx, |state, cx| {
+                    state.set_selected_value(&theme, window, cx);
+                });
+            }
         }
+        self.controls
+            .photo_border_color
+            .sync(self.photo_border_display_color(), window, cx);
         self.background_state.colors.truncate(colors.len());
         while self.background_state.colors.len() < colors.len() {
             let id = self.background_state.next_color_id;
@@ -86,10 +125,12 @@ impl AppView {
     }
 
     fn needs_photo_palette(&self) -> bool {
-        matches!(
-            self.params.background_kind(),
-            BackgroundKind::Solid | BackgroundKind::Gradient
-        ) && self.selected_photo_id().is_some()
+        (self.params.photo_border.enabled()
+            || matches!(
+                self.params.background_kind(),
+                BackgroundKind::Solid | BackgroundKind::Gradient
+            ))
+            && self.selected_photo_id().is_some()
             && self.selected_palette().is_none()
     }
 
@@ -170,6 +211,11 @@ impl AppView {
                         if this.selected_photo_id() == Some(id)
                             && this.params.gradient_palette.theme() == theme
                         {
+                            this.controls.photo_border_color.sync(
+                                this.photo_border_display_color(),
+                                window,
+                                cx,
+                            );
                             // 只更新派生色标，不打断角度、手动颜色或 Theme 下拉框的在途编辑。
                             let colors = this.gradient_display_colors();
                             let sources = this.params.gradient_palette.slots(colors.len());

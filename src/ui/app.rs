@@ -1258,6 +1258,12 @@ impl AppView {
         controls.blur_sigma.sync(params.blur_sigma, window, cx);
         controls.quality.sync(f64::from(params.quality), window, cx);
         controls.background.sync(params.background, window, cx);
+        controls
+            .photo_border_width
+            .sync(params.photo_border.width(), window, cx);
+        controls
+            .photo_border_color
+            .sync(self.photo_border_display_color(), window, cx);
 
         self.aspect_choice = aspect_choice_for(&params);
         let aspect_choice = self.aspect_choice.clone();

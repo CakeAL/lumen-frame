@@ -109,6 +109,14 @@ struct ShadowKey {
     radius: f64,
     size: f64,
     density: f64,
+    border: i32,
+}
+
+#[derive(PartialEq)]
+struct BorderKey {
+    radius: f64,
+    width: i32,
+    color: [u8; 3],
 }
 
 #[derive(Clone)]
@@ -129,6 +137,7 @@ pub(crate) struct PreviewLayerCache {
     background: Option<(BackgroundKey, Arc<RenderImage>)>,
     photo: Option<(f64, Arc<RenderImage>)>,
     shadow: Option<CachedShadow>,
+    border: Option<(BorderKey, ShadowImage)>,
     texts: Vec<(TextKey, Option<TextLayer>)>,
     rotated: Vec<(Arc<RenderImage>, Rotation, Arc<RenderImage>)>,
     #[cfg(test)]
@@ -440,6 +449,7 @@ impl LayerRenderer for CachedRenderer<'_> {
             radius: p.border_radius,
             size: p.shadow_size,
             density: p.shadow_density,
+            border: p.photo_border.pixels(self.dimensions.1),
         };
         let image = if let Some(image) = self
             .cache
@@ -452,7 +462,7 @@ impl LayerRenderer for CachedRenderer<'_> {
             let image = if p.shadow_size <= 0.0 || p.shadow_density <= 0.0 {
                 None
             } else {
-                canvas::shadow_layer(&self.rounded()?, &self.job.params)?
+                canvas::photo_shadow_layer(&self.rounded()?, &self.job.params)?
                     .map(|(image, x, y)| {
                         Ok::<_, anyhow::Error>(ShadowImage {
                             image: to_render_image(&image)?,
@@ -479,6 +489,43 @@ impl LayerRenderer for CachedRenderer<'_> {
             },
             x,
             y,
+            group_ix: None,
+        }))
+    }
+
+    fn border(&mut self) -> Result<Option<PositionedLayer<TextLayer>>> {
+        let p = &self.job.params;
+        let key = BorderKey {
+            radius: p.border_radius,
+            width: p.photo_border.pixels(self.dimensions.1),
+            color: p.photo_border.color(),
+        };
+        if key.width == 0 {
+            self.cache.border = None;
+            return Ok(None);
+        }
+        let image = if let Some((_, image)) =
+            self.cache.border.as_ref().filter(|(old, _)| *old == key)
+        {
+            image.clone()
+        } else {
+            let (image, x, y) = photo_image::border_layer(self.dimensions.0, self.dimensions.1, p)?
+                .expect("启用的照片边框");
+            let image = ShadowImage {
+                image: to_render_image(&image)?,
+                x,
+                y,
+            };
+            self.cache.border = Some((key, image.clone()));
+            image
+        };
+        Ok(Some(PositionedLayer {
+            image: TextLayer {
+                image: image.image,
+                visible: None,
+            },
+            x: image.x,
+            y: image.y,
             group_ix: None,
         }))
     }
@@ -535,6 +582,62 @@ mod tests {
 
     fn same(a: &LayeredPreview, b: &LayeredPreview, ix: usize) -> bool {
         Arc::ptr_eq(&a.layers[ix].image, &b.layers[ix].image)
+    }
+
+    #[test]
+    fn photo_border_matches_full_composition_and_reuses_independent_layers() {
+        let mut job = job();
+        job.path = "test_images/ultra_hdr.jpg".into();
+        job.text_groups.clear();
+        job.params.solid_background = true;
+        job.params.border_radius = 0.08;
+        job.params.photo_border.set_enabled(true);
+        job.params.photo_border.set_width(0.05);
+        job.params.photo_border.set_color([240, 40, 90]);
+        let mut cache = PreviewLayerCache::default();
+        let first = cache.render(&job).unwrap();
+        assert_eq!(first.layers.len(), 4); // 背景、阴影、边框、照片
+        let border = &first.layers[2];
+        let photo = &first.layers[3];
+        let thickness = (photo.image.size(0).height.0 as f64 * 0.05).round() as i32;
+        assert_eq!(
+            (border.x, border.y),
+            (photo.x - thickness, photo.y - thickness)
+        );
+        assert_eq!(
+            border.image.size(0).width.0,
+            photo.image.size(0).width.0 + 2 * thickness
+        );
+        let size = border.image.size(0);
+        let pixels = border.image.as_bytes(0).unwrap();
+        let ix = ((size.height.0 / 2 * size.width.0 + thickness / 2) * 4) as usize;
+        assert_eq!(&pixels[ix..ix + 4], &[90, 40, 240, 255]);
+        assert_eq!(pixels[3], 0, "边框外圆角需要透明");
+        let full = super::super::render_preview(&job).unwrap();
+        assert_eq!(first.size, full.size(0));
+        let error = first
+            .image()
+            .as_bytes(0)
+            .unwrap()
+            .iter()
+            .zip(full.as_bytes(0).unwrap())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(error <= 2, "边框分层预览与完整合成像素误差 {error}");
+
+        job.params.photo_border.set_color([30, 180, 220]);
+        let recolored = cache.render(&job).unwrap();
+        for ix in [0, 1, 3] {
+            assert!(same(&first, &recolored, ix));
+        }
+        assert!(!same(&first, &recolored, 2));
+        job.params.photo_border.set_width(0.001);
+        let thinner = cache.render(&job).unwrap();
+        assert!(same(&recolored, &thinner, 3));
+        assert!(!same(&recolored, &thinner, 1), "投影必须跟随边框轮廓");
+        job.params.photo_border.set_enabled(false);
+        assert_eq!(cache.render(&job).unwrap().layers.len(), 3);
     }
 
     #[test]

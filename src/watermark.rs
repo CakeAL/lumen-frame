@@ -12,6 +12,9 @@ pub(crate) mod rich_text;
 pub use gradient::{BackgroundGradient, GradientPalette, PaletteTheme};
 pub use rich_text::{TextSpan, TextStyle};
 
+mod photo_border;
+pub use photo_border::PhotoBorder;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundKind {
     Photo,
@@ -53,6 +56,8 @@ pub struct WatermarkParams {
     pub position: Placement,
     pub background: [u8; 3],
     pub border_radius: f64,
+    /// 照片外侧的彩色边框，与画布留白分别设置。
+    pub photo_border: PhotoBorder,
     pub shadow_size: f64,
     pub shadow_density: f64,
     pub solid_background: bool,
@@ -81,6 +86,7 @@ impl Default for WatermarkParams {
             position: Placement::Center,
             background: [255, 255, 255],
             border_radius: 0.02,
+            photo_border: PhotoBorder::default(),
             shadow_size: 0.06,
             shadow_density: 1.2,
             solid_background: false,

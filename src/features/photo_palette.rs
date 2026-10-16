@@ -178,10 +178,25 @@ pub fn gradient_colors(params: &WatermarkParams, swatches: &[PaletteSwatch]) -> 
 /// 预览和导出都必须在后台按原照片解析取色规则，不使用另一张照片的已求值颜色。
 pub fn resolve(path: &Path, params: &WatermarkParams) -> Result<WatermarkParams> {
     let mut resolved = params.clone();
-    if params.gradient_background && params.gradient_palette.uses_palette() {
+    let gradient_palette = params.gradient_background && params.gradient_palette.uses_palette();
+    let border_palette =
+        params.photo_border.enabled() && params.photo_border.palette_rank().is_some();
+    if gradient_palette || border_palette {
         let swatches = extract_with_theme(path, 6, params.gradient_palette.theme())?;
-        resolved.gradient =
-            BackgroundGradient::new(params.gradient.angle(), gradient_colors(params, &swatches))?;
+        if gradient_palette {
+            resolved.gradient = BackgroundGradient::new(
+                params.gradient.angle(),
+                gradient_colors(params, &swatches),
+            )?;
+        }
+        if border_palette {
+            let rank = params
+                .photo_border
+                .palette_rank()
+                .unwrap()
+                .min(swatches.len() - 1);
+            resolved.photo_border.resolve_color(swatches[rank].rgb());
+        }
     }
     Ok(resolved)
 }

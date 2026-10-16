@@ -29,11 +29,12 @@ impl Margin {
                 (img_w as f64 * params.border_ratio.3).round() as i32,
             )
         };
+        let frame = params.photo_border.pixels(img_h);
         Self {
-            top,
-            right,
-            bottom,
-            left,
+            top: top + frame,
+            right: right + frame,
+            bottom: bottom + frame,
+            left: left + frame,
         }
     }
 
@@ -209,6 +210,27 @@ pub fn add_shadow(
 }
 
 /// 独立的透明阴影图层，坐标相对于照片；预览可缓存它，不必重新做高斯模糊。
+pub(crate) fn photo_shadow_layer(
+    photo: &VipsImage,
+    params: &WatermarkParams,
+) -> Result<Option<(VipsImage, i32, i32)>> {
+    ensure_vips();
+    if params.shadow_size <= 0.0 || params.shadow_density <= 0.0 {
+        return Ok(None);
+    }
+    if let Some((border, x, y)) =
+        super::image::border_layer(photo.width() as i32, photo.height() as i32, params)?
+    {
+        // 投影沿外边框生成，但模糊强度仍以原照片高度计算。
+        let mut shadow_params = params.clone();
+        shadow_params.shadow_size *= photo.height() as f64 / border.height() as f64;
+        Ok(shadow_layer(&border, &shadow_params)?.map(|(image, sx, sy)| (image, sx + x, sy + y)))
+    } else {
+        shadow_layer(photo, params)
+    }
+}
+
+/// 按给定图像的透明轮廓生成投影。
 pub(crate) fn shadow_layer(
     img: &VipsImage,
     params: &WatermarkParams,

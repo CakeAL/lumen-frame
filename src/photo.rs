@@ -325,13 +325,29 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
     fn shadow(&mut self) -> Result<Option<layers::PositionedLayer<VipsImage>>> {
         let img = self.photo()?;
         Ok(
-            canvas::shadow_layer(&img, self.params)?.map(|(image, x, y)| layers::PositionedLayer {
-                image,
-                x,
-                y,
-                group_ix: None,
+            canvas::photo_shadow_layer(&img, self.params)?.map(|(image, x, y)| {
+                layers::PositionedLayer {
+                    image,
+                    x,
+                    y,
+                    group_ix: None,
+                }
             }),
         )
+    }
+
+    fn border(&mut self) -> Result<Option<layers::PositionedLayer<VipsImage>>> {
+        Ok(image::border_layer(
+            self.img.width() as i32,
+            self.img.height() as i32,
+            self.params,
+        )?
+        .map(|(image, x, y)| layers::PositionedLayer {
+            image,
+            x,
+            y,
+            group_ix: None,
+        }))
     }
 }
 

@@ -30,6 +30,7 @@ pub(crate) trait LayerRenderer {
     fn photo(&mut self) -> Result<Self::Image>;
     /// 阴影坐标相对于照片左上角；与画布大小及照片放置位置无关。
     fn shadow(&mut self) -> Result<Option<PositionedLayer<Self::Image>>>;
+    fn border(&mut self) -> Result<Option<PositionedLayer<Self::Image>>>;
 }
 
 pub(crate) fn prepare<R: LayerRenderer>(
@@ -122,12 +123,18 @@ pub(crate) fn prepare<R: LayerRenderer>(
         shadow.y += img_y;
         layers.push(shadow);
     }
+    if let Some(mut border) = renderer.border()? {
+        border.x += img_x;
+        border.y += img_y;
+        layers.push(border);
+    }
     layers.push(PositionedLayer {
         image: photo,
         x: img_x,
         y: img_y,
         group_ix: None,
     });
+    let frame = params.photo_border.pixels(img_h);
     let mut cluster_origins = vec![(0, 0); groups.len()];
     for (root, bounds) in bounds.iter().enumerate() {
         let Some((left, top, right, bottom)) = *bounds else {
@@ -146,14 +153,14 @@ pub(crate) fn prepare<R: LayerRenderer>(
             TextAlign::Right => img_y + img_h - text_h,
         };
         let (x, y) = match group.position {
-            Placement::Up => (aligned_x, (img_y - text_h) / 2),
+            Placement::Up => (aligned_x, (img_y - frame - text_h) / 2),
             Placement::Bottom => (
                 aligned_x,
-                img_y + img_h + (canvas_h - img_y - img_h - text_h) / 2,
+                img_y + img_h + frame + (canvas_h - img_y - img_h - frame - text_h) / 2,
             ),
-            Placement::Left => ((img_x - text_w) / 2, aligned_y),
+            Placement::Left => ((img_x - frame - text_w) / 2, aligned_y),
             Placement::Right => (
-                img_x + img_w + (canvas_w - img_x - img_w - text_w) / 2,
+                img_x + img_w + frame + (canvas_w - img_x - img_w - frame - text_w) / 2,
                 aligned_y,
             ),
             Placement::Center => (aligned_x, img_y + (img_h - text_h) / 2),

@@ -181,6 +181,8 @@ pub(in crate::ui::app) struct ParameterControls {
     pub border_left: NumberField,
     pub border_right: NumberField,
     pub border_radius: NumberField,
+    pub photo_border_width: NumberField,
+    pub photo_border_color: ColorField,
     pub shadow_size: NumberField,
     pub shadow_density: NumberField,
     pub blur_sigma: NumberField,
@@ -197,6 +199,7 @@ pub(in crate::ui::app) struct ParameterControls {
     pub custom_text: Entity<InputState>,
     pub gradient_angle: NumberField,
     pub palette_theme: Entity<SelectState<Vec<Choice<PaletteTheme>>>>,
+    pub border_palette_theme: Entity<SelectState<Vec<Choice<PaletteTheme>>>>,
 }
 
 impl ParameterControls {
@@ -268,6 +271,18 @@ impl ParameterControls {
             window,
             cx,
         );
+        let photo_border_width = NumberField::new(
+            params.photo_border.width(),
+            0.1,
+            5.0,
+            0.1,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
+        let photo_border_color = ColorField::new(params.photo_border.color(), window, cx);
         let shadow_size = NumberField::new(
             params.shadow_size,
             0.0,
@@ -282,7 +297,7 @@ impl ParameterControls {
         let shadow_density = NumberField::new(
             params.shadow_density,
             0.0,
-            2.0,
+            4.0,
             0.05,
             2,
             1.0,
@@ -345,6 +360,31 @@ impl ParameterControls {
                 }
             },
         ));
+
+        let border_palette_theme = select_state(
+            choices(themes),
+            index_of(themes, &params.gradient_palette.theme()),
+            window,
+            cx,
+        );
+        subscriptions.push(cx.subscribe_in(
+            &border_palette_theme,
+            window,
+            |this, _, event, window, cx| {
+                if let SelectEvent::Confirm(Some(theme)) = event {
+                    this.set_palette_theme(*theme, window, cx);
+                }
+            },
+        ));
+        subscriptions.extend(photo_border_width.subscribe(window, cx, |this, value| {
+            this.params.photo_border.set_width(value);
+        }));
+        subscriptions.extend(photo_border_color.subscribe(window, cx, |this, rgb| {
+            // 控件同步派生的色卡值时保留来源，仅手动改色才取消色卡绑定。
+            if this.photo_border_display_color() != rgb {
+                this.params.photo_border.set_color(rgb);
+            }
+        }));
 
         subscriptions.extend(border_top.subscribe(window, cx, |this, value| {
             this.params.border_ratio.0 = value;
@@ -466,6 +506,8 @@ impl ParameterControls {
                 border_left,
                 border_right,
                 border_radius,
+                photo_border_width,
+                photo_border_color,
                 shadow_size,
                 shadow_density,
                 blur_sigma,
@@ -473,6 +515,7 @@ impl ParameterControls {
                 background,
                 gradient_angle,
                 palette_theme,
+                border_palette_theme,
                 aspect_ratio,
                 aspect_width,
                 aspect_height,
@@ -607,6 +650,7 @@ impl AppView {
                     )
                     .child(self.render_canvas_section(cx))
                     .child(self.render_background_section(cx))
+                    .child(self.render_photo_border_section(cx))
                     .child(self.render_image_section(cx))
                     .child(self.render_text_section(cx)),
             )

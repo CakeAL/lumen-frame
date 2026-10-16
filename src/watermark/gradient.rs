@@ -46,7 +46,7 @@ impl BackgroundGradient {
 
 impl Default for BackgroundGradient {
     fn default() -> Self {
-        Self::new(135.0, vec![[0xf0, 0x2f, 0xc2], [0x60, 0x94, 0xea]]).unwrap()
+        Self::new(135.0, vec![[0xb5, 0xb9, 0xff], [0x2b, 0x2c, 0x49]]).unwrap()
     }
 }
 

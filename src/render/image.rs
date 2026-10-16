@@ -138,3 +138,34 @@ pub(crate) fn alpha_mask(img: &VipsImage) -> Result<VipsImage> {
         }
     }
 }
+
+/// 相对照片向外扩出的圆角矩形；内外圆角相差边框厚度，保持拐角处等宽。
+pub(crate) fn border_layer(
+    width: i32,
+    height: i32,
+    params: &WatermarkParams,
+) -> Result<Option<(VipsImage, i32, i32)>> {
+    ensure_vips();
+    let border = params.photo_border.pixels(height);
+    if border == 0 {
+        return Ok(None);
+    }
+    let w = width + border * 2;
+    let h = height + border * 2;
+    let inner_radius = (height as f64 * params.border_radius)
+        .round()
+        .clamp(0.0, width.min(height) as f64 / 2.0);
+    let radius = if inner_radius > 0.0 {
+        inner_radius + border as f64
+    } else {
+        0.0
+    };
+    let [r, g, b] = params.photo_border.color();
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><rect width="{w}" height="{h}" rx="{radius}" fill="rgb({r},{g},{b})"/></svg>"#
+    );
+    // SVG 解码是延迟求值的，返回前复制像素以解除对局部字符串的借用。
+    let borrowed = vips::VipsImage::from_buffer(svg.as_bytes())?;
+    let image = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
+    Ok(Some((image, -border, -border)))
+}
