@@ -14,7 +14,8 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
-    select::{Select, SelectEvent, SelectState},
+    select::{Select, SelectState},
+    tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -83,7 +84,6 @@ const TEMPLATE_FIELDS: &[(&str, &str)] = &[
 
 pub(in crate::ui::app) type FontSelect = ComboboxState<SearchableVec<SharedString>>;
 pub(in crate::ui::app) type AlignSelect = SelectState<Vec<Choice<TextAlign>>>;
-pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 pub(in crate::ui::app) type DirectionSelect = SelectState<Vec<Choice<TextDirection>>>;
 
 pub(super) const INHERIT_FONT_LABEL: &str = "跟随默认字体";
@@ -321,8 +321,8 @@ impl TextLine {
 
 pub(in crate::ui::app) struct TextGroupEditor {
     pub id: u64,
-    pub position: Entity<PositionSelect>,
-    pub align: Entity<AlignSelect>,
+    pub position: Placement,
+    pub align: TextAlign,
     pub direction: Entity<DirectionSelect>,
     pub padding: NumberField,
     pub border: TextBorderControls,
@@ -344,19 +344,6 @@ impl TextGroupEditor {
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> Self {
-        let position = select_state(
-            choices(POSITIONS),
-            index_of(POSITIONS, &group.position),
-            window,
-            cx,
-        );
-        let align_entries = group_aligns(group.position);
-        let align = select_state(
-            choices(align_entries),
-            index_of(align_entries, &group.align),
-            window,
-            cx,
-        );
         let direction = select_state(
             choices(TEXT_DIRECTIONS),
             index_of(TEXT_DIRECTIONS, &group.direction),
@@ -386,28 +373,7 @@ impl TextGroupEditor {
                 .default_value(group.time_format.clone())
                 .placeholder("%Y/%m/%d")
         });
-        let mut subscriptions = vec![on_select(&align, window, cx, |_, _, _| {})];
-        let align_for_position = align.clone();
-        subscriptions.push(cx.subscribe_in(
-            &position,
-            window,
-            move |this, _, event, window, cx| {
-                let SelectEvent::Confirm(Some(position)) = event else {
-                    return;
-                };
-                let selected = align_for_position
-                    .read(cx)
-                    .selected_value()
-                    .copied()
-                    .unwrap_or_default();
-                align_for_position.update(cx, |state, cx| {
-                    state.set_items(choices(group_aligns(*position)), window, cx);
-                    state.set_selected_value(&selected, window, cx);
-                });
-                this.refresh_preview(cx);
-                cx.notify();
-            },
-        ));
+        let mut subscriptions = Vec::new();
         subscriptions.push(on_select(&direction, window, cx, |_, _, _| {}));
         subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(attachment_gap.subscribe(window, cx, |_, _| {}));
@@ -433,8 +399,8 @@ impl TextGroupEditor {
 
         Self {
             id,
-            position,
-            align,
+            position: group.position,
+            align: group.align,
             direction,
             padding,
             border,
@@ -466,24 +432,14 @@ impl TextGroupEditor {
                     .collect(),
                 text_params: self.lines.iter().map(|line| line.to_params(cx)).collect(),
             },
-            position: self
-                .position
-                .read(cx)
-                .selected_value()
-                .copied()
-                .unwrap_or(Placement::Bottom),
+            position: self.position,
             direction: self
                 .direction
                 .read(cx)
                 .selected_value()
                 .copied()
                 .unwrap_or_default(),
-            align: self
-                .align
-                .read(cx)
-                .selected_value()
-                .copied()
-                .unwrap_or_default(),
+            align: self.align,
             padding: self.padding.value(cx),
             border: self.border.to_border(cx),
             time_format: self.time_format.read(cx).value().to_string(),
@@ -916,10 +872,73 @@ impl AppView {
                     )
                     .child(self.render_attachment_settings(group, view.clone(), cx))
                     .when(group.attachment_target.is_none(), |this| {
-                        this.child(field("位置", Select::new(&group.position).w_full(), cx))
+                        let view = view.clone();
+                        this.child(field(
+                            "位置",
+                            TabBar::new(("text-group-position", group_id))
+                                .segmented()
+                                .w_full()
+                                .children(
+                                    POSITIONS
+                                        .iter()
+                                        .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                                )
+                                .selected_index(
+                                    POSITIONS
+                                        .iter()
+                                        .position(|(_, position)| *position == value.position)
+                                        .unwrap_or(0),
+                                )
+                                .on_click(move |index: &usize, _, cx| {
+                                    view.update(cx, |this, cx| {
+                                        if let Some(group) = this
+                                            .text_groups
+                                            .iter_mut()
+                                            .find(|group| group.id == group_id)
+                                        {
+                                            group.position = POSITIONS[*index].1;
+                                            this.refresh_preview(cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                            cx,
+                        ))
                     })
                     .when(group.attachment_target.is_none(), |this| {
-                        this.child(field("组对齐", Select::new(&group.align).w_full(), cx))
+                        let view = view.clone();
+                        let aligns = group_aligns(value.position);
+                        this.child(field(
+                            "组对齐",
+                            TabBar::new(("text-group-align", group_id))
+                                .segmented()
+                                .w_full()
+                                .children(
+                                    aligns
+                                        .iter()
+                                        .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                                )
+                                .selected_index(
+                                    aligns
+                                        .iter()
+                                        .position(|(_, align)| *align == value.align)
+                                        .unwrap_or(1),
+                                )
+                                .on_click(move |index: &usize, _, cx| {
+                                    view.update(cx, |this, cx| {
+                                        if let Some(group) = this
+                                            .text_groups
+                                            .iter_mut()
+                                            .find(|group| group.id == group_id)
+                                        {
+                                            group.align = aligns[*index].1;
+                                            this.refresh_preview(cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                            cx,
+                        ))
                     })
                     .child(
                         group
@@ -1285,7 +1304,9 @@ mod tests {
     use super::*;
 
     #[gpui_kit::test]
-    fn text_border_buttons_keep_group_settings_independent(cx: &mut gpui_kit::TestAppContext) {
+    fn group_buttons_keep_position_alignment_and_border_settings(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         use gpui_kit::component::Root;
         use gpui_kit::test::TestWindowExt as _;
         cx.update(gpui_kit::init);
@@ -1304,6 +1325,18 @@ mod tests {
         let app = editor.read_with(cx, |editor, _| editor.app.clone());
         cx.simulate_resize(size(px(1280.), px(1000.)));
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            window
+                .within(("text-group-position", 0_u64))
+                .click(3_usize, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window
+                .within(("text-group-align", 0_u64))
+                .click(2_usize, cx)
+        });
+        cx.run_until_parked();
         cx.update(|window, cx| window.click(("text-border-enabled", 0_u64), cx));
         cx.run_until_parked();
         for key in ["text-border-top", "text-border-right", "text-border-bottom"] {
@@ -1312,6 +1345,8 @@ mod tests {
         }
         app.update_in(cx, |app, window, cx| {
             let snapshot = app.current_watermark(cx);
+            assert_eq!(snapshot.text_groups[0].position, Placement::Left);
+            assert_eq!(snapshot.text_groups[0].align, TextAlign::Right);
             let border = &snapshot.text_groups[0].border;
             assert!(border.enabled());
             assert_eq!(border.color(), [192; 3]);
@@ -1326,6 +1361,8 @@ mod tests {
                 app.build_text_groups(cx)[0].border,
                 snapshot.text_groups[0].border
             );
+            assert_eq!(app.build_text_groups(cx)[0].position, Placement::Left);
+            assert_eq!(app.build_text_groups(cx)[0].align, TextAlign::Right);
         });
     }
 

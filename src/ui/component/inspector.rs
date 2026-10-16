@@ -172,7 +172,6 @@ pub(super) const POSITIONS: &[(&str, Placement)] = &[
 
 /// 下拉框状态的具体类型别名，免得这串泛型在签名里反复出现。
 pub(in crate::ui::app) type AspectRatioSelect = SelectState<Vec<Choice<AspectRatioChoice>>>;
-pub(in crate::ui::app) type PositionSelect = SelectState<Vec<Choice<Placement>>>;
 
 /// 面板里所有需要跨帧保留的控件状态。
 pub(in crate::ui::app) struct ParameterControls {
@@ -193,7 +192,6 @@ pub(in crate::ui::app) struct ParameterControls {
     /// 自定义宽高比的两个输入框。
     pub aspect_width: Entity<InputState>,
     pub aspect_height: Entity<InputState>,
-    pub position: Entity<PositionSelect>,
     pub output_folder: Entity<InputState>,
     pub preset_name: Entity<InputState>,
     pub custom_text: Entity<InputState>,
@@ -434,18 +432,8 @@ impl ParameterControls {
                 .default_value(ratio_height)
                 .placeholder("高")
         });
-        let position = select_state(
-            choices(POSITIONS),
-            index_of(POSITIONS, &params.position),
-            window,
-            cx,
-        );
-
         subscriptions.push(on_select(&aspect_ratio, window, cx, |this, choice, cx| {
             this.apply_aspect_choice(choice, cx);
-        }));
-        subscriptions.push(on_select(&position, window, cx, |this, position, _| {
-            this.params.position = position;
         }));
 
         // 自定义比例：两个框任意一个变了，就拿两个框当前的值重算比例。
@@ -519,7 +507,6 @@ impl ParameterControls {
                 aspect_ratio,
                 aspect_width,
                 aspect_height,
-                position,
                 output_folder,
                 preset_name,
                 custom_text,
@@ -1297,7 +1284,25 @@ impl AppView {
             })
             .child(field(
                 "图片位置",
-                Select::new(&controls.position).w_full(),
+                TabBar::new("photo-position")
+                    .segmented()
+                    .w_full()
+                    .children(
+                        POSITIONS
+                            .iter()
+                            .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                    )
+                    .selected_index(
+                        POSITIONS
+                            .iter()
+                            .position(|(_, position)| *position == self.params.position)
+                            .unwrap_or(0),
+                    )
+                    .on_click(cx.listener(|this, index: &usize, _, cx| {
+                        this.params.position = POSITIONS[*index].1;
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    })),
                 cx,
             ))
     }
@@ -1359,7 +1364,7 @@ impl AppView {
                 Button::new("rotate-watermark-photo")
                     .icon(IconName::RotateCw)
                     .label(format!(
-                        "全部照片顺时针旋转 90° · 当前 {}°",
+                        "导出时顺时针旋转方向 · 当前 {}°",
                         self.params.rotation.degrees()
                     ))
                     .outline()

@@ -1270,9 +1270,6 @@ impl AppView {
         controls.aspect_ratio.update(cx, |state, cx| {
             state.set_selected_index(index_of(ASPECT_RATIOS, &aspect_choice), window, cx)
         });
-        controls.position.update(cx, |state, cx| {
-            state.set_selected_value(&params.position, window, cx)
-        });
         // 自定义比例的两个框：不在自定义模式时也同步，切过去就能直接用。
         let (width, height) = params.aspect_ratio.unwrap_or((1.0, 1.0));
         controls.aspect_width.update(cx, |state, cx| {
