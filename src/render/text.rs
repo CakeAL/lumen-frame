@@ -1,22 +1,11 @@
 use std::{
-    borrow::Cow,
     collections::HashMap,
-    ops::Range,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use nom_exif::ExifDateTime;
-use parley::style::{FontFamily, FontStyle, FontWeight, LineHeight, StyleProperty};
-use parley::{
-    Alignment, AlignmentOptions, FontContext, InlineBox, InlineBoxKind, Layout, LayoutContext,
-    PositionedLayoutItem,
-};
 use regex::Regex;
 use reverse_geocoder_cn::{Address, ReverseGeocoder};
-use swash::FontRef;
-use swash::scale::image::{Content, Image};
-use swash::scale::{Render, ScaleContext, Source};
-use swash::zeno::Format;
 use vips::{Error as VipsError, Result, VipsAngle, VipsBandFormat, VipsInterpretation};
 
 use crate::{
@@ -134,6 +123,7 @@ impl Text {
         watermark_params: &WatermarkParams,
         time_format: &str,
     ) -> Result<Option<VipsImage>> {
+        crate::media::ensure_vips();
         // 行数
         let line_count = self.template.len().min(self.text_params.len());
         if line_count == 0 {
@@ -151,57 +141,32 @@ impl Text {
             })
             .collect();
 
-        let mut font_ctx = FontContext::new();
-        let mut layout_ctx = LayoutContext::<peniko::Brush>::new();
-
         let mut prepared = Vec::with_capacity(line_count);
-
         for (segments, params) in segment_lines.iter().zip(&self.text_params) {
-            let line = prepare_line(
-                segments,
-                params,
-                img_h,
-                exif,
-                watermark_params,
-                &mut font_ctx,
-                &mut layout_ctx,
-            )?;
-            prepared.push(line);
+            // 自定义文本或编辑器中的换行仍按独立视觉行排版，每行继承原行样式。
+            let mut rows = vec![Vec::new()];
+            for segment in segments {
+                if let Segment::Text(text, style) = segment {
+                    for (ix, part) in text.split('\n').enumerate() {
+                        if ix > 0 {
+                            rows.push(Vec::new());
+                        }
+                        rows.last_mut().unwrap().push(Segment::Text(
+                            part.trim_end_matches('\r').into(),
+                            style.clone(),
+                        ));
+                    }
+                } else {
+                    rows.last_mut().unwrap().push(segment.clone());
+                }
+            }
+            for row in rows {
+                prepared.push(prepare_line(&row, params, img_h, exif, watermark_params)?);
+            }
         }
-
-        // 导出图片宽度取所有行中最长一行的内容宽度，左右不留空白。
-        let width = prepared
-            .iter()
-            .map(|line| line.layout.width().ceil() as i32)
-            .max()
-            .unwrap_or(0);
+        let width = prepared.iter().map(|line| line.width).max().unwrap_or(0);
         if width <= 0 {
             return Ok(None);
-        }
-
-        // 用最长行宽度作为排版宽度重新换行并执行对齐：
-        // 左对齐时所有行都贴左，图片宽度 = 最长行；居中/右对齐也都在该宽度内。
-        for (i, line) in prepared.iter_mut().enumerate() {
-            line.layout.break_all_lines(Some(width as f32));
-            line.layout.align(
-                alignment_for(self.text_params[i].align),
-                AlignmentOptions::default(),
-            );
-            if line.compact {
-                // InlineBox 高于字体时 Parley 可能给出负 y；先完整接住可见内容，
-                // 再裁掉行框留白，不能让 Logo 顶端被裁切或画进上一行。
-                let (mut top, mut bottom) = (0.0f32, line.layout.height());
-                for layout_line in line.layout.lines() {
-                    for item in layout_line.items() {
-                        if let PositionedLayoutItem::InlineBox(logo) = item {
-                            top = top.min(logo.y.floor());
-                            bottom = bottom.max((logo.y + logo.height).ceil());
-                        }
-                    }
-                }
-                line.inset = -top as i32;
-                line.height = (bottom - top).ceil().max(1.0) as usize;
-            }
         }
         // 为紧凑行的显式行间距预留空间，压缩字体行框后不能把行距一起截掉。
         let total_h: usize = prepared
@@ -213,7 +178,7 @@ impl Text {
 
         let mut y_off = 0i32;
         for (i, line) in prepared.iter().enumerate() {
-            render_line_into(&mut canvas, width, total_h as i32, y_off + line.inset, line)?;
+            render_line_into(&mut canvas, width, total_h as i32, y_off, line)?;
             let row_start = y_off as usize * width as usize * 4;
             let row_end = row_start + line.height * width as usize * 4;
             if line.compact
@@ -513,19 +478,107 @@ pub fn render_styled_template_preview(
     (text, spans)
 }
 
-/// 一个已加载的相机 logo（已经缩放到目标尺寸、RGBA/uchar）。
-struct LogoSlot {
-    image: VipsImage,
+enum LineItem {
+    Glyph {
+        image: Arc<super::fonts::GlyphBitmap>,
+        x: i32,
+        y: i32,
+        color: [u8; 4],
+    },
+    Logo {
+        image: VipsImage,
+        x: i32,
+        y: i32,
+    },
+    Underline {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        color: [u8; 4],
+    },
 }
 
-/// 一行渲染所需的全部中间结果。
+/// 已完成 GPUI 排版和字形栅格化的行，坐标包含字形外伸部分，避免斜体被裁切。
 struct PreparedLine {
-    layout: Layout<peniko::Brush>,
-    slots: Vec<LogoSlot>,
+    items: Vec<LineItem>,
+    width: i32,
     height: usize,
+    align: TextAlign,
     compact: bool,
     gap: usize,
-    inset: i32,
+}
+
+struct LineBuilder {
+    items: Vec<LineItem>,
+    x: f32,
+    ascent: f32,
+    descent: f32,
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+}
+
+impl LineBuilder {
+    fn text(
+        &mut self,
+        text: &str,
+        spans: &[TextSpan],
+        params: &TextParams,
+        size: f32,
+        watermark: &WatermarkParams,
+    ) -> Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let backend = super::fonts::backend()?;
+        let shaped = backend.shape(text, spans, params, size, watermark);
+        self.ascent = self.ascent.max(f32::from(shaped.layout.ascent));
+        self.descent = self.descent.max(f32::from(shaped.layout.descent));
+        for run in &shaped.layout.runs {
+            for glyph in &run.glyphs {
+                let style = shaped
+                    .styles
+                    .iter()
+                    .find(|style| style.start <= glyph.index && glyph.index < style.end);
+                let color = style
+                    .map(|style| style.color)
+                    .unwrap_or_else(|| text_color(params, watermark));
+                let gx = self.x + f32::from(glyph.position.x);
+                let image =
+                    backend.glyph(run.font_id, glyph.id, size, gx, glyph.is_emoji, color)?;
+                let x = gx.floor() as i32 + image.x;
+                let y = f32::from(glyph.position.y).round() as i32 + image.y;
+                self.left = self.left.min(x);
+                self.right = self.right.max(x + image.width);
+                self.top = self.top.min(y);
+                self.bottom = self.bottom.max(y + image.height);
+                self.items.push(LineItem::Glyph { image, x, y, color });
+            }
+        }
+        for style in &shaped.styles {
+            if !style.underline {
+                continue;
+            }
+            let (offset, thickness) = backend.underline(style.font, size);
+            let start = self.x + f32::from(shaped.layout.x_for_index(style.start));
+            let end = self.x + f32::from(shaped.layout.x_for_index(style.end));
+            let (x, y) = (start.min(end).floor() as i32, offset.floor() as i32);
+            let width = (start.max(end).ceil() as i32 - x).max(0);
+            let height = thickness.ceil() as i32;
+            self.bottom = self.bottom.max(y + height);
+            self.items.push(LineItem::Underline {
+                x,
+                y,
+                width,
+                height,
+                color: style.color,
+            });
+        }
+        self.x += f32::from(shaped.layout.width);
+        Ok(())
+    }
 }
 
 fn prepare_line(
@@ -533,274 +586,128 @@ fn prepare_line(
     params: &TextParams,
     img_h: i32,
     exif: &ExifInfo,
-    watermark_params: &WatermarkParams,
-    font_ctx: &mut FontContext,
-    layout_ctx: &mut LayoutContext<peniko::Brush>,
+    watermark: &WatermarkParams,
 ) -> Result<PreparedLine> {
-    let font_size = (params.size * img_h as f64) as f32;
-    // 先用占位字符构建一次纯文本布局，量出该行文字的实际字形高度（cap height），
-    // 让 Logo 高度与文字高度相等，而不是用整个 em 高度（那样会显得比字高）。
+    let size = (params.size * img_h as f64).max(1.0) as f32;
+    let backend = super::fonts::backend()?;
     let mut probe_text = String::new();
     let mut probe_spans = Vec::new();
     for segment in segments {
-        match segment {
-            Segment::Text(text, style) => {
-                append_styled_text(&mut probe_text, &mut probe_spans, text, style)
-            }
-            Segment::Logo | Segment::CustomLogo(_) => probe_text.push('\u{200b}'),
+        if let Segment::Text(value, style) = segment {
+            append_styled_text(&mut probe_text, &mut probe_spans, value, style);
         }
     }
-    let probe_layout = build_parley_layout(
-        &probe_text,
-        &probe_spans,
-        params,
-        font_size,
-        None,
-        &[],
-        watermark_params,
-        font_ctx,
-        layout_ctx,
-    );
-    let target_h = measure_cap_height(&probe_layout)
-        .unwrap_or(font_size * 0.7)
-        .max(1.0);
+    if probe_text.is_empty() {
+        probe_text.push('H');
+    }
+    let probe = backend.shape(&probe_text, &probe_spans, params, size, watermark);
+    let target_h = backend.cap_height(&probe).unwrap_or(size * 0.7).max(1.0);
     let custom_h = (params.logo_size.unwrap_or(params.size) * img_h as f64)
         .round()
         .max(1.0);
-
-    let mut layout_text = String::new();
-    let mut layout_spans = Vec::new();
-    let mut boxes: Vec<InlineBox> = Vec::new();
-    let mut slots: Vec<LogoSlot> = Vec::new();
-    let mut next_id = 0u64;
+    let mut line = LineBuilder {
+        items: Vec::new(),
+        x: 0.0,
+        ascent: 0.0,
+        descent: 0.0,
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+    };
+    let mut text = String::new();
+    let mut spans = Vec::new();
+    let mut leading = true;
     let mut compact = false;
-
     for segment in segments {
         match segment {
-            Segment::Text(text, style) => {
-                append_styled_text(&mut layout_text, &mut layout_spans, text, style)
+            Segment::Text(value, style) => {
+                let value = if leading {
+                    value.trim_start()
+                } else {
+                    value.as_str()
+                };
+                if !value.is_empty() {
+                    leading = false;
+                }
+                append_styled_text(&mut text, &mut spans, value, style);
             }
             Segment::Logo | Segment::CustomLogo(_) => {
                 let make = exif.make.as_deref().unwrap_or_default();
-                let index = layout_text.len();
                 let logo = match segment {
-                    Segment::CustomLogo(name) => watermark_params
+                    Segment::CustomLogo(name) => watermark
                         .custom_logos
                         .get(name)
                         .map(|bytes| load_custom_logo(bytes, custom_h))
                         .transpose()?
                         .flatten(),
-                    _ => find_make_logo(make, watermark_params),
+                    _ => find_make_logo(make, watermark),
                 };
                 if let Some(logo) = logo {
-                    // 用零宽空格占据位置，真正的 logo 由 InlineBox 承载
-                    layout_text.push('\u{200b}');
-
-                    let (logo_w, logo_img_h) = (logo.width(), logo.height());
-                    if logo_w == 0 || logo_img_h == 0 {
-                        continue;
-                    }
-                    let aspect = logo_w as f64 / logo_img_h as f64;
-                    let is_custom = matches!(segment, Segment::CustomLogo(_));
-                    compact |= is_custom;
-                    let box_h = if is_custom { custom_h as f32 } else { target_h };
-                    let box_w = ((box_h as f64 * aspect).round() as f32).max(1.0);
-                    let logo = scale_logo(logo, box_w.round() as i32, box_h.round() as i32)?;
-
-                    let id = next_id;
-                    next_id += 1;
-                    boxes.push(InlineBox {
-                        id,
-                        kind: InlineBoxKind::InFlow,
-                        index,
-                        width: box_w,
-                        height: box_h,
+                    line.text(&text, &spans, params, size, watermark)?;
+                    text.clear();
+                    spans.clear();
+                    let custom = matches!(segment, Segment::CustomLogo(_));
+                    compact |= custom;
+                    let h = if custom { custom_h } else { target_h as f64 }
+                        .round()
+                        .max(1.0) as i32;
+                    let w = (h as f64 * logo.width() as f64 / logo.height() as f64)
+                        .round()
+                        .max(1.0) as i32;
+                    let image = scale_logo(logo, w, h)?;
+                    line.items.push(LineItem::Logo {
+                        image,
+                        x: line.x.round() as i32,
+                        y: -h,
                     });
-                    slots.push(LogoSlot { image: logo });
+                    line.ascent = line.ascent.max(h as f32);
+                    line.top = line.top.min(-h);
+                    line.x += w as f32;
+                    leading = false;
                 } else if matches!(segment, Segment::Logo) {
-                    // 没有对应的 Logo 时，直接用品牌名（Make）兜底显示
                     let brand = clean_make_display(make);
                     if !brand.is_empty() {
-                        layout_text.push_str(&brand);
+                        leading = false;
+                        text.push_str(&brand);
                     }
                 }
             }
         }
     }
-    // 去掉开头空白时同步修正 InlineBox 的 UTF-8 字节索引。
-    let trim_len = layout_text.len() - layout_text.trim_start().len();
-    let layout_text = layout_text[trim_len..].to_string();
-    for inline_box in &mut boxes {
-        inline_box.index -= trim_len;
+    line.text(&text, &spans, params, size, watermark)?;
+    let natural_h = line.ascent + line.descent;
+    let height = (size * params.line_spacing as f32).max(natural_h).max(1.0);
+    let baseline = (line.ascent + (height - natural_h) / 2.0).round() as i32;
+    let inset = -(baseline + line.top).min(0);
+    let y_shift = baseline + inset;
+    let x_shift = -line.left;
+    for item in &mut line.items {
+        let (LineItem::Glyph { x, y, .. }
+        | LineItem::Logo { x, y, .. }
+        | LineItem::Underline { x, y, .. }) = item;
+        *x += x_shift;
+        *y += y_shift;
     }
-
-    for span in &mut layout_spans {
-        span.start = span.start.saturating_sub(trim_len);
-        span.end = span.end.saturating_sub(trim_len);
-    }
-    let layout = build_parley_layout(
-        &layout_text,
-        &layout_spans,
-        params,
-        font_size,
-        None,
-        &boxes,
-        watermark_params,
-        font_ctx,
-        layout_ctx,
-    );
-
-    let height = (font_size * params.line_spacing as f32)
-        .max(layout.height())
-        .ceil()
-        .max(1.0) as usize;
-
     Ok(PreparedLine {
-        layout,
-        slots,
-        height,
+        items: line.items,
+        width: (line.x.ceil() as i32).max(line.right) + x_shift,
+        height: (height.ceil() as i32 + inset)
+            .max(line.bottom + y_shift)
+            .max(1) as usize,
+        align: params.align,
         compact,
-        gap: (font_size * (params.line_spacing as f32 - 1.0).max(0.0)).round() as usize,
-        inset: 0,
+        gap: (size * (params.line_spacing as f32 - 1.0).max(0.0)).round() as usize,
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_parley_layout(
-    text: &str,
-    spans: &[TextSpan],
-    params: &TextParams,
-    font_size: f32,
-    max_advance: Option<f32>,
-    boxes: &[InlineBox],
-    watermark_params: &WatermarkParams,
-    font_ctx: &mut FontContext,
-    layout_ctx: &mut LayoutContext<peniko::Brush>,
-) -> Layout<peniko::Brush> {
-    let mut builder = layout_ctx.ranged_builder(font_ctx, text, 1.0, true);
-    // 追加一些包含 ℤ (U+2124) 的**无衬线** fallback 字体，
-    // 否则 parley 对缺失字形只输出 gid=0 (.notdef)，导致“ℤ”渲染成空白；
-    // 同时避免 fallback 到衬线字体，保证 ℤ 跟整体文字一样是“黑体”风格。
-    let family = format!(
-        "{}, Menlo, Arial Unicode MS, Fira Code, sans-serif, Segoe UI Symbol, Cambria",
-        params.resolved_font(&watermark_params.default_font)
-    );
-    builder.push_default(StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(
-        family,
-    ))));
-    builder.push_default(StyleProperty::FontSize(font_size));
-    builder.push_default(StyleProperty::FontStyle(if params.italic {
-        FontStyle::Italic
-    } else {
-        FontStyle::Normal
-    }));
-    builder.push_default(StyleProperty::FontWeight(if params.bold {
-        FontWeight::BOLD
-    } else {
-        FontWeight::NORMAL
-    }));
-    builder.push_default(StyleProperty::LineHeight(LineHeight::FontSizeRelative(
-        params.line_spacing as f32,
-    )));
-    builder.push_default(StyleProperty::Brush(text_brush(params, watermark_params)));
-    builder.push_default(StyleProperty::Underline(params.underline));
-    for span in spans {
-        let range: Range<usize> = span.start..span.end;
-        if range.is_empty()
-            || range.end > text.len()
-            || !text.is_char_boundary(range.start)
-            || !text.is_char_boundary(range.end)
-        {
-            continue;
-        }
-        if let Some(font) = &span.style.font {
-            let family = format!(
-                "{font}, Menlo, Arial Unicode MS, Fira Code, sans-serif, Segoe UI Symbol, Cambria"
-            );
-            builder.push(
-                StyleProperty::FontFamily(FontFamily::Source(Cow::Owned(family))),
-                range.clone(),
-            );
-        }
-        if let Some([r, g, b]) = span.style.color {
-            let color: peniko::Color = peniko::color::Rgba8::from_u8_array([r, g, b, 255]).into();
-            builder.push(StyleProperty::Brush(color.into()), range.clone());
-        }
-        if let Some(bold) = span.style.bold {
-            builder.push(
-                StyleProperty::FontWeight(if bold {
-                    FontWeight::BOLD
-                } else {
-                    FontWeight::NORMAL
-                }),
-                range.clone(),
-            );
-        }
-        if let Some(underline) = span.style.underline {
-            builder.push(StyleProperty::Underline(underline), range.clone());
-        }
-        if let Some(italic) = span.style.italic {
-            builder.push(
-                StyleProperty::FontStyle(if italic {
-                    FontStyle::Italic
-                } else {
-                    FontStyle::Normal
-                }),
-                range,
-            );
-        }
-    }
-    for ibox in boxes {
-        builder.push_inline_box(ibox.clone());
-    }
-
-    let mut layout = builder.build(text);
-    layout.break_all_lines(max_advance);
-    layout.align(alignment_for(params.align), AlignmentOptions::default());
-    layout
-}
-
-fn measure_cap_height(layout: &Layout<peniko::Brush>) -> Option<f32> {
-    for line in layout.lines() {
-        for item in line.items() {
-            if let PositionedLayoutItem::GlyphRun(gr) = item
-                && let Some(cap) = gr.run().metrics().cap_height
-            {
-                return Some(cap);
-            }
-        }
-    }
-    None
-}
-
-fn alignment_for(align: TextAlign) -> Alignment {
-    match align {
-        TextAlign::Left => Alignment::Left,
-        TextAlign::Center => Alignment::Center,
-        TextAlign::Right => Alignment::Right,
-    }
-}
-
-fn text_brush(params: &TextParams, watermark_params: &WatermarkParams) -> peniko::Brush {
-    let c = text_color(params, watermark_params);
-    let color: peniko::Color = peniko::color::Rgba8::from_u8_array(c).into();
-    color.into()
-}
-
-fn text_color(params: &TextParams, watermark_params: &WatermarkParams) -> [u8; 4] {
+pub(super) fn text_color(params: &TextParams, watermark_params: &WatermarkParams) -> [u8; 4] {
     if let Some(rgb) = params.color {
         [rgb[0], rgb[1], rgb[2], 255]
     } else if auto_color(watermark_params) {
         [0, 0, 0, 255]
     } else {
         [255, 255, 255, 255]
-    }
-}
-
-fn brush_to_rgba(brush: peniko::Brush) -> [u8; 4] {
-    match brush {
-        peniko::Brush::Solid(c) => c.to_rgba8().to_u8_array(),
-        _ => [255, 255, 255, 255],
     }
 }
 
@@ -811,115 +718,59 @@ fn render_line_into(
     y_off: i32,
     line: &PreparedLine,
 ) -> Result<()> {
-    let mut scale_ctx = ScaleContext::new();
-
-    for layout_line in line.layout.lines() {
-        for item in layout_line.items() {
-            match item {
-                PositionedLayoutItem::GlyphRun(glyph_run) => {
-                    let run = glyph_run.run();
-                    let font = run.font();
-                    let Some(font_ref) = FontRef::from_index(font.data.data(), font.index as usize)
-                    else {
+    let x_off = match line.align {
+        TextAlign::Left => 0,
+        TextAlign::Center => (canvas_w - line.width) / 2,
+        TextAlign::Right => canvas_w - line.width,
+    };
+    for item in &line.items {
+        match item {
+            LineItem::Glyph { image, x, y, color } => {
+                for row in 0..image.height {
+                    let dy = y + y_off + row;
+                    if !(0..canvas_h).contains(&dy) {
                         continue;
-                    };
-                    let mut scaler = scale_ctx
-                        .builder(font_ref)
-                        .size(run.font_size())
-                        .hint(true)
-                        .build();
-                    let color = brush_to_rgba(glyph_run.style().brush.clone());
-
-                    if let Some(decoration) = &glyph_run.style().underline {
-                        let metrics = run.metrics();
-                        let y = glyph_run.baseline()
-                            - decoration.offset.unwrap_or(metrics.underline_offset);
-                        let thickness = decoration.size.unwrap_or(metrics.underline_size).max(1.0);
-                        let [r, g, b, _] = brush_to_rgba(decoration.brush.clone());
-                        let x0 = glyph_run.offset().floor().max(0.0) as i32;
-                        let x1 = (glyph_run.offset() + glyph_run.advance())
-                            .ceil()
-                            .min(canvas_w as f32) as i32;
-                        for row in y.floor() as i32..(y + thickness).ceil() as i32 {
-                            let dy = row + y_off;
-                            if !(0..canvas_h).contains(&dy) {
-                                continue;
-                            }
-                            for x in x0..x1 {
-                                blend_pixel(canvas, canvas_w, x, dy, r, g, b, 255);
-                            }
-                        }
                     }
-
-                    for glyph in glyph_run.positioned_glyphs() {
-                        let mut render = Render::new(&[Source::Outline]);
-                        render.format(Format::Alpha);
-                        if let Some(image) = render.render(&mut scaler, glyph.id as u16) {
-                            draw_glyph_mask(
-                                canvas, canvas_w, canvas_h, y_off, &image, glyph.x, glyph.y, color,
-                            );
+                    for col in 0..image.width {
+                        let dx = x + x_off + col;
+                        if !(0..canvas_w).contains(&dx) {
+                            continue;
+                        }
+                        let ix = (row * image.width + col) as usize;
+                        // GPUI 彩色字形是 BGRA straight alpha，普通字形是单通道覆盖率。
+                        let (rgb, coverage) = if image.color {
+                            let pixel = &image.pixels[ix * 4..ix * 4 + 4];
+                            ([pixel[2], pixel[1], pixel[0]], pixel[3])
+                        } else {
+                            ([color[0], color[1], color[2]], image.pixels[ix])
+                        };
+                        if coverage > 0 {
+                            blend_pixel(canvas, canvas_w, dx, dy, rgb[0], rgb[1], rgb[2], coverage);
                         }
                     }
                 }
-                PositionedLayoutItem::InlineBox(inline_box) => {
-                    if inline_box.kind == InlineBoxKind::InFlow
-                        && let Some(slot) = line.slots.get(inline_box.id as usize)
-                    {
-                        draw_logo(
-                            canvas,
-                            canvas_w,
-                            canvas_h,
-                            y_off,
-                            inline_box.x as i32,
-                            inline_box.y as i32,
-                            &slot.image,
-                        )?;
+            }
+            LineItem::Logo { image, x, y } => {
+                draw_logo(canvas, canvas_w, canvas_h, y_off, x + x_off, *y, image)?
+            }
+            LineItem::Underline {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => {
+                for dy in (y + y_off).max(0)..(y + y_off + height).min(canvas_h) {
+                    for dx in (x + x_off).max(0)..(x + x_off + width).min(canvas_w) {
+                        blend_pixel(
+                            canvas, canvas_w, dx, dy, color[0], color[1], color[2], color[3],
+                        );
                     }
                 }
             }
         }
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_glyph_mask(
-    canvas: &mut [u8],
-    canvas_w: i32,
-    canvas_h: i32,
-    y_off: i32,
-    image: &Image,
-    gx: f32,
-    gy: f32,
-    color: [u8; 4],
-) {
-    if image.content != Content::Mask {
-        return;
-    }
-    let pw = image.placement.width as i32;
-    let ph = image.placement.height as i32;
-    let px = gx as i32 + image.placement.left;
-    let py = gy as i32 - image.placement.top + y_off;
-
-    for row in 0..ph {
-        let dy = py + row;
-        if dy < 0 || dy >= canvas_h {
-            continue;
-        }
-        for col in 0..pw {
-            let dx = px + col;
-            if dx < 0 || dx >= canvas_w {
-                continue;
-            }
-            let coverage = image.data[(row * pw + col) as usize];
-            if coverage == 0 {
-                continue;
-            }
-            blend_pixel(
-                canvas, canvas_w, dx, dy, color[0], color[1], color[2], coverage,
-            );
-        }
-    }
 }
 
 fn draw_logo(
@@ -1224,7 +1075,7 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
                 _ => unreachable!("已在外层匹配行政区字段"),
             })
         }
-        // Logo 由 render_text 的 InlineBox 处理，这里不替换成文本
+        // Logo 由 render_text 的行内图像处理，这里不替换成文本
         "Logo" => None,
         _ => None,
     }

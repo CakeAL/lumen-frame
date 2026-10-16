@@ -1,4 +1,7 @@
 //! 使用实际 JPEG 保存路径验证 GPS 覆盖、清除和 Ultra HDR 保留。
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use lumen_frame::{
     features::geolocation::Location,
     gainmap,

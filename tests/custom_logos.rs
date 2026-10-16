@@ -1,4 +1,7 @@
 //! 自定义素材库、透明图像与相邻组共用预览/导出管线。
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use lumen_frame::{
     media::{ExifInfo, ensure_vips, image_write_to_memory},
     persistence::{

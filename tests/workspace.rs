@@ -6,6 +6,9 @@
 //! 走的是 [`AppView`] 的公开命令接口（加入队列、切换选中、移除），和界面上的按钮调用
 //! 的是同一批方法，所以这里不会因为内部重构而失效。
 
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{cell::RefCell, rc::Rc};

@@ -1,3 +1,6 @@
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use std::path::Path;
 
 use lumen_frame::{

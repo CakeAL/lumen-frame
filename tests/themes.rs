@@ -4,6 +4,9 @@
 //! 主题是编译期内嵌的，所以这条链路断了不会被编译器发现 —— 只会在运行时表现为「设置里
 //! 的下拉是空的」。
 
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::{SharedString, TestAppContext};
 

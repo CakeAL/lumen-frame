@@ -1,4 +1,7 @@
 //! 渐变背景通过完整合成与导出，并保留 Ultra HDR 的照片区域 gain map。
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use lumen_frame::{
     features::photo_palette,
     gainmap,

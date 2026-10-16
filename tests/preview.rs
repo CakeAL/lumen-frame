@@ -3,6 +3,9 @@
 //! 这一层是水印管线与 GPUI 渲染之间的接缝，也是「调整参数时预览实时变化」这句话能否
 //! 成立的地方：参数进、位图出。它不需要窗口，所以可以按普通单元测试来验证。
 
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use std::path::{Path, PathBuf};
 
 use lumen_frame::{

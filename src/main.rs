@@ -108,7 +108,9 @@ fn close_auxiliary_windows_with_main(main_window: AnyWindowHandle, cx: &App) {
 fn main() {
     point_vips_at_bundled_modules();
 
-    let app = gpui_kit::application()
+    let platform = gpui_kit::platform::current_platform(false);
+    lumen_frame::render::init_font_backend(platform.text_system());
+    let app = gpui_kit::Application::with_platform(platform)
         .with_assets(AppAssets)
         // 主窗口关闭时会统一收起子窗口，最后一个窗口关闭后退出应用。
         .with_quit_mode(QuitMode::LastWindowClosed);

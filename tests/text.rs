@@ -1,3 +1,6 @@
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use chrono::Local;
 use nom_exif::{Altitude, ExifDateTime, GPSInfo, URational};
 
@@ -415,6 +418,53 @@ fn rich_text_renders_multiple_fonts_and_colors_in_one_line() {
         render(&without_font).width(),
         "局部字体应改变字形宽度"
     );
+}
+
+#[test]
+fn gpui_font_fallback_keeps_multiline_text_and_color_glyphs() {
+    let mut text = Text {
+        template: vec!["Lumen 中文 ℤ 🙂".into()],
+        text_params: vec![TextParams {
+            font: "Lumen Frame Missing Font".into(),
+            size: 0.06,
+            italic: true,
+            underline: true,
+            color: Some([0, 0, 255]),
+            ..Default::default()
+        }],
+    };
+    let render = |text: &Text| {
+        text.render_text(
+            &ExifInfo::default(),
+            1000,
+            &WatermarkParams::default(),
+            "%Y/%m/%d",
+        )
+        .unwrap()
+        .unwrap()
+    };
+    let single = render(&text);
+    let pixels = lumen_frame::media::image_write_to_memory(&single).unwrap();
+    assert!(
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[2] > 200 && pixel[0] < 20 && pixel[3] > 100)
+    );
+    #[cfg(target_os = "macos")]
+    assert!(
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[0] > 200 && pixel[1] > 100 && pixel[2] < 100 && pixel[3] > 100),
+        "原生彩色 Emoji 不能退化为蓝色遮罩"
+    );
+    text.template[0] = format!("{0}\n{0}", text.template[0]);
+    let multiline = render(&text);
+    assert_eq!(multiline.width(), single.width());
+    assert_eq!(multiline.height(), single.height() * 2);
 }
 
 #[test]

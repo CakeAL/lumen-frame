@@ -5,7 +5,7 @@
 Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边框、圆角、阴影、背景与 EXIF 文字水印，并支持批量队列、实时预览、主题/外观设置和可保存的 TOML 预设。
 
 - UI：`gpui-kit`（基于 GPUI）；界面文案为中文。
-- 图像处理：`libvips`；EXIF：`nom-exif`；文字排版：`parley`、`swash`、`peniko`。
+- 图像处理：`libvips`；EXIF：`nom-exif`；文字排版与字形栅格化：GPUI 平台字体后端。
 - 配置：用户配置目录下的 `lumen-frame/settings.toml` 与 `lumen-frame/presets/*.toml`。
 - 平台：当前重点为 macOS；提供 Windows 打包脚本，但尚未在 Windows 实机验证。
 
@@ -17,6 +17,7 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 - `src/workspace.rs`：无 GPUI 依赖的照片队列状态、稳定 `PhotoId` 与选择规则；缩略图等展示缓存不得放入这里。
 - `src/photo.rs`：整条水印合成与导出用例；照片解码和 EXIF 读取分别由 `src/media/` 提供。
 - `src/render/`：水印渲染细节：画布、阴影、圆角和 EXIF 文字排版。
+- `src/render/fonts.rs`：复用 GPUI 平台字体接口；在主线程初始化，后台通过共享接口排版与栅格化。
 - `src/gainmap.rs`：Ultra HDR gain map 元数据、MPF 标记和重建。
 - `src/features/`：拥有独立工作流的功能，例如 Motion Photo 与彩色 Gain Map。
 - `src/persistence/`：预设和应用设置的 TOML 持久化；`src/watermark.rs` 是水印输入模型。

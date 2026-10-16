@@ -1,3 +1,6 @@
+#[path = "support/fonts.rs"]
+mod font_backend;
+
 use lumen_frame::{
     photo::Photo,
     watermark::{
