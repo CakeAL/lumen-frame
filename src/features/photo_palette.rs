@@ -198,6 +198,12 @@ pub fn resolve(path: &Path, params: &WatermarkParams) -> Result<WatermarkParams>
             resolved.photo_border.resolve_color(swatches[rank].rgb());
         }
     }
+    if params.palette_card.enabled() {
+        let swatches = extract_with_theme(path, 6, params.palette_card.theme())?;
+        resolved
+            .palette_card
+            .resolve(swatches.iter().map(|s| (s.rgb(), s.ratio())).collect());
+    }
     Ok(resolved)
 }
 

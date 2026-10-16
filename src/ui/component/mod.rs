@@ -10,6 +10,7 @@ pub(super) mod gainmap_preview;
 pub(super) mod inspector;
 pub(super) mod location_picker;
 pub(super) mod motion_photo_preview;
+pub(super) mod palette_card;
 pub(super) mod preview;
 pub(super) mod queue;
 mod rich_text;

@@ -9,7 +9,7 @@ use crate::{
     },
     render::{canvas, image as photo_image, text::TextGroupRegion},
     rotation::Rotation,
-    watermark::{BackgroundGradient, TextGroup},
+    watermark::{BackgroundGradient, PaletteCard, TextGroup},
 };
 use anyhow::{Context as _, Result};
 use gpui_kit::{DevicePixels, RenderImage, Size, size};
@@ -140,6 +140,7 @@ pub(crate) struct PreviewLayerCache {
     shadow: Option<CachedShadow>,
     border: Option<(BorderKey, ShadowImage)>,
     texts: Vec<(TextKey, Option<TextLayer>)>,
+    palette: Option<((PaletteCard, String), Option<TextLayer>)>,
     rotated: Vec<(Arc<RenderImage>, Rotation, Arc<RenderImage>)>,
     #[cfg(test)]
     pub(crate) builds: [usize; 5], // 解码、背景、照片、阴影、文字
@@ -383,6 +384,30 @@ impl LayerRenderer for CachedRenderer<'_> {
         Ok(image)
     }
 
+    fn palette(&mut self) -> Result<Option<TextLayer>> {
+        let params = &self.job.params;
+        let mut content = params.palette_card.clone();
+        // 放置参数只移动纹理，不重新栅格化 SVG 和色号。
+        content.set_position(crate::watermark::Placement::Center);
+        content.set_align(crate::watermark::TextAlign::Center);
+        content.set_padding(0.0);
+        content.set_attachment(None);
+        let key = (content, params.default_font.clone());
+        if let Some((_, image)) = self.cache.palette.as_ref().filter(|(old, _)| *old == key) {
+            return Ok(image.clone());
+        }
+        let image = crate::render::palette_card::render(self.dimensions, params)?
+            .map(|image| {
+                Ok::<_, anyhow::Error>(TextLayer {
+                    image: to_render_image(&image)?,
+                    visible: None,
+                })
+            })
+            .transpose()?;
+        self.cache.palette = Some((key, image.clone()));
+        Ok(image)
+    }
+
     fn background(&mut self, size: (i32, i32)) -> Result<TextLayer> {
         let params = &self.job.params;
         let key = BackgroundKey {
@@ -584,6 +609,87 @@ mod tests {
 
     fn same(a: &LayeredPreview, b: &LayeredPreview, ix: usize) -> bool {
         Arc::ptr_eq(&a.layers[ix].image, &b.layers[ix].image)
+    }
+
+    #[test]
+    fn palette_card_shares_text_band_and_reuses_content_when_attached() {
+        let mut job = job();
+        job.path = "test_images/ultra_hdr.jpg".into();
+        job.params.palette_card.set_enabled(true);
+        job.params.palette_card.set_size(0.2);
+        job.params.palette_card.set_show_hex(true);
+        let mut cache = PreviewLayerCache::default();
+        let first = cache.render(&job).unwrap();
+        let card = first.layers.last().unwrap();
+        let text = &first.layers[3];
+        assert!(
+            (2 * card.y + card.image.size(0).height.0 - 2 * text.y - text.image.size(0).height.0)
+                .abs()
+                <= 1,
+            "独立色卡与同侧文字应位于同一行"
+        );
+        assert!(card.x >= 0);
+        assert!(card.x + card.image.size(0).width.0 <= first.size.width.0);
+        job.params.palette_card.set_position(Placement::Up);
+        let moved = cache.render(&job).unwrap();
+        assert!(Arc::ptr_eq(
+            &card.image,
+            &moved.layers.last().unwrap().image
+        ));
+        for ix in [1, 2, 3, 4] {
+            assert!(same(&first, &moved, ix));
+        }
+        assert!(moved.layers.last().unwrap().y < moved.layers[2].y);
+        for side in [
+            Placement::Left,
+            Placement::Right,
+            Placement::Up,
+            Placement::Bottom,
+        ] {
+            job.params
+                .palette_card
+                .set_attachment(Some(crate::watermark::GroupAttachment {
+                    target: 0,
+                    side,
+                    gap: 0.02,
+                }));
+            let attached = cache.render(&job).unwrap();
+            let card = attached.layers.last().unwrap();
+            assert!(Arc::ptr_eq(
+                &card.image,
+                &first.layers.last().unwrap().image
+            ));
+            let (cw, ch) = (card.image.size(0).width.0, card.image.size(0).height.0);
+            let region = attached
+                .text_regions
+                .iter()
+                .find(|r| r.group_ix == 0)
+                .unwrap();
+            let separation = match side {
+                Placement::Left => region.x - card.x - cw,
+                Placement::Right => card.x - region.x - region.width,
+                Placement::Up => region.y - card.y - ch,
+                Placement::Bottom => card.y - region.y - region.height,
+                _ => unreachable!(),
+            };
+            let expected_gap = (cache.source.as_ref().unwrap().1.1 as f64 * 0.02).round() as i32;
+            assert!((separation - expected_gap).abs() <= 1);
+            assert!(card.x >= 0 && card.y >= 0);
+            assert!(card.x + cw <= attached.size.width.0 && card.y + ch <= attached.size.height.0);
+            let full = super::super::render_preview(&job).unwrap();
+            let max_error = attached
+                .image()
+                .as_bytes(0)
+                .unwrap()
+                .iter()
+                .zip(full.as_bytes(0).unwrap())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(max_error <= 2, "相邻色卡的预览与导出必须一致");
+        }
+        job.params.palette_card.set_enabled(false);
+        assert_eq!(cache.render(&job).unwrap().layers.len(), 5);
     }
 
     #[test]
@@ -941,6 +1047,15 @@ mod tests {
                     job.path = path.into();
                     job.exif = ExifInfo::read(&job.path).ok();
                     job.params.rotation = rotation;
+                    job.params.palette_card.set_enabled(true);
+                    job.params.palette_card.set_show_hex(true);
+                    job.params.palette_card.set_show_ratio(true);
+                    job.params
+                        .palette_card
+                        .set_shape(crate::watermark::PaletteShape::Rounded);
+                    job.params.palette_card.set_proportional(true);
+                    job.params.palette_card.set_gap(0.0);
+                    job.params.palette_card.set_selected(vec![0, 2, 4]);
                     job.params.set_background_kind(kind);
                     job.max_edge = 240;
                     job.text_groups[0].text.template[0] = "{Logo} {型号}".into();

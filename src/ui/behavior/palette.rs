@@ -33,10 +33,13 @@ pub(in crate::ui::app) struct BackgroundState {
 
 impl AppView {
     pub(in crate::ui::app) fn selected_palette(&self) -> Option<&PaletteStatus> {
-        self.background_state.palettes.get(&(
-            self.selected_photo_id()?,
-            self.params.gradient_palette.theme(),
-        ))
+        self.palette_status(self.params.gradient_palette.theme())
+    }
+
+    pub(in crate::ui::app) fn palette_status(&self, theme: PaletteTheme) -> Option<&PaletteStatus> {
+        self.background_state
+            .palettes
+            .get(&(self.selected_photo_id()?, theme))
     }
 
     pub(in crate::ui::app) fn photo_border_display_color(&self) -> [u8; 3] {
@@ -125,13 +128,33 @@ impl AppView {
     }
 
     fn needs_photo_palette(&self) -> bool {
-        (self.params.photo_border.enabled()
+        let background = (self.params.photo_border.enabled()
             || matches!(
                 self.params.background_kind(),
                 BackgroundKind::Solid | BackgroundKind::Gradient
             ))
             && self.selected_photo_id().is_some()
+            && self.selected_palette().is_none();
+        let card = self.params.palette_card.enabled()
+            && self.selected_photo_id().is_some()
+            && self
+                .palette_status(self.params.palette_card.theme())
+                .is_none();
+        background || card
+    }
+
+    fn ensure_photo_palettes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if (self.params.photo_border.enabled()
+            || self.params.solid_background
+            || self.params.gradient_background)
             && self.selected_palette().is_none()
+        {
+            self.extract_photo_palette(window, cx);
+        }
+        let theme = self.params.palette_card.theme();
+        if self.params.palette_card.enabled() && self.palette_status(theme).is_none() {
+            self.extract_palette_with_theme(theme, window, cx);
+        }
     }
 
     /// 空队列重新导入时也要刷新颜色编辑器，不能继续显示上一张照片的已求值颜色。
@@ -148,7 +171,7 @@ impl AppView {
                 .update(cx, |_, window, cx| {
                     view.update(cx, |this, cx| {
                         if this.needs_photo_palette() {
-                            this.extract_photo_palette(window, cx);
+                            this.ensure_photo_palettes(window, cx);
                         }
                     })
                     .ok();
@@ -167,7 +190,7 @@ impl AppView {
         self.background_state.editor = None;
         self.sync_gradient_controls(window, cx);
         if self.needs_photo_palette() {
-            self.extract_photo_palette(window, cx);
+            self.ensure_photo_palettes(window, cx);
         }
     }
 
@@ -176,20 +199,33 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.extract_palette_with_theme(self.params.gradient_palette.theme(), window, cx);
+    }
+
+    pub(in crate::ui::app) fn extract_palette_with_theme(
+        &mut self,
+        theme: PaletteTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(photo) = self.selected_photo() else {
             return;
         };
         let id = photo.id();
         let path = photo.path().to_path_buf();
-        let theme = self.params.gradient_palette.theme();
-        if matches!(self.selected_palette(), Some(PaletteStatus::Loading)) {
+        if matches!(self.palette_status(theme), Some(PaletteStatus::Loading)) {
             return;
         }
         self.background_state
             .palettes
             .insert((id, theme), PaletteStatus::Loading);
-        self.background_state.editor = None;
-        let handle = window.window_handle();
+        if theme == self.params.gradient_palette.theme() {
+            self.background_state.editor = None;
+        }
+        let handle = self
+            .background_state
+            .window
+            .unwrap_or(window.window_handle());
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx

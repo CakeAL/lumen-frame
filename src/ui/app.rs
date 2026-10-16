@@ -116,6 +116,7 @@ pub struct AppView {
 
     controls: ParameterControls,
     background_state: behavior::palette::BackgroundState,
+    palette_card_editor: component::palette_card::PaletteCardEditor,
     preview: Entity<WatermarkPreview>,
     /// 与水印工作区完全隔离的 HDR 解析页状态。
     gainmap: GainMapPageState,
@@ -200,6 +201,8 @@ impl AppView {
         let global_watermark = preset_of(&params, std::slice::from_ref(&text_group));
         let aspect_choice = aspect_choice_for(&params);
         let (controls, subscriptions) = ParameterControls::new(&params, &aspect_choice, window, cx);
+        let palette_card_editor =
+            component::palette_card::PaletteCardEditor::new(&params.palette_card, window, cx);
 
         let font_names = window
             .text_system()
@@ -258,6 +261,7 @@ impl AppView {
             aspect_choice,
             controls,
             background_state: Default::default(),
+            palette_card_editor,
             preview,
             gainmap,
             other_tools,
@@ -1233,6 +1237,8 @@ impl AppView {
     /// 参数是唯一真值来源，控件只是它的入口；载入预设相当于从外部改写了参数，所以每个
     /// 入口都要重新对齐一次。
     fn sync_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_card_editor
+            .sync(&self.params.palette_card, window, cx);
         self.restore_gradient_controls(window, cx);
         let params = self.params.clone();
         let controls = &self.controls;

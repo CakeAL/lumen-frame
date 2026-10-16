@@ -297,6 +297,13 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
         Ok(group.render_for_photo(self.exif, self.img.height() as i32, self.params)?)
     }
 
+    fn palette(&mut self) -> Result<Option<VipsImage>> {
+        crate::render::palette_card::render(
+            (self.img.width() as i32, self.img.height() as i32),
+            self.params,
+        )
+    }
+
     fn background(&mut self, (w, h): (i32, i32)) -> Result<VipsImage> {
         Ok(canvas::new_canvas(w, h, self.img, self.params)?)
     }

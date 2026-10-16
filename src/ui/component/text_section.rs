@@ -1216,6 +1216,14 @@ impl AppView {
             return;
         };
         self.text_groups.remove(ix);
+        if let Some(mut attachment) = self.params.palette_card.attachment().cloned() {
+            if attachment.target == ix {
+                self.params.palette_card.set_attachment(None);
+            } else if attachment.target > ix {
+                attachment.target -= 1;
+                self.params.palette_card.set_attachment(Some(attachment));
+            }
+        }
         for group in &mut self.text_groups {
             if group.attachment_target == Some(id) {
                 group.attachment_target = None;
@@ -1389,8 +1397,18 @@ mod tests {
                 app.text_groups[1].attachment_target,
                 Some(app.text_groups[0].id)
             );
+            app.params
+                .palette_card
+                .set_attachment(Some(GroupAttachment {
+                    target: 1,
+                    side: Placement::Right,
+                    gap: 0.01,
+                }));
             app.remove_text_group(app.text_groups[0].id, cx);
             assert!(app.text_groups[0].attachment_target.is_none());
+            assert_eq!(app.params.palette_card.attachment().unwrap().target, 0);
+            app.remove_text_group(app.text_groups[0].id, cx);
+            assert!(app.params.palette_card.attachment().is_none());
         });
         cx.run_until_parked();
     }

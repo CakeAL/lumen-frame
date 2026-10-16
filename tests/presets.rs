@@ -73,6 +73,34 @@ fn preset_round_trips_through_a_file() {
     let mut original = colourful_preset();
     original.params.photo_border.set_enabled(true);
     original.params.photo_border.set_width(0.017);
+    original.params.palette_card.set_enabled(true);
+    original.params.palette_card.set_selected(vec![4, 1, 2]);
+    original
+        .params
+        .palette_card
+        .set_shape(lumen_frame::watermark::PaletteShape::Rounded);
+    original.params.palette_card.set_proportional(true);
+    original.params.palette_card.set_show_hex(true);
+    original.params.palette_card.set_show_ratio(true);
+    original
+        .params
+        .palette_card
+        .set_direction(TextDirection::Vertical);
+    original
+        .params
+        .palette_card
+        .set_theme(lumen_frame::watermark::PaletteTheme::Vivid);
+    original.params.palette_card.set_size(0.04);
+    original.params.palette_card.set_gap(0.003);
+    original.params.palette_card.set_position(Placement::Left);
+    original
+        .params
+        .palette_card
+        .set_attachment(Some(lumen_frame::watermark::GroupAttachment {
+            target: 0,
+            side: Placement::Right,
+            gap: 0.015,
+        }));
     original.text_groups[0].border.set_enabled(true);
     original.text_groups[0].border.set_width(0.0012);
     original.text_groups[0].border.set_radius(0.006);
@@ -105,6 +133,7 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.background, original.params.background);
     assert_eq!(loaded.params.shadow_color, original.params.shadow_color);
     assert_eq!(loaded.params.photo_border, original.params.photo_border);
+    assert_eq!(loaded.params.palette_card, original.params.palette_card);
     assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
     assert_eq!(loaded.text_groups, original.text_groups);
@@ -145,6 +174,7 @@ fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
         toml::from_str("solid_background = true\nbackground = [18,52,86]").unwrap();
     assert_eq!(old.background_kind(), BackgroundKind::Solid);
     assert_eq!(old.shadow_color, [0; 3]);
+    assert!(!old.palette_card.enabled());
     assert_eq!(
         WatermarkParams::default().background_kind(),
         BackgroundKind::Photo

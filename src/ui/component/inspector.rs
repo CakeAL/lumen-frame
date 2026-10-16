@@ -639,7 +639,8 @@ impl AppView {
                     .child(self.render_background_section(cx))
                     .child(self.render_photo_border_section(cx))
                     .child(self.render_image_section(cx))
-                    .child(self.render_text_section(cx)),
+                    .child(self.render_text_section(cx))
+                    .child(self.render_palette_card_section(cx)),
             )
     }
 
