@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, LazyLock, Mutex, OnceLock},
 };
 
 use nom_exif::ExifDateTime;
@@ -222,15 +222,10 @@ impl TextGroup {
     }
 
     pub(crate) fn custom_logo_names(&self) -> Vec<String> {
-        let re = Regex::new(r"\{(自定义logo[1-9][0-9]*)\}").unwrap();
         self.text
             .template
             .iter()
-            .flat_map(|line| {
-                re.captures_iter(line)
-                    .map(|caps| caps[1].to_owned())
-                    .collect::<Vec<_>>()
-            })
+            .flat_map(|line| crate::logos::template_logo_names(line).map(str::to_owned))
             .collect()
     }
 
@@ -350,11 +345,14 @@ fn parse_template(
     time_format: &str,
     custom_text: &str,
 ) -> Vec<Segment> {
-    let re = Regex::new(r"\{(?:Logo|自定义logo[1-9][0-9]*)\}").unwrap();
+    static FIELDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{[^{}\r\n]+\}").unwrap());
     let mut segments = Vec::new();
     let mut last = 0;
 
-    for m in re.find_iter(template) {
+    for m in FIELDS.find_iter(template).filter(|field| {
+        let name = &field.as_str()[1..field.len() - 1];
+        name == "Logo" || crate::logos::is_logo_field(name)
+    }) {
         if m.start() > last {
             segments.extend(styled_template_segments(
                 &template[last..m.start()],
@@ -638,6 +636,7 @@ fn prepare_line(
                     Segment::CustomLogo(name) => watermark
                         .custom_logos
                         .get(name)
+                        .or_else(|| crate::logos::builtin_bytes(name))
                         .map(|bytes| load_custom_logo(bytes, custom_h))
                         .transpose()?
                         .flatten(),

@@ -195,3 +195,96 @@ fn logo_height_changes_without_resizing_the_separator_or_adding_outer_line_spaci
         .unwrap();
     assert_eq!(legacy_image.height(), 70);
 }
+
+#[test]
+fn named_logos_persist_and_deleting_never_reuses_template_ids() {
+    let root = std::env::temp_dir().join(format!("lumen-named-logos-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let source = root.join("source.svg");
+    std::fs::write(&source, SVG).unwrap();
+    let library = root.join("library");
+    let assets = logos::import_named_in(
+        &library,
+        &[
+            logos::LogoImport::new(source.clone(), Some("旅行".into())),
+            logos::LogoImport::new(source.clone(), None),
+        ],
+    )
+    .unwrap();
+    assert_eq!(assets[0].token(), "{旅行logo}");
+    assert_eq!(assets[1].token(), "{自定义logo2}");
+    let assets = logos::load_in(&library).unwrap();
+    assert_eq!(assets[0].name(), "旅行logo");
+    let snapshot = logos::snapshot(&assets);
+    assert!(Arc::ptr_eq(&snapshot["旅行logo"], &snapshot["自定义logo1"]));
+    let named = logo_group("{旅行logo}")
+        .render_text(
+            &ExifInfo::default(),
+            1000,
+            &WatermarkParams {
+                custom_logos: snapshot,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(named.height(), 80);
+    let count = logos::load_in(&library).unwrap().len();
+    assert!(
+        logos::import_named_in(
+            &library,
+            &[logos::LogoImport::new(
+                source.clone(),
+                Some("旅行Logo".into())
+            )]
+        )
+        .is_err()
+    );
+    assert!(
+        logos::import_named_in(
+            &library,
+            &[logos::LogoImport::new(
+                source.clone(),
+                Some("{无效}".into())
+            )]
+        )
+        .is_err()
+    );
+    assert_eq!(logos::load_in(&library).unwrap().len(), count);
+    logos::delete_in(&library, 2).unwrap();
+    logos::delete_in(&library, 1).unwrap();
+    assert!(source.is_file(), "删除不得修改导入源文件");
+    let snapshot = logos::snapshot(&logos::load_in(&library).unwrap());
+    assert!(!snapshot.contains_key("旅行logo"));
+    assert!(!snapshot.contains_key("自定义logo1"));
+    let next = logos::import_in(&library, std::slice::from_ref(&source)).unwrap();
+    assert_eq!(next[0].id(), 3, "删除全部素材后也不能复用旧编号");
+    assert_eq!(next[0].token(), "{自定义logo3}");
+    assert!(logos::delete_in(&library, 0).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn embedded_nikon_example_works_without_local_files() {
+    let root = std::env::temp_dir().join(format!("lumen-builtin-logo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let assets = logos::library_in(&root).unwrap();
+    assert_eq!(assets.len(), 1);
+    assert!(assets[0].is_builtin());
+    assert_eq!(assets[0].token(), "{尼康logo}");
+    assert!(!root.exists(), "内置示例不需要创建或复制本机素材文件");
+    let rendered = logo_group("{尼康logo}")
+        .render_text(&ExifInfo::default(), 1000, &WatermarkParams::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(rendered.height(), 80);
+    let pixels = image_write_to_memory(&rendered).unwrap();
+    assert!(
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[0] > 200 && p[1] > 150 && p[2] < 60 && p[3] > 200)
+    );
+}

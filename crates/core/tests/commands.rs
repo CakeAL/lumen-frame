@@ -300,3 +300,31 @@ fn frozen_jobs_and_headless_preview_preserve_hdr_export() {
             .unwrap();
     assert!(lumen_frame_core::gainmap::get_gainmap(&output).is_some());
 }
+
+#[test]
+fn logo_commands_share_named_imports_and_delete_with_the_desktop() {
+    let scratch = Scratch::new();
+    let source = scratch.0.join("logo.svg");
+    std::fs::write(&source, br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#ffca00"/></svg>"##).unwrap();
+    let mut session = Session::default().with_storage(StoragePaths::in_directory(&scratch.0));
+    let added = call(
+        &mut session,
+        json!({"method":"import_logos","params":{"paths":[source],"names":["旅行"]}}),
+    );
+    assert_eq!(added[0]["token"], "{尼康logo}");
+    assert_eq!(added[0]["builtin"], true);
+    assert_eq!(added[1]["token"], "{旅行logo}");
+    assert!(session.params().custom_logos.contains_key("旅行logo"));
+    let removed = call(
+        &mut session,
+        json!({"method":"delete_logo","params":{"logo_id":added[1]["id"]}}),
+    );
+    assert_eq!(removed.as_array().unwrap().len(), 1);
+    assert!(!session.params().custom_logos.contains_key("旅行logo"));
+    // 保持旧客户端兼容：省略 names 仍使用默认编号。
+    let old_client = call(
+        &mut session,
+        json!({"method":"import_logos","params":{"paths":[source]}}),
+    );
+    assert_eq!(old_client[1]["token"], "{自定义logo2}");
+}

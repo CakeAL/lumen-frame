@@ -59,7 +59,7 @@ GPUI 依赖的纯算法库。无窗口宿主须在主线程先调用 `initialize
 | 取色 | `extract_palette`，支持 Theme 与面积占比 |
 | 预览和导出 | `render_preview`、`render_thumbnail`、`export_photos` |
 | 设置与预设 | `get_settings`、`save_settings`、`list_presets`、`save_preset`、`load_preset`、`delete_preset` |
-| Logo 素材 | `list_logos`、`import_logos` |
+| Logo 素材 | `list_logos`、`import_logos`、`delete_logo` |
 | HDR 工具 | `render_gainmap_preview`、`render_colour_gainmap_preview`、`export_gainmap`、`export_colour_gainmap` |
 | Motion Photo | `detect_ffmpeg`、`validate_ffmpeg`、`inspect_video`、`render_motion_photo_cover`、`export_motion_photo` |
 | 地图与更新 | `clear_map_cache`、`search_places`、`check_update`、`install_update`；地图瓦片通过类型化 `geolocation::MapService` 调用 |

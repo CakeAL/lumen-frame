@@ -156,8 +156,10 @@ Theme 的候选色时回退到原图代表色。纯 Rust 聚类结果按路径�
 每张照片自己的自定义文本和 EXIF；主动清空的文字组也按原样复制。已开始的导出使用冻结快照。
 
 自定义 Logo 素材库由 `persistence::logos` 保存到系统数据目录下的 `lumen-frame/logos`，
-macOS 对应 Application Support。素材按稳定编号命名为「自定义logo1」等；预设只保存
-`{自定义logo1}` 这样的模板字段。`WatermarkParams::custom_logos` 是本机素材字节的不可变
+macOS 对应 Application Support。文件使用稳定编号「自定义logo1」等，`logos.toml` 保存名称与
+下一个编号，删除后不复用。默认字段为 `{自定义logo1}`；导入时填写名称则使用 `{名称logo}`，
+旧编号作为兼容别名保留。预设只保存模板字段。黄色 Nikon SVG 嵌入为 `{尼康logo}` 内置示例，
+不复制到用户目录，也不替换随 EXIF 明暗切换的品牌 Logo。`WatermarkParams::custom_logos` 是本机素材字节的不可变
 快照，不序列化到预设，恢复照片和启动导出时使用当前素材库。预览和导出共用模板排版，
 保留 PNG/SVG 的透明度与颜色；每行的 `TextParams::logo_size` 按照片高度独立设置
 自定义 Logo 的可见高度，旧预设未设置时沿用字号比例。渲染时裁掉素材外围的透明留白，

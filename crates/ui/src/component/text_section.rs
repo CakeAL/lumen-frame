@@ -1093,11 +1093,12 @@ impl AppView {
                         remove_view.update(cx, |this, cx| this.remove_text_line(id, cx));
                     }),
             );
+        let has_logo = crate::backend::logos::template_logo_names(&template)
+            .next()
+            .is_some();
         let empty_exif = ExifInfo::default();
-        let exif = exif.or_else(|| {
-            (template.contains("{自定义文本}") || template.contains("{自定义logo"))
-                .then_some(&empty_exif)
-        });
+        let exif =
+            exif.or_else(|| (template.contains("{自定义文本}") || has_logo).then_some(&empty_exif));
         let resolved = self.render_rich_text_result(line, exif, time_format, cx);
         let open = self
             .text_groups
@@ -1110,7 +1111,7 @@ impl AppView {
             .child(self.render_rich_composer(line, view, cx))
             .child(resolved)
             .child(line.size.render("字号", false, cx))
-            .when(template.contains("{自定义logo"), |this| {
+            .when(has_logo, |this| {
                 this.child(line.logo_size.render("Logo 高度", false, cx))
                     .child(description("按照片高度计算，仅缩放 Logo 的可见内容。"))
             })
@@ -1125,11 +1126,10 @@ impl AppView {
         line_id: u64,
     ) -> impl IntoElement {
         let logo_fields = self
-            .backend
-            .params()
-            .custom_logos
-            .keys()
-            .map(|name| (name.clone(), format!("{{{name}}}")))
+            .logos
+            .assets
+            .iter()
+            .map(|asset| (asset.name(), asset.token()))
             .collect::<Vec<_>>();
         toolbar_button(
             ("template-field-options", line_id),

@@ -149,6 +149,11 @@ pub enum Command {
     ListLogos,
     ImportLogos {
         paths: Vec<PathBuf>,
+        #[serde(default)]
+        names: Vec<Option<String>>,
+    },
+    DeleteLogo {
+        logo_id: u64,
     },
     ExportGainmap {
         input: PathBuf,
@@ -606,11 +611,27 @@ impl Session {
                 params.default_font = settings.default_font;
                 json!(true)
             }
-            ListLogos => logos_output(super::logos::load_in(self.storage().logos()?)?),
-            ImportLogos { paths } => {
-                let assets = super::logos::import_in(self.storage().logos()?, &paths)?;
+            ListLogos => logos_output(super::logos::library_in(self.storage().logos()?)?),
+            ImportLogos { paths, names } => {
+                ensure!(
+                    names.is_empty() || names.len() == paths.len(),
+                    "Logo 名称数量必须与文件数量一致，或省略名称"
+                );
+                let files = paths
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, path)| {
+                        super::logos::LogoImport::new(path, names.get(ix).cloned().flatten())
+                    })
+                    .collect::<Vec<_>>();
+                let assets = super::logos::import_named_in(self.storage().logos()?, &files)?;
                 self.params_mut().custom_logos = super::logos::snapshot(&assets);
-                logos_output(assets)
+                logos_output(super::logos::library_in(self.storage().logos()?)?)
+            }
+            DeleteLogo { logo_id } => {
+                let assets = super::logos::delete_in(self.storage().logos()?, logo_id)?;
+                self.params_mut().custom_logos = super::logos::snapshot(&assets);
+                logos_output(super::logos::library_in(self.storage().logos()?)?)
             }
             ExportGainmap { input, output } => {
                 json!({"exported":super::image::export_gainmap(&input,&output)?,"path":output})
@@ -739,7 +760,7 @@ fn logos_output(assets: Vec<super::logos::LogoAsset>) -> Value {
     json!(
         assets
             .iter()
-            .map(|a| json!({"id":a.id(),"path":a.path(),"token":a.token()}))
+            .map(|a| json!({"id":a.id(),"name":a.name(),"path":a.path(),"token":a.token(),"builtin":a.is_builtin()}))
             .collect::<Vec<_>>()
     )
 }

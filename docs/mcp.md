@@ -123,6 +123,19 @@ Logo、预览导出、HDR、Motion Photo、地图和更新操作。完整业务�
 其中 `photo_id` 必须替换为实际返回值。`export_photos` 导出到 `set_environment` 指定的
 本机输出目录；`all_photos: false` 只导出当前照片。批量结果中的 `errors` 应逐项检查。
 
+## Logo 素材
+
+`list_logos` 返回素材的 `id`、`name`、`token`、`builtin` 与本机 `path`（内置示例为 `null`）。
+`import_logos` 的 `paths` 接受本机图片路径；可选的 `names` 与文件一一对应，`null` 或空字符串
+使用默认编号。自定义名称自动追加 `logo` 后缀，例如「旅行」生成 `{旅行logo}`，已有后缀不会重复添加。
+
+```json
+{"paths": ["/照片素材/旅行.svg", "/照片素材/签名.png"], "names": ["旅行", null]}
+```
+
+同名素材会拒绝导入，可换名后重试。`delete_logo` 接受 `logo_id`，只删除素材库副本，保留原文件
+和模板文字；旧编号不复用。`{尼康logo}` 是无需导入即可使用的内置示例，不能删除。
+
 ## 状态与调度
 
 - 桌面进程是唯一状态所有者；多个 stdio 桥可以连接同一桌面，命令经过有界队列串行调度。

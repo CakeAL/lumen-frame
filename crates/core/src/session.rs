@@ -48,7 +48,7 @@ impl Session {
             settings.default_font
         };
         session.current.params.custom_logos =
-            crate::logos::snapshot(&crate::logos::load_in(session.storage.logos()?)?);
+            crate::logos::snapshot(&crate::logos::library_in(session.storage.logos()?)?);
         session.defaults = session.current.clone();
         Ok(session)
     }

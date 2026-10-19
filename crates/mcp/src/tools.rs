@@ -69,6 +69,7 @@ pub fn tools() -> Result<Vec<Tool>> {
             "remove_photo"
                 | "clear_photos"
                 | "delete_preset"
+                | "delete_logo"
                 | "clear_map_cache"
                 | "install_update"
         ));
@@ -173,8 +174,13 @@ fn description(name: &str) -> &'static str {
         "save_settings" => {
             "保存完整应用设置并同步运行期导出环境；先 get_settings 获取完整结构，避免重置未提供的偏好。"
         }
-        "list_logos" => "列出本机自定义 Logo 素材。",
-        "import_logos" => "导入本机 Logo 文件并更新水印素材快照。",
+        "list_logos" => "列出内置示例和本机自定义 Logo，返回 id、name、token 和 builtin。",
+        "import_logos" => {
+            "导入本机 Logo 文件。names 可省略，或与 paths 等长（null 使用默认编号）；自定义名称自动追加 logo 后缀，如旅行变为 {旅行logo}。内置名称不可重复。"
+        }
+        "delete_logo" => {
+            "按 logo_id 删除素材库副本并更新预览；保留导入源文件和模板文字，内置示例不能删除。"
+        }
         "export_gainmap" => "提取输入照片的 gain map 到文件；没有 gain map 时返回 exported=false。",
         "export_colour_gainmap" => "生成黑白底图与彩色恢复 gain map 照片。",
         "inspect_video" => "使用指定 FFmpeg 路径读取视频信息。",

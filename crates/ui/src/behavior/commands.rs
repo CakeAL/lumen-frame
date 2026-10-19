@@ -39,9 +39,11 @@ fn execution(command: &Command) -> Execution {
         | ApplyCurrentToAll
         | UpdateExif { .. }
         | SetGps { .. } => Execution::Foreground,
-        ImportPhotos { .. } | LoadPreset { .. } | SaveSettings { .. } | ImportLogos { .. } => {
-            Execution::BackgroundWrite
-        }
+        ImportPhotos { .. }
+        | LoadPreset { .. }
+        | SaveSettings { .. }
+        | ImportLogos { .. }
+        | DeleteLogo { .. } => Execution::BackgroundWrite,
         ExtractPalette { .. }
         | RenderPreview { .. }
         | RenderThumbnail { .. }
@@ -123,16 +125,17 @@ impl AppView {
                                 } else {
                                     None
                                 };
-                                let logos =
-                                    if reply.result.is_ok()
-                                        && matches!(work_command, Command::ImportLogos { .. })
-                                    {
-                                        snapshot.storage().logos().ok().and_then(|path| {
-                                            crate::backend::logos::load_in(path).ok()
-                                        })
-                                    } else {
-                                        None
-                                    };
+                                let logos = if reply.result.is_ok()
+                                    && matches!(
+                                        work_command,
+                                        Command::ImportLogos { .. } | Command::DeleteLogo { .. }
+                                    ) {
+                                    snapshot.storage().logos().ok().and_then(|path| {
+                                        crate::backend::logos::library_in(path).ok()
+                                    })
+                                } else {
+                                    None
+                                };
                                 (snapshot, reply, catalog, logos)
                             })
                             .await;
@@ -205,8 +208,10 @@ impl AppView {
                 "状态已更新，请重新读取后再提交",
             ));
         }
-        if matches!(request.command, Command::ImportLogos { .. })
-            && !self.begin_external_logo_import(cx)
+        if matches!(
+            request.command,
+            Command::ImportLogos { .. } | Command::DeleteLogo { .. }
+        ) && !self.begin_external_logo_import(cx)
         {
             return Prepared::Complete(failure(
                 self.backend.revision(),
@@ -272,7 +277,10 @@ impl AppView {
             mut reply,
             revision,
         } = result;
-        if matches!(command, Command::ImportLogos { .. }) {
+        if matches!(
+            command,
+            Command::ImportLogos { .. } | Command::DeleteLogo { .. }
+        ) {
             self.end_external_logo_import(cx);
         }
         self.backend.commit_groups(self.build_text_groups(cx));
