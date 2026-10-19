@@ -7,12 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::watermark::{TextGroup, WatermarkParams};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WatermarkPreset {
     pub params: WatermarkParams,
     pub text_groups: Vec<TextGroup>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PresetFile {
     name: String,

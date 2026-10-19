@@ -7,6 +7,7 @@ use vips_sys::{self, VipsAngle};
 
 use crate::gainmap;
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Rotation {
     #[default]

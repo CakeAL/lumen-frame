@@ -5,6 +5,7 @@ use std::{fmt, str::FromStr};
 use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct BackgroundGradient {
@@ -109,6 +110,7 @@ impl From<BackgroundGradient> for String {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum PaletteTheme {
     #[default]
@@ -123,6 +125,7 @@ pub enum PaletteTheme {
 
 /// `None` 是手动颜色，`Some(rank)` 是该照片在指定 Theme 下的代表色序号。
 /// 旧预设没有来源信息时，全部按固定颜色处理。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GradientPalette {

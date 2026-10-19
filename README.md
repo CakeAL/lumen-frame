@@ -61,6 +61,10 @@ macOS 安装包目前采用临时签名，首次打开如被系统拦截，可�
 
 （Motion Photo和HDR已在小红书/小米15相册播放测试过。）
 
+## MCP
+
+`cargo run -- --mcp-stdio` 启动无窗口的独立 MCP 会话，通过 stdio 提供照片水印和批量处理工具。启动方式和客户端配置见 [MCP 接入说明](docs/mcp.md)。
+
 ## 开发
 
 需要较新的稳定版 Rust 及本机可用的 libvips (参考：https://github.com/houseme/vips-sys/blob/main/README_CN.md)。

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{path::PathBuf, time::Duration};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -20,6 +21,7 @@ pub struct Request {
 }
 
 /// 配置使用现有水印模型：所有背景、边框、阴影、富文本和色卡参数均可调用。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "method",
@@ -204,6 +206,7 @@ pub enum Command {
     InstallUpdate,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
@@ -211,17 +214,20 @@ pub enum ErrorCode {
     Conflict,
     OperationFailed,
 }
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationError {
     pub code: ErrorCode,
     pub message: String,
 }
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reply {
     pub revision: u64,
     pub result: std::result::Result<CommandOutput, OperationError>,
 }
 /// 内容由具体命令确定，统一 JSON 结果不包含 GPUI 或 libvips 句柄。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CommandOutput(Value);

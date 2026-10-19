@@ -5,6 +5,8 @@
 
 //! Lumen Frame：为照片加上边框、阴影与 EXIF 文字水印。
 
+mod options;
+
 use std::borrow::Cow;
 
 use gpui_kit::component::*;
@@ -105,9 +107,26 @@ fn close_auxiliary_windows_with_main(main_window: AnyWindowHandle, cx: &App) {
     .detach();
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     point_vips_at_bundled_modules();
-
+    let options = options::Options::parse(std::env::args_os().skip(1))?;
+    if options.help {
+        options::print_help();
+        return Ok(());
+    }
+    if options.mcp_stdio {
+        lumen_frame_core::initialize_native_text();
+        let storage = options
+            .mcp_storage
+            .map(lumen_frame_core::StoragePaths::in_directory)
+            .unwrap_or_default();
+        let session = lumen_frame_core::Session::from_storage(storage)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        return runtime.block_on(lumen_frame_mcp::serve_stdio(session));
+    }
     let platform = gpui_kit::platform::current_platform(false);
     lumen_frame_core::render::init_font_backend(platform.text_system());
     let app = gpui_kit::Application::with_platform(platform)
@@ -132,6 +151,7 @@ fn main() {
         .expect("无法打开主窗口");
         close_auxiliary_windows_with_main(main_window, cx);
     });
+    Ok(())
 }
 
 #[cfg(test)]

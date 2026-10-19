@@ -10,6 +10,7 @@ use crate::media::ExifInfo;
 /// 队列中照片的稳定身份。
 ///
 /// 身份独立于当前下标，因此删除或重排照片不会让选中状态漂移到相邻项。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct PhotoId(u64);

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::Placement;
 
 /// 文字组的独立边框，尺寸均以照片高度为基准。四边顺序为上、右、下、左。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextBorder {

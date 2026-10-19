@@ -8,6 +8,8 @@
 lumen-frame（src/main.rs：平台初始化、窗口生命周期、应用组装）
   ├── lumen-frame-ui（GPUI 页面、控件、任务调度、纹理）
   │     └── lumen-frame-core
+  ├── lumen-frame-mcp（协议、工具 schema、stdio 传输）
+  │     └── lumen-frame-core
   └── lumen-frame-core（会话、命令、模型、渲染、文件与媒体操作）
 ```
 
@@ -19,7 +21,8 @@ lumen-frame（src/main.rs：平台初始化、窗口生命周期、应用组装�
 
 ```text
 src/
-└── main.rs                     # 应用启动、资源注册、窗口生命周期
+├── main.rs                     # 应用启动、资源注册、窗口生命周期
+└── options.rs                  # 桌面 / stdio 启动选项
 crates/
 ├── core/                           # lumen-frame-core
 │   ├── Cargo.toml
@@ -40,17 +43,18 @@ crates/
 │       ├── persistence/            # 设置、预设与 Logo 素材读写
 │       ├── features/               # 色卡、定位、Motion Photo、彩色 Gain Map
 │       └── gainmap.rs / rotation.rs / update.rs / storage.rs
-└── ui/                             # lumen-frame-ui
-    ├── Cargo.toml
-    └── src/
-        ├── lib.rs
-        ├── theme.rs                # GPUI 主题注册
-        ├── app.rs                  # 组合核心会话、页面状态与窗口资源
-        ├── behavior/               # 桌面任务调度与结果同步
-        ├── component/              # 控件与领域编辑器
-        ├── page/                   # 完整页面
-        ├── image.rs                # RGBA → GPUI BGRA 适配
-        └── image/layers.rs         # 按核心库像素身份复用 GPUI 纹理
+├── ui/                             # lumen-frame-ui
+│   ├── Cargo.toml
+│   └── src/
+│       ├── lib.rs
+│       ├── theme.rs                # GPUI 主题注册
+│       ├── app.rs                  # 组合核心会话、页面状态与窗口资源
+│       ├── behavior/               # 桌面任务调度与结果同步
+│       ├── component/              # 控件与领域编辑器
+│       ├── page/                   # 完整页面
+│       ├── image.rs                # RGBA → GPUI BGRA 适配
+│       └── image/layers.rs         # 按核心库像素身份复用 GPUI 纹理
+└── mcp/                        # lumen-frame-mcp：工具描述、结果转换与传输
 ```
 
 `assets/` 与 `test_images/` 仍在仓库根目录。版本和依赖版本集中在根 `Cargo.toml`；
@@ -228,3 +232,7 @@ cargo run -p lumen-frame-core --example commands -- /tmp/lumen-demo
 ```
 
 后端命令、宿主调度与未来 MCP 接入约定见 [core.md](core.md)。
+
+MCP 仅通过 stdio 提供独立会话，`core::bridge` 的有界命令队列将请求交给会话工作线程。
+它与桌面应用复用同一套后端业务逻辑，但队列和配置互相独立。启动选项由根包
+`src/options.rs` 解析，详细说明见 [mcp.md](mcp.md)。

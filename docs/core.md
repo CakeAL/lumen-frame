@@ -86,7 +86,8 @@ GPUI 依赖的纯算法库。无窗口宿主须在主线程先调用 `initialize
 cargo run -p lumen-frame-core --example commands -- /tmp/lumen-backend-demo
 ```
 
-示例从标准输入逐行接收 JSON 请求，并逐行输出 JSON 回复。它是命令接口示例，尚未实现
-MCP 的工具发现、JSON Schema、传输或与正在运行桌面会话的连接。后续 MCP 适配器应复用
-这些命令；需要控制当前桌面会话时，交由其所属线程提交操作并同步控件，不能另建会话冒充。
+示例从标准输入逐行接收 JSON 请求，并逐行输出 JSON 回复；它仍是普通业务命令示例。
+正式 MCP 服务位于 `crates/mcp`，通过 stdio 提供无窗口的独立会话。
+具体启动、客户端配置与工具参数见 [mcp.md](mcp.md)。MCP 请求通过 `bridge::command_channel`
+交给独立会话工作线程，按顺序执行并使用 `expected_revision` 检查版本。
 文件选择对话框、焦点、悬停、剪贴板和系统打开目录由各宿主实现。

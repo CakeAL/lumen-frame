@@ -28,6 +28,7 @@ pub enum BackgroundKind {
 
 /// 元素相对于照片内容的放置边。
 ///
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
     Center,
@@ -38,6 +39,7 @@ pub enum Placement {
 }
 
 /// 水印生成参数。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WatermarkParams {
@@ -146,6 +148,7 @@ fn default_font() -> String {
     DEFAULT_FONT.to_owned()
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextGroup {
     pub text: Text,
@@ -163,6 +166,7 @@ pub struct TextGroup {
 }
 
 /// 指向同一不可变预设快照中的文字组；UI 编辑期间使用稳定组 ID，保存时投影成序号。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GroupAttachment {
     pub target: usize,
@@ -171,12 +175,14 @@ pub struct GroupAttachment {
     pub gap: f64,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Text {
     pub template: Vec<String>,
     pub text_params: Vec<TextParams>,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextAlign {
     Left,
@@ -185,6 +191,7 @@ pub enum TextAlign {
     Right,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextDirection {
     #[default]
@@ -192,6 +199,7 @@ pub enum TextDirection {
     Vertical,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextParams {

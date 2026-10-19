@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 照片外扩的等宽边框。宽度以照片高度为基准，色卡序号在目标照片上重新求值。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PhotoBorder {

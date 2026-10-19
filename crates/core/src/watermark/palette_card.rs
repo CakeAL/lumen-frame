@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GroupAttachment, PaletteTheme, Placement, TextAlign, TextDirection};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PaletteShape {
     #[default]
@@ -12,6 +13,7 @@ pub enum PaletteShape {
     Rounded,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PaletteCard {

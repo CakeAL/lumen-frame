@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Location, TileId};
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MapProvider {
     Tencent,
@@ -48,6 +49,7 @@ impl MapCoordinates {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MapSettings {

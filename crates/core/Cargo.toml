@@ -7,8 +7,11 @@ authors.workspace = true
 [features]
 # Extra observation helpers used only by the desktop interaction tests.
 test-support = []
+schema = ["dep:schemars"]
 
 [dependencies]
+async-channel.workspace = true
+schemars = { workspace = true, optional = true }
 tokio.workspace = true
 nom-exif.workspace = true
 anyhow.workspace = true

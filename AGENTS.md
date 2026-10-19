@@ -12,7 +12,8 @@ Lumen Frame 是一个 Rust 2024 桌面照片水印工具。它为照片添加边
 ## 目录与职责
 
 - `src/main.rs`：应用启动、窗口配置，以及打包后 `VIPS_LIBDIR` 的设置。
-- 根包 `src/` 只组装应用；Cargo workspace 分为 `crates/core`（业务）和 `crates/ui`（GPUI 界面）。
+- 根包 `src/` 只组装应用；Cargo workspace 包含 `crates/core`（业务）、`crates/ui`（GPUI 界面）和 `crates/mcp`（MCP 协议适配）。
+- `crates/mcp/src/`：从 core 模型生成工具 schema，仅提供 stdio 传输，不依赖 UI。请求经 `core::bridge` 提交到独立会话工作线程；启动与客户端配置见 `docs/mcp.md`。
 - `crates/core/src/lib.rs`：后端公开入口；`Session` 持有业务状态，`Command` 提供可序列化操作。
 - `crates/ui/src/`：GPUI 页面、控件、窗口与任务调度。`AppView` 持有后端 `Session`，控件只保存输入草稿和交互状态。
 - `crates/core/src/workspace.rs`：无 GPUI 依赖的照片队列状态、稳定 `PhotoId` 与选择规则；缩略图等展示缓存不得放入这里。
@@ -71,6 +72,7 @@ script/bundle-macos.sh
 
 ## 测试指引
 
+- MCP 接入改动：`cargo test -p lumen-frame-mcp --test protocol`（字节流协议、版本冲突和预览图片返回）。
 - 业务/序列化改动：`cargo test --test presets --test settings`。
 - 文字模板或 Logo 改动：`cargo test --test text`。
 - 图像合成、预览或缩略图改动：`cargo test --test preview --test vips_init`。

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TextStyle {
@@ -19,6 +20,7 @@ pub struct TextStyle {
 }
 
 /// 可序列化的局部覆盖。未设置的属性继承文字行，不覆盖行级默认值。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextSpan {
     pub start: usize,
@@ -27,6 +29,7 @@ pub struct TextSpan {
     pub style: TextStyle,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum TextStyleChange {

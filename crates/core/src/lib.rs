@@ -30,3 +30,5 @@ pub mod rotation;
 pub mod update;
 pub mod watermark;
 pub mod workspace;
+
+pub mod bridge;

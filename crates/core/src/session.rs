@@ -32,6 +32,25 @@ impl Default for Session {
 }
 
 impl Session {
+    /// 无窗口宿主从同一持久化服务恢复本机环境，不覆盖任何磁盘文件。
+    pub fn from_storage(storage: super::StoragePaths) -> Result<Self> {
+        let settings = crate::settings::load_at(storage.settings()?);
+        let mut session = Self::default().with_storage(storage);
+        session.current.params.quality = settings.jpeg_quality.clamp(1, 100);
+        if let Some(folder) = settings.output_folder {
+            session.current.params.output_folder = Some(folder);
+        }
+        session.current.params.default_font = if settings.default_font.trim().is_empty() {
+            crate::watermark::DEFAULT_FONT.to_owned()
+        } else {
+            settings.default_font
+        };
+        session.current.params.custom_logos =
+            crate::logos::snapshot(&crate::logos::load_in(session.storage.logos()?)?);
+        session.defaults = session.current.clone();
+        Ok(session)
+    }
+
     pub fn new(current: WatermarkPreset) -> Self {
         Self {
             workspace: PhotoWorkspace::default(),

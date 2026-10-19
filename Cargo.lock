@@ -517,7 +517,7 @@ dependencies = [
  "log",
  "num-rational",
  "num-traits",
- "pastey",
+ "pastey 0.1.1",
  "rayon",
  "thiserror 2.0.20",
  "v_frame",
@@ -4377,6 +4377,7 @@ dependencies = [
  "gpui-kit",
  "image",
  "lumen-frame-core",
+ "lumen-frame-mcp",
  "lumen-frame-ui",
  "nom-exif",
  "serde_json",
@@ -4392,6 +4393,7 @@ name = "lumen-frame-core"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "auto-palette",
  "cartography",
  "chrono",
@@ -4406,6 +4408,7 @@ dependencies = [
  "regex",
  "reqwest",
  "reverse-geocoder-cn",
+ "schemars",
  "self_update",
  "serde",
  "serde_json",
@@ -4413,6 +4416,19 @@ dependencies = [
  "toml 1.1.5+spec-1.1.0",
  "vips",
  "vips-sys",
+]
+
+[[package]]
+name = "lumen-frame-mcp"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "lumen-frame-core",
+ "rmcp",
+ "schemars",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -5477,6 +5493,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "pathfinder_geometry"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6464,6 +6486,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmcp"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
+dependencies = [
+ "chrono",
+ "futures",
+ "indexmap",
+ "pastey 0.2.3",
+ "pin-project-lite",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "robust"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6791,6 +6835,7 @@ version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "indexmap",
  "ref-cast",
@@ -7816,6 +7861,17 @@ dependencies = [
  "either",
  "futures-util",
  "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 

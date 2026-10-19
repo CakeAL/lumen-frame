@@ -14,6 +14,7 @@ pub fn settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join("lumen-frame").join("settings.toml"))
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AppearanceMode {
     #[default]
@@ -22,6 +23,7 @@ pub enum AppearanceMode {
     Dark,
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppSettings {
