@@ -15,7 +15,7 @@ use crate::media::{
     ensure_vips, image_write_to_memory,
     vips::{VipsImage, image_op},
 };
-use crate::watermark::{BackgroundGradient, PaletteTheme, WatermarkParams};
+use crate::watermark::{BackgroundGradient, BackgroundKind, PaletteTheme, WatermarkParams};
 
 #[derive(PartialEq)]
 struct SourceStamp {
@@ -179,10 +179,19 @@ pub fn gradient_colors(params: &WatermarkParams, swatches: &[PaletteSwatch]) -> 
 pub fn resolve(path: &Path, params: &WatermarkParams) -> Result<WatermarkParams> {
     let mut resolved = params.clone();
     let gradient_palette = params.gradient_background && params.gradient_palette.uses_palette();
+    let solid_palette = params.background_kind() == BackgroundKind::Solid
+        && params.background_palette_rank.is_some();
     let border_palette =
         params.photo_border.enabled() && params.photo_border.palette_rank().is_some();
-    if gradient_palette || border_palette {
+    if gradient_palette || solid_palette || border_palette {
         let swatches = extract_with_theme(path, 6, params.gradient_palette.theme())?;
+        if solid_palette {
+            let rank = params
+                .background_palette_rank
+                .unwrap()
+                .min(swatches.len() - 1);
+            resolved.background = swatches[rank].rgb();
+        }
         if gradient_palette {
             resolved.gradient = BackgroundGradient::new(
                 params.gradient.angle(),

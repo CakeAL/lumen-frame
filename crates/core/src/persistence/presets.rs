@@ -112,7 +112,24 @@ pub fn save_in(dir: &Path, name: &str, preset: &WatermarkPreset) -> Result<PathB
         params: preset.params.clone(),
         text_groups: preset.text_groups.clone(),
     };
-    let document = toml::to_string_pretty(&file).context("序列化预设失败")?;
+    let mut document = toml::Value::try_from(&file).context("序列化预设失败")?;
+    // 只在预设文件中省略未启用的渐变，工作区快照仍保留切换模式前的编辑内容。
+    if !preset.params.gradient_background
+        && let Some(params) = document
+            .get_mut("params")
+            .and_then(toml::Value::as_table_mut)
+    {
+        params.remove("gradient_background");
+        params.remove("gradient");
+        if let Some(palette) = params
+            .get_mut("gradient_palette")
+            .and_then(toml::Value::as_table_mut)
+        {
+            // Theme 同时供纯色与照片边框使用；只有渐变色标的来源列表可以省略。
+            palette.remove("slots");
+        }
+    }
+    let document = toml::to_string_pretty(&document).context("序列化预设失败")?;
     let path = dir.join(file_name);
     std::fs::write(&path, document).with_context(|| format!("写入预设失败：{}", path.display()))?;
     Ok(path)

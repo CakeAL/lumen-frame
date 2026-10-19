@@ -428,6 +428,7 @@ impl ParameterControls {
         }));
         subscriptions.extend(background.subscribe(window, cx, |this, rgb| {
             this.backend.params_mut().background = rgb;
+            this.backend.params_mut().background_palette_rank = None;
         }));
 
         let aspect_ratio = select_state(

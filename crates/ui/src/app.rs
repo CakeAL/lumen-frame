@@ -1219,7 +1219,9 @@ impl AppView {
             .grain_strength
             .sync(params.grain_strength, window, cx);
         controls.quality.sync(f64::from(params.quality), window, cx);
-        controls.background.sync(params.background, window, cx);
+        controls
+            .background
+            .sync(self.background_display_color(), window, cx);
         controls
             .photo_border_width
             .sync(params.photo_border.width(), window, cx);

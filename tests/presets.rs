@@ -224,6 +224,63 @@ fn output_folder_is_not_part_of_a_preset() {
 }
 
 #[test]
+fn solid_palette_recipe_survives_saving_and_follows_each_photo() {
+    use lumen_frame_core::{Session, photo_palette, watermark::GradientPalette};
+    let dir = scratch_dir("solid-palette");
+    let mut preset = colourful_preset();
+    preset.params.background_palette_rank = Some(0);
+    preset.params.gradient = "linear-gradient(135deg,#a44017,#20140c,#73270d)"
+        .parse()
+        .unwrap();
+    preset.params.gradient_palette =
+        GradientPalette::new(Default::default(), vec![Some(0), Some(1), Some(2)]);
+    let path = save_in(&dir, "大面积色卡", &preset).unwrap();
+    let document: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let params = &document["params"];
+    assert_eq!(params["background_palette_rank"].as_integer(), Some(0));
+    assert!(params.get("gradient_background").is_none());
+    assert!(params.get("gradient").is_none());
+    assert!(params["gradient_palette"].get("slots").is_none());
+    let loaded = load_in(&dir, "大面积色卡").unwrap();
+    assert_eq!(loaded.params.background_palette_rank, Some(0));
+    let mut session = Session::default();
+    session.add_photos(vec![
+        "test_images/DSC_4587.jpg".into(),
+        "test_images/ultra_hdr.jpg".into(),
+    ]);
+    session.apply_preset(loaded, true);
+    let mut colors = Vec::new();
+    for photo in session.workspace().photos() {
+        let params = session.watermark_for(photo.id()).unwrap().params;
+        assert_eq!(params.background_palette_rank, Some(0));
+        let expected =
+            photo_palette::extract_with_theme(photo.path(), 6, params.gradient_palette.theme())
+                .unwrap()[0]
+                .rgb();
+        let resolved = photo_palette::resolve(photo.path(), &params).unwrap();
+        assert_eq!(resolved.background, expected);
+        colors.push(expected);
+    }
+    assert_ne!(colors[0], colors[1], "应用同一预设应使用各自照片的第一色");
+    preset.params.background_palette_rank = None;
+    let manual_path = save_in(&dir, "固定颜色", &preset).unwrap();
+    let manual = load_in(&dir, "固定颜色").unwrap();
+    assert!(manual.params.background_palette_rank.is_none());
+    assert_eq!(
+        photo_palette::resolve(std::path::Path::new("不存在的照片"), &manual.params)
+            .unwrap()
+            .background,
+        preset.params.background
+    );
+    assert!(
+        !std::fs::read_to_string(manual_path)
+            .unwrap()
+            .contains("background_palette_rank")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn custom_photo_content_is_not_written_into_a_reusable_preset() {
     let dir = scratch_dir("custom-photo-text");
     let mut preset = colourful_preset();

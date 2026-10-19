@@ -61,6 +61,10 @@ pub struct WatermarkParams {
     pub aspect_ratio: Option<(f64, f64)>,
     pub position: Placement,
     pub background: [u8; 3],
+    /// 纯色背景的色卡序号，按 gradient_palette.theme 在目标照片上重新取色。
+    /// None 表示手动指定的固定 RGB；旧预设保持固定颜色。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_palette_rank: Option<usize>,
     pub border_radius: f64,
     /// 照片外侧的彩色边框，与画布留白分别设置。
     pub photo_border: PhotoBorder,
@@ -97,6 +101,7 @@ impl Default for WatermarkParams {
             aspect_ratio: None,
             position: Placement::Center,
             background: [255, 255, 255],
+            background_palette_rank: None,
             border_radius: 0.02,
             photo_border: PhotoBorder::default(),
             palette_card: PaletteCard::default(),

@@ -54,6 +54,17 @@ impl AppView {
         self.backend.params().photo_border.color()
     }
 
+    pub(in crate::app) fn background_display_color(&self) -> [u8; 3] {
+        if let (Some(rank), Some(PaletteStatus::Ready(swatches))) = (
+            self.backend.params().background_palette_rank,
+            self.selected_palette(),
+        ) && let Some(swatch) = swatches.get(rank.min(swatches.len().saturating_sub(1)))
+        {
+            return swatch.rgb();
+        }
+        self.backend.params().background
+    }
+
     pub(in crate::app) fn select_border_palette_color(
         &mut self,
         rank: usize,
@@ -111,6 +122,9 @@ impl AppView {
         self.controls
             .photo_border_color
             .sync(self.photo_border_display_color(), window, cx);
+        self.controls
+            .background
+            .sync(self.background_display_color(), window, cx);
         self.background_state.colors.truncate(colors.len());
         while self.background_state.colors.len() < colors.len() {
             let id = self.background_state.next_color_id;
@@ -250,6 +264,11 @@ impl AppView {
                         if this.selected_photo_id() == Some(id)
                             && this.backend.params().gradient_palette.theme() == theme
                         {
+                            this.controls.background.sync(
+                                this.background_display_color(),
+                                window,
+                                cx,
+                            );
                             this.controls.photo_border_color.sync(
                                 this.photo_border_display_color(),
                                 window,
@@ -417,6 +436,7 @@ impl AppView {
         };
         let rgb = swatch.rgb();
         self.backend.params_mut().background = rgb;
+        self.backend.params_mut().background_palette_rank = Some(rank);
         self.controls.background.sync(rgb, window, cx);
         self.refresh_preview(cx);
         cx.notify();
@@ -617,6 +637,7 @@ mod tests {
                 BackgroundKind::Solid
             );
             assert_eq!(view.backend.params().background, swatches[2].rgb());
+            assert_eq!(view.backend.params().background_palette_rank, Some(2));
             assert_eq!(view.backend.params().gradient, gradient);
         });
         cx.update(|window, cx| {
@@ -628,6 +649,35 @@ mod tests {
             view.selected_palette(),
             Some(PaletteStatus::Ready(_))
         )));
+        let first = view.read_with(cx, |view, _| view.background_display_color());
+        view.update_in(cx, |view, window, cx| {
+            view.apply_current_settings_to_all(window, cx);
+            view.select_photo_at(1, window, cx);
+        });
+        settle_palette(&view, cx);
+        view.read_with(cx, |view, _| {
+            let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
+                panic!("缺少第二张照片色卡")
+            };
+            let expected = swatches[2.min(swatches.len() - 1)].rgb();
+            assert_eq!(view.backend.params().background_palette_rank, Some(2));
+            assert_eq!(view.background_display_color(), expected);
+            assert_ne!(first, expected);
+        });
+        view.update_in(cx, |view, window, cx| {
+            view.set_palette_theme(PaletteTheme::Basic, window, cx);
+        });
+        settle_palette(&view, cx);
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.backend.params().background_palette_rank, Some(2));
+            let Some(PaletteStatus::Ready(swatches)) = view.selected_palette() else {
+                panic!("缺少新主题色卡")
+            };
+            assert_eq!(
+                view.background_display_color(),
+                swatches[2.min(swatches.len() - 1)].rgb()
+            );
+        });
     }
 
     #[gpui_kit::test]

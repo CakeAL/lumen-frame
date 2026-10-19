@@ -453,7 +453,11 @@ impl AppView {
                                     .map(|source| source.min(swatches.len() - 1))
                                     == Some(rank)
                             } else if solid {
-                                self.backend.params().background == rgb
+                                self.backend
+                                    .params()
+                                    .background_palette_rank
+                                    .map(|source| source.min(swatches.len() - 1))
+                                    == Some(rank)
                             } else {
                                 self.palette_color_selected(rank)
                             };
