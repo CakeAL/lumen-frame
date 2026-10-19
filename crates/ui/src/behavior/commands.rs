@@ -378,6 +378,8 @@ impl AppView {
     ) {
         use gpui_kit::component::{Theme, ThemeRegistry};
         self.appearance = saved.appearance;
+        self.window_effects = saved.window_effects;
+        crate::window_effects::set_enabled(saved.window_effects, cx);
         self.light_theme = saved.light_theme.clone().map(Into::into);
         self.dark_theme = saved.dark_theme.clone().map(Into::into);
         self.interface_scale = saved
@@ -582,6 +584,20 @@ mod tests {
             }
         }
         assert!(view.read_with(cx, |view, cx| view.preview_image(cx).is_some()));
+        let saved = call(
+            &endpoint,
+            Command::SaveSettings {
+                settings: crate::backend::settings::AppSettings {
+                    window_effects: false,
+                    ..Default::default()
+                },
+            },
+            None,
+            cx,
+        );
+        assert!(saved.result.is_ok(), "{saved:?}");
+        assert!(!view.read_with(cx, |view, _| view.window_effects));
+        assert!(!cx.read(crate::window_effects::enabled));
         drop(server);
         let unavailable = tokio::runtime::Runtime::new()
             .unwrap()

@@ -214,7 +214,6 @@ impl AppView {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .bg(cx.theme().background)
             .child(self.render_preview_header(title, cx))
             .child(self.render_preview_canvas(cx))
     }

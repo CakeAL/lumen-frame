@@ -708,7 +708,6 @@ impl AppView {
             .overflow_hidden()
             .gap_2()
             .p_3()
-            .bg(cx.theme().background)
             .border_1()
             .border_color(cx.theme().border)
             .rounded_md()

@@ -28,6 +28,8 @@ pub enum AppearanceMode {
 #[serde(default)]
 pub struct AppSettings {
     pub appearance: AppearanceMode,
+    /// 原生窗口毛玻璃 / Mica 效果；旧配置未设置时默认开启。
+    pub window_effects: bool,
     pub light_theme: Option<String>,
     pub dark_theme: Option<String>,
     pub interface_scale: Option<f32>,
@@ -61,6 +63,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             appearance: AppearanceMode::System,
+            window_effects: true,
             light_theme: None,
             dark_theme: None,
             interface_scale: None,

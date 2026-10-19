@@ -140,6 +140,8 @@ pub struct AppView {
     /// 界面明暗的选择。真正的主题落在 GPUI 的全局 `Theme` 上，这里记住的是「用户选的是
     /// 跟随系统还是指定明暗」，以及用来在设置页上显示当前选项。
     appearance: AppearanceMode,
+    /// 原生窗口背景效果的本机偏好。
+    window_effects: bool,
     /// 浅色/深色两个槽位各自选了哪套配色。`None` 表示用默认。
     light_theme: Option<SharedString>,
     dark_theme: Option<SharedString>,
@@ -177,6 +179,7 @@ impl AppView {
             .as_deref()
             .map(settings_store::load_at)
             .unwrap_or_default();
+        crate::window_effects::install(settings.window_effects, cx);
         let mut params = WatermarkParams {
             quality: settings.jpeg_quality.clamp(1, 100),
             ..Default::default()
@@ -276,6 +279,7 @@ impl AppView {
             preset_feedback: None,
             preset_feedback_is_error: false,
             appearance: settings.appearance,
+            window_effects: settings.window_effects,
             light_theme: settings.light_theme.map(SharedString::from),
             dark_theme: settings.dark_theme.map(SharedString::from),
             interface_scale: settings

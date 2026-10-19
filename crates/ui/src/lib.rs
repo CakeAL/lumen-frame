@@ -3,6 +3,7 @@ use lumen_frame_core as backend;
 mod app;
 pub mod image;
 pub mod theme;
+mod window_effects;
 pub use app::{AppPage, AppView, ExportState, Thumbnail};
 pub use image::{
     PreviewJob, export_colour_gainmap, export_gainmap, render_colour_gainmap_preview,

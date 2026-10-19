@@ -85,7 +85,7 @@ impl Render for LogoWindow {
         v_flex()
             .size_full()
             .min_h_0()
-            .child(TitleBar::new().child("自定义 Logo"))
+            .child(crate::window_effects::title_bar(cx).child("自定义 Logo"))
             .child(self.app.read(cx).render_logos_page(self.app.clone(), cx))
     }
 }

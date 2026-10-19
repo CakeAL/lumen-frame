@@ -19,6 +19,7 @@ fn scratch_file(tag: &str) -> PathBuf {
 fn default_appearance_follows_the_system() {
     // 新装的应用没有偏好文件，这时应该跟随系统，而不是自作主张选一个明暗。
     assert_eq!(AppSettings::default().appearance, AppearanceMode::System);
+    assert!(AppSettings::default().window_effects);
     assert_eq!(AppSettings::default().default_font, DEFAULT_FONT);
     assert_eq!(AppSettings::default().jpeg_quality, DEFAULT_JPEG_QUALITY);
     assert_eq!(
@@ -61,6 +62,7 @@ fn theme_slots_round_trip() {
 
     let settings = AppSettings {
         appearance: AppearanceMode::System,
+        window_effects: false,
         light_theme: Some("Catppuccin Latte".to_string()),
         dark_theme: Some("Catppuccin Mocha".to_string()),
         interface_scale: Some(18.0),
@@ -103,6 +105,10 @@ fn old_settings_without_a_font_use_the_default() {
 
     let loaded = load_at(&path);
     assert_eq!(loaded.appearance, AppearanceMode::Dark);
+    assert!(
+        loaded.window_effects,
+        "旧配置未指定时应默认启用窗口背景效果"
+    );
     assert_eq!(loaded.default_font, DEFAULT_FONT);
     assert_eq!(loaded.jpeg_quality, DEFAULT_JPEG_QUALITY);
     assert!(!loaded.builtin_presets_collapsed);

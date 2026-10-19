@@ -199,7 +199,7 @@ impl Render for PaletteCardWindow {
         v_flex()
             .size_full()
             .min_h_0()
-            .child(TitleBar::new().child(div().text_sm().child("照片色卡")))
+            .child(crate::window_effects::title_bar(cx).child(div().text_sm().child("照片色卡")))
             .child(
                 div()
                     .id("palette-card-editor-scroll")

@@ -809,7 +809,7 @@ impl Render for LocationPicker {
         v_flex()
             .size_full()
             .min_h_0()
-            .child(TitleBar::new().child("更改GPS信息"))
+            .child(crate::window_effects::title_bar(cx).child("更改GPS信息"))
             .child(
                 v_flex()
                     .id("gps-picker-content")

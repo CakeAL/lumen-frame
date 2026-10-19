@@ -51,7 +51,6 @@ impl AppView {
             }))
             .w_full()
             .flex_shrink_0()
-            .bg(cx.theme().background)
             .border_t_1()
             .border_color(cx.theme().border)
             .focus_visible(|this| this.border_color(cx.theme().ring))

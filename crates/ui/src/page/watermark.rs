@@ -10,7 +10,6 @@ impl Render for AppView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(self.render_page_body(cx))

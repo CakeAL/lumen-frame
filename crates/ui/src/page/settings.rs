@@ -6,6 +6,7 @@
 //! 界面缩放直接读写 GPUI Component 的全局主题，明暗选择则通过 [`AppView::apply_appearance`]
 //! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, IndexPath, Theme, ThemeMode,
     button::{Button, ButtonVariants as _},
@@ -18,6 +19,7 @@ use gpui_kit::component::{
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
+    switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -378,7 +380,6 @@ impl AppView {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .bg(cx.theme().background)
             .child(
                 h_flex()
                     .w_full()
@@ -404,6 +405,7 @@ impl AppView {
                         v_flex()
                             .id("settings-preferences")
                             .debug_selector(|| "settings-preferences".into())
+                            .test_support()
                             .flex_basis(relative(0.7))
                             .flex_grow_0()
                             .flex_shrink_0()
@@ -459,6 +461,25 @@ impl AppView {
                                         v_flex()
                                             .w_full()
                                             .gap_2()
+                                            .child(
+                                                Field::new()
+                                                    .w_full()
+                                                    .flex_initial()
+                                                    .child(
+                                                        Switch::new("settings-window-effects")
+                                                            .label("窗口毛玻璃")
+                                                            .checked(self.window_effects)
+                                                            .disabled(!crate::window_effects::supported())
+                                                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                                                this.set_window_effects(*checked, cx);
+                                                            })),
+                                                    )
+                                                    .description(if crate::window_effects::supported() {
+                                                        "使用系统窗口背景效果：macOS 毛玻璃、Windows 11 Mica；即时生效。"
+                                                    } else {
+                                                        "当前平台暂不支持窗口背景效果。"
+                                                    }),
+                                            )
                                             .child(
                                                 field(
                                                     "主题",
@@ -516,7 +537,7 @@ impl AppView {
                                                                 },
                                                             )),
                                                     )
-                                                    .description("恢复为跟随系统、默认配色、标准缩放、默认预览分辨率与默认字体；不影响预设。"),
+                                                    .description("恢复为跟随系统、默认配色、开启窗口毛玻璃、标准缩放、默认预览分辨率与默认字体；不影响预设。"),
                                             )
                                             .when_some(
                                                 self.settings_feedback.clone(),
@@ -662,6 +683,53 @@ mod tests {
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{Render, TestAppContext};
     use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    #[gpui_kit::test]
+    fn window_effects_switch_persists_and_reset_restores_default(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let directory =
+            std::env::temp_dir().join(format!("lumen-window-effects-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let path = directory.join("settings.toml");
+        let owner = Rc::new(RefCell::new(None));
+        let (_, cx) = cx.add_window_view({
+            let owner = owner.clone();
+            let path = path.clone();
+            move |window, cx| {
+                let view = cx.new(|cx| {
+                    let mut view = AppView::new_with_settings_path(Some(path), window, cx);
+                    view.page = super::super::super::AppPage::Settings;
+                    view
+                });
+                owner.borrow_mut().replace(view.clone());
+                Root::new(view, window, cx)
+            }
+        });
+        let view = owner.borrow().clone().unwrap();
+        assert!(view.read_with(cx, |view, _| view.window_effects));
+        if crate::window_effects::supported() {
+            cx.update(|window, cx| {
+                window.scroll(
+                    "settings-preferences",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-400.))),
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| window.click("settings-window-effects", cx));
+            cx.run_until_parked();
+            assert!(!view.read_with(cx, |view, _| view.window_effects));
+            assert!(!crate::backend::settings::load_at(&path).window_effects);
+            assert!(!cx.read(crate::window_effects::enabled));
+        }
+        view.update_in(cx, |view, window, cx| {
+            view.reset_appearance_defaults(window, cx)
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| view.window_effects));
+        assert!(crate::backend::settings::load_at(&path).window_effects);
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     struct FontSelectHarness {
         font: Entity<NameSelect>,

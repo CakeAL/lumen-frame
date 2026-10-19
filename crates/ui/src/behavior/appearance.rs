@@ -9,6 +9,16 @@ use crate::backend::watermark::DEFAULT_FONT;
 use super::super::{AppView, page::settings};
 
 impl AppView {
+    pub(in crate::app) fn set_window_effects(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.window_effects == enabled {
+            return;
+        }
+        self.window_effects = enabled;
+        crate::window_effects::set_enabled(enabled, cx);
+        self.persist_settings();
+        cx.notify();
+    }
+
     pub fn interface_scale(&self) -> f32 {
         self.interface_scale
     }
@@ -74,6 +84,7 @@ impl AppView {
         self.backend.mark_settings_changed();
         let settings = settings_store::AppSettings {
             appearance: self.appearance,
+            window_effects: self.window_effects,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),
             dark_theme: self.dark_theme.as_ref().map(|name| name.to_string()),
             interface_scale: Some(self.interface_scale),
@@ -97,6 +108,8 @@ impl AppView {
 
     pub fn reset_appearance_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.appearance = AppearanceMode::System;
+        self.window_effects = true;
+        crate::window_effects::set_enabled(true, cx);
         self.light_theme = None;
         self.dark_theme = None;
         self.interface_scale = settings::DEFAULT_INTERFACE_SCALE;

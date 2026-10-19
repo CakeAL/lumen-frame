@@ -48,6 +48,7 @@ crates/
 │   └── src/
 │       ├── lib.rs
 │       ├── theme.rs                # GPUI 主题注册
+│       ├── window_effects.rs       # 原生窗口背景与主题遮罩
 │       ├── app.rs                  # 组合核心会话、页面状态与窗口资源
 │       ├── behavior/               # 桌面任务调度与结果同步
 │       ├── component/              # 控件与领域编辑器

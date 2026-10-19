@@ -2,7 +2,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, Sizable as _, TitleBar,
+    Icon, Sizable as _,
     button::Button,
     h_flex,
     tab::{Tab, TabBar},
@@ -15,7 +15,7 @@ use super::super::{AppPage, AppView};
 impl AppView {
     /// 标题栏承载导航，交互控件需遮挡底层的窗口拖动命中区。
     pub(in crate::app) fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        TitleBar::new().child(self.render_title_bar_navigation(cx))
+        crate::window_effects::title_bar(cx).child(self.render_title_bar_navigation(cx))
     }
 
     fn render_title_bar_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -129,7 +129,7 @@ impl Render for TextGroupWindow {
             .size_full()
             .min_h_0()
             .child(
-                TitleBar::new().child(
+                crate::window_effects::title_bar(cx).child(
                     div()
                         .text_sm()
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
@@ -851,7 +851,6 @@ impl AppView {
             .size_full()
             .min_h_0()
             .w_full()
-            .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
                 v_flex()

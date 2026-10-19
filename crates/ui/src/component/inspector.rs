@@ -556,7 +556,6 @@ impl AppView {
             .h_full()
             .w_80()
             .flex_shrink_0()
-            .bg(cx.theme().background)
             .border_l_1()
             .border_color(cx.theme().border)
             .child(
@@ -676,7 +675,6 @@ impl AppView {
             .w_72()
             .h_full()
             .flex_shrink_0()
-            .bg(cx.theme().background)
             .border_r_1()
             .border_color(cx.theme().border)
             .child(
