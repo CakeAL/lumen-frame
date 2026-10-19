@@ -298,6 +298,40 @@ fn custom_photo_content_is_not_written_into_a_reusable_preset() {
 }
 
 #[test]
+fn palette_only_presets_keep_text_groups_empty_when_applied() {
+    use lumen_frame_core::Session;
+    let dir = scratch_dir("palette-only");
+    let mut preset = colourful_preset();
+    preset.text_groups.clear();
+    preset.params.palette_card.set_enabled(true);
+    save_in(&dir, "色卡", &preset).unwrap();
+    let loaded = load_in(&dir, "色卡").unwrap();
+    assert!(loaded.text_groups.is_empty());
+
+    for all in [false, true] {
+        let mut session = Session::default();
+        session.add_photos(vec![
+            "test_images/DSC_4587.jpg".into(),
+            "test_images/ultra_hdr.jpg".into(),
+        ]);
+        session.apply_preset(loaded.clone(), all);
+        assert!(session.current().text_groups.is_empty());
+        assert!(session.params().palette_card.enabled());
+        for photo in session.workspace().photos() {
+            let watermark = session.watermark_for(photo.id()).unwrap();
+            let should_be_empty = all || Some(photo.id()) == session.workspace().selected_id();
+            assert_eq!(watermark.text_groups.is_empty(), should_be_empty);
+        }
+    }
+    // 空队列加载同一预设后，新导入的照片也不应恢复默认文字。
+    let mut session = Session::default();
+    session.apply_preset(loaded, true);
+    session.add_photos(vec!["test_images/DSC_4587.jpg".into()]);
+    assert!(session.current().text_groups.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn bundled_presets_load_from_assets() {
     let presets = builtin().expect("内置预设应该随应用一起可用");
     let names = presets

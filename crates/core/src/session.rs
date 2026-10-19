@@ -263,10 +263,8 @@ impl Session {
         self.defaults.params.custom_text.clear();
         self.changed();
     }
+    /// 预设中的空文字组列表表示不显示文字，不补入初始模板。
     pub fn apply_preset(&mut self, mut preset: WatermarkPreset, all: bool) {
-        if preset.text_groups.is_empty() {
-            preset.text_groups.push(TextGroup::default());
-        }
         if all {
             self.apply_to_all(preset.clone());
         }

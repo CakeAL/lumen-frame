@@ -1071,31 +1071,17 @@ impl AppView {
                             .w_24()
                             .flex_shrink_0()
                             .min_w_0()
-                            .gap_2()
+                            .justify_center()
                             .child(
                                 div()
-                                    .flex_1()
+                                    .w_full()
                                     .min_w_0()
-                                    .truncate()
+                                    .line_clamp(2)
                                     .text_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(cx.theme().foreground)
                                     .child(name),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .when(!builtin, |row| {
-                                        row.child(
-                                            Icon::new(gpui_kit::assets::IconName::GripVertical)
-                                                .xsmall(),
-                                        )
-                                    })
-                                    .child(if builtin { "内置" } else { "我的预设" }),
-                            )
-                            .when(!builtin, |this| this.pr_8()),
+                            ),
                     )
                     .child(div().flex_1().min_w_0().child(preview)),
             )
