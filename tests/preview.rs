@@ -73,6 +73,69 @@ fn preview_is_downscaled_to_stay_responsive() {
 }
 
 #[test]
+fn background_grain_is_repeatable_and_leaves_the_photo_untouched() {
+    use lumen_frame_core::watermark::BackgroundKind;
+    for kind in [
+        BackgroundKind::Solid,
+        BackgroundKind::Gradient,
+        BackgroundKind::Photo,
+    ] {
+        let mut params = WatermarkParams {
+            border_equal: true,
+            border_ratio: (0.15, 0.15, 0.15, 0.15),
+            background: [80, 120, 160],
+            grain_strength: 0.5,
+            shadow_size: 0.0,
+            border_radius: 0.0,
+            ..Default::default()
+        };
+        params.set_background_kind(kind);
+        let mut request = job_with(params, Vec::new());
+        request.max_edge = 600;
+        let plain = render_preview(&request).unwrap();
+        request.params.background_grain = true;
+        let grain = render_preview(&request).unwrap();
+        let repeated = render_preview(&request).unwrap();
+        let size = grain.size(0);
+        let middle =
+            (size.height.0 as usize / 2 * size.width.0 as usize + size.width.0 as usize / 2) * 4;
+        let (plain, grain, repeated) = (
+            plain.as_bytes(0).unwrap(),
+            grain.as_bytes(0).unwrap(),
+            repeated.as_bytes(0).unwrap(),
+        );
+        assert_eq!(grain, repeated, "重绘不应改变 {kind:?} 背景的随机颗粒");
+        assert_ne!(&plain[..400], &grain[..400], "背景边缘应出现颗粒");
+        assert_eq!(
+            &plain[middle..middle + 64],
+            &grain[middle..middle + 64],
+            "颗粒不应覆盖照片"
+        );
+        assert!(
+            plain
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(grain.as_chunks::<4>().0.iter())
+                .all(|(a, b)| a[3] == b[3]),
+            "颗粒不应改变透明度"
+        );
+        if kind == BackgroundKind::Solid {
+            for (a, b) in plain[..400]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(grain[..400].as_chunks::<4>().0.iter())
+            {
+                let delta = i16::from(b[0]) - i16::from(a[0]);
+                assert_eq!(delta, i16::from(b[1]) - i16::from(a[1]));
+                assert_eq!(delta, i16::from(b[2]) - i16::from(a[2]));
+            }
+        }
+    }
+}
+
+#[test]
 fn rotation_is_applied_to_the_preview_pipeline() {
     let original = render_preview(&job(WatermarkParams::default())).unwrap();
     let rotated = render_preview(&job(WatermarkParams {
@@ -99,6 +162,7 @@ fn ultra_hdr_rotation_keeps_the_preview_pipeline_valid() {
             exif: ExifInfo::read(&path).ok(),
             params: WatermarkParams {
                 rotation,
+                background_grain: true,
                 ..Default::default()
             },
             text_groups: Vec::new(),

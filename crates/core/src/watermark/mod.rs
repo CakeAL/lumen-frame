@@ -75,6 +75,10 @@ pub struct WatermarkParams {
     /// 色卡来源保留代表色序号，应用到其它照片时由那张照片重新求值。
     pub gradient_palette: GradientPalette,
     pub blur_sigma: f64,
+    /// 仅在背景上叠加灰度颗粒，旧预设默认关闭。
+    pub background_grain: bool,
+    /// 颗粒强度，范围 0–1。
+    pub grain_strength: f64,
     /// 全部照片共用的本机 JPEG 导出质量，不写入预设。
     #[serde(skip, default = "default_jpeg_quality")]
     pub quality: i32,
@@ -104,6 +108,8 @@ impl Default for WatermarkParams {
             gradient: BackgroundGradient::default(),
             gradient_palette: GradientPalette::default(),
             blur_sigma: 15.0,
+            background_grain: false,
+            grain_strength: 0.2,
             quality: DEFAULT_JPEG_QUALITY,
             rotation: Rotation::None,
         }

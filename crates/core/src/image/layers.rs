@@ -97,6 +97,7 @@ struct BackgroundKey {
     color: [u8; 3],
     blur: f64,
     gradient: Option<BackgroundGradient>,
+    grain: Option<f64>,
 }
 
 #[derive(PartialEq)]
@@ -430,6 +431,7 @@ impl LayerRenderer for CachedRenderer<'_> {
                 params.blur_sigma
             },
             gradient: params.gradient_background.then(|| params.gradient.clone()),
+            grain: params.background_grain.then_some(params.grain_strength),
         };
         let image = if let Some((_, image)) = self
             .cache

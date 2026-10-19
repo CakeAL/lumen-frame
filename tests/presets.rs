@@ -34,6 +34,8 @@ fn colourful_preset() -> WatermarkPreset {
             shadow_size: 0.07,
             shadow_color: [255; 3],
             blur_sigma: 88.0,
+            background_grain: true,
+            grain_strength: 0.35,
             quality: 82,
             output_folder: Some(PathBuf::from("/should/not/be/saved")),
             default_font: "Menlo".to_owned(),
@@ -135,6 +137,11 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.palette_card, original.params.palette_card);
     assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
     assert_eq!(loaded.params.blur_sigma, original.params.blur_sigma);
+    assert_eq!(
+        loaded.params.background_grain,
+        original.params.background_grain
+    );
+    assert_eq!(loaded.params.grain_strength, original.params.grain_strength);
     assert_eq!(loaded.text_groups, original.text_groups);
     assert_eq!(loaded.text_groups[0].position, Placement::Center);
     assert_eq!(loaded.text_groups[0].direction, TextDirection::Vertical);
@@ -174,6 +181,8 @@ fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
     assert_eq!(old.background_kind(), BackgroundKind::Solid);
     assert_eq!(old.shadow_color, [0; 3]);
     assert!(!old.palette_card.enabled());
+    assert!(!old.background_grain);
+    assert_eq!(old.grain_strength, 0.2);
     assert_eq!(
         WatermarkParams::default().background_kind(),
         BackgroundKind::Photo

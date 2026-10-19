@@ -180,6 +180,15 @@ pub fn new_canvas(
         vips_sys::vips_addalpha(canvas.as_ptr(), out, std::ptr::null::<i8>())
     })?;
     let canvas = rgba_srgb(&canvas, canvas_w, canvas_h)?;
+    let canvas = if params.background_grain
+        && params.grain_strength.is_finite()
+        && params.grain_strength > 0.0
+    {
+        let grain = super::grain::apply(&canvas, img_h, params.grain_strength)?;
+        rgba_srgb(&grain, canvas_w, canvas_h)?
+    } else {
+        canvas
+    };
     Ok(canvas)
 }
 

@@ -399,6 +399,18 @@ mod tests {
         assert!(!same(&unchanged, &recolored, 0));
         assert!(same(&unchanged, &recolored, 1));
         assert!(same(&unchanged, &recolored, 2));
+        job.params.background_grain = true;
+        let grain = cache.render(&job).unwrap();
+        assert!(!same(&recolored, &grain, 0));
+        for ix in 1..grain.layers.len() {
+            assert!(same(&recolored, &grain, ix));
+        }
+        job.params.grain_strength = 0.6;
+        let stronger = cache.render(&job).unwrap();
+        assert!(!same(&grain, &stronger, 0));
+        for ix in 1..stronger.layers.len() {
+            assert!(same(&grain, &stronger, ix));
+        }
     }
 
     #[test]

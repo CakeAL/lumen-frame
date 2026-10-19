@@ -185,6 +185,7 @@ pub(in crate::app) struct ParameterControls {
     pub shadow_size: NumberField,
     pub shadow_density: NumberField,
     pub blur_sigma: NumberField,
+    pub grain_strength: NumberField,
     pub quality: NumberField,
     pub background: ColorField,
 
@@ -325,6 +326,17 @@ impl ParameterControls {
             window,
             cx,
         );
+        let grain_strength = NumberField::new(
+            params.grain_strength,
+            0.0,
+            100.0,
+            1.0,
+            0,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
         let background = ColorField::new(params.background, window, cx);
         let gradient_angle = NumberField::new(
             params.gradient.angle(),
@@ -407,6 +419,9 @@ impl ParameterControls {
         }));
         subscriptions.extend(blur_sigma.subscribe(window, cx, |this, value| {
             this.backend.params_mut().blur_sigma = value;
+        }));
+        subscriptions.extend(grain_strength.subscribe(window, cx, |this, value| {
+            this.backend.params_mut().grain_strength = value;
         }));
         subscriptions.extend(quality.subscribe(window, cx, |this, value| {
             this.set_jpeg_quality(value.round() as i32);
@@ -499,6 +514,7 @@ impl ParameterControls {
                 shadow_size,
                 shadow_density,
                 blur_sigma,
+                grain_strength,
                 quality,
                 background,
                 gradient_angle,
@@ -727,42 +743,31 @@ impl AppView {
                     .flex_shrink_0()
                     .gap_2()
                     .p_4()
-                    .child(
-                        field(
-                            "预设应用范围",
-                            TabBar::new("preset-scope")
-                                .segmented()
-                                .w_full()
-                                .children([
-                                    Tab::new().label("当前照片").flex_1(),
-                                    Tab::new().label("全部照片").flex_1(),
-                                ])
-                                .selected_index(if self.preset_scope == PresetScope::AllPhotos {
-                                    1
-                                } else {
-                                    0
-                                })
-                                .on_click(cx.listener(|this, index: &usize, _, cx| {
-                                    this.preset_scope = if *index == 1 {
-                                        PresetScope::AllPhotos
-                                    } else {
-                                        PresetScope::CurrentPhoto
-                                    };
-                                    this.preset_feedback = None;
-                                    cx.notify();
-                                })),
-                            cx,
-                        )
-                        .description(
-                            if self.preset_scope == PresetScope::AllPhotos {
-                                "选择预设将覆盖全部照片，并用于后续导入。画面调整仅修改当前照片，导出旋转对全部照片生效。"
-                            } else if self.selected_photo_id().is_some() {
-                                "选择预设仅修改当前照片。"
+                    .child(field(
+                        "预设应用范围",
+                        TabBar::new("preset-scope")
+                            .segmented()
+                            .w_full()
+                            .children([
+                                Tab::new().label("当前照片").flex_1(),
+                                Tab::new().label("全部照片").flex_1(),
+                            ])
+                            .selected_index(if self.preset_scope == PresetScope::AllPhotos {
+                                1
                             } else {
-                                "尚未导入照片，选择预设将设置新照片的默认配置。"
-                            },
-                        ),
-                    )
+                                0
+                            })
+                            .on_click(cx.listener(|this, index: &usize, _, cx| {
+                                this.preset_scope = if *index == 1 {
+                                    PresetScope::AllPhotos
+                                } else {
+                                    PresetScope::CurrentPhoto
+                                };
+                                this.preset_feedback = None;
+                                cx.notify();
+                            })),
+                        cx,
+                    ))
                     .child(
                         h_flex()
                             .w_full()
@@ -806,7 +811,7 @@ impl AppView {
                                     // GPUI 的 Button 角色已将 Enter/Space 转为点击，统一走 on_change。
                                     .header(AccordionHeader::new(
                                         AccordionTrigger::new("builtin-presets-toggle")
-                                            .aria_label("内置预设")
+                                            .aria_label("内置预设示例")
                                             .flex()
                                             .flex_row()
                                             .items_center()
@@ -823,7 +828,7 @@ impl AppView {
                                             .focus_visible(|this| {
                                                 this.border_color(cx.theme().ring)
                                             })
-                                            .child(muted_text("内置预设", cx))
+                                            .child(muted_text("内置预设示例", cx))
                                             .child(
                                                 Icon::new(if self.builtin_presets_collapsed {
                                                     IconName::ChevronRight
@@ -870,7 +875,7 @@ impl AppView {
                             .iter()
                             .any(|name| !self.builtin_preset_names.contains(name)),
                         |this| {
-                            this.child(preset_section_label("我的预设", cx)).child(
+                            this.child(preset_section_label("自定义预设", cx)).child(
                                 h_flex()
                                     .flex_wrap()
                                     .gap_1()

@@ -112,6 +112,20 @@ impl AppView {
             .when(kind == BackgroundKind::Gradient, |this| {
                 this.child(self.render_gradient_controls(cx))
             })
+            .child(
+                Switch::new("background-grain")
+                    .label("颗粒噪声")
+                    .checked(self.backend.params().background_grain)
+                    .on_change(cx.listener(|this, enabled: &bool, _, cx| {
+                        this.backend.params_mut().background_grain = *enabled;
+                        this.refresh_preview(cx);
+                        cx.notify();
+                    })),
+            )
+            .when(self.backend.params().background_grain, |this| {
+                this.child(self.controls.grain_strength.render("颗粒强度", false, cx))
+                    .child(description("仅作用于背景，照片与文字保持清晰。"))
+            })
     }
 
     pub(in crate::app) fn render_photo_border_section(

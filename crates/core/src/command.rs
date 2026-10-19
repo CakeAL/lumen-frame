@@ -825,6 +825,10 @@ pub(crate) fn validate_watermark(w: &WatermarkPreset) -> Result<()> {
         p.blur_sigma.is_finite() && (0.0..=1000.0).contains(&p.blur_sigma),
         "背景模糊参数无效"
     );
+    ensure!(
+        p.grain_strength.is_finite() && (0.0..=1.0).contains(&p.grain_strength),
+        "背景颗粒强度必须在 0 至 100% 之间"
+    );
     if let Some((a, b)) = p.aspect_ratio {
         ensure!(
             a.is_finite() && b.is_finite() && a > 0.0 && b > 0.0,

@@ -14,7 +14,7 @@ use gpui_kit::component::{
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
-    select::{Select, SelectState},
+    select::SelectState,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -841,6 +841,8 @@ impl AppView {
         let add_view = view.clone();
         let time_input = group.time_format.clone();
         let time_view = view.clone();
+        let direction = group.direction.clone();
+        let direction_view = view.clone();
         // 居中没有单一的相邻边框；只有贴边对齐时才显示文字与那一侧边框的空白。
         let show_padding = group.attachment_target.is_none()
             && matches!(value.align, TextAlign::Left | TextAlign::Right);
@@ -944,7 +946,35 @@ impl AppView {
                             .padding
                             .render("文字与图片边缘留白", !show_padding, cx),
                     )
-                    .child(field("方向", Select::new(&group.direction).w_full(), cx))
+                    .child(field(
+                        "方向",
+                        TabBar::new(("text-group-direction", group_id))
+                            .segmented()
+                            .w_full()
+                            .children(TEXT_DIRECTIONS.iter().map(|(_, direction)| {
+                                Tab::new().label(direction_label(*direction)).flex_1()
+                            }))
+                            .selected_index(
+                                TEXT_DIRECTIONS
+                                    .iter()
+                                    .position(|(_, direction)| *direction == value.direction)
+                                    .unwrap_or(0),
+                            )
+                            .on_click(move |index: &usize, window, cx| {
+                                direction_view.update(cx, |this, cx| {
+                                    direction.update(cx, |state, cx| {
+                                        state.set_selected_value(
+                                            &TEXT_DIRECTIONS[*index].1,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                    this.refresh_preview(cx);
+                                    cx.notify();
+                                });
+                            }),
+                        cx,
+                    ))
                     .child(group.border.render(group_id, view.clone(), cx))
                     .child(field(
                         "时间格式",
@@ -1056,6 +1086,8 @@ impl AppView {
             template.clone()
         };
         let remove_view = view.clone();
+        let align_view = view.clone();
+        let align = line.align.clone();
         let title = h_flex()
             .w_full()
             .min_w_0()
@@ -1115,7 +1147,35 @@ impl AppView {
                     .child(description("按照片高度计算，仅缩放 Logo 的可见内容。"))
             })
             .child(line.line_spacing.render("行距", false, cx))
-            .child(field("行对齐", Select::new(&line.align).w_full(), cx))
+            .child(field(
+                "行对齐",
+                TabBar::new(("text-line-align", id))
+                    .segmented()
+                    .w_full()
+                    .children(
+                        TEXT_ALIGNS
+                            .iter()
+                            .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                    )
+                    .selected_index(
+                        TEXT_ALIGNS
+                            .iter()
+                            .position(|(_, value)| {
+                                Some(value) == line.align.read(cx).selected_value()
+                            })
+                            .unwrap_or(1),
+                    )
+                    .on_click(move |index: &usize, window, cx| {
+                        align_view.update(cx, |this, cx| {
+                            align.update(cx, |state, cx| {
+                                state.set_selected_value(&TEXT_ALIGNS[*index].1, window, cx);
+                            });
+                            this.refresh_preview(cx);
+                            cx.notify();
+                        });
+                    }),
+                cx,
+            ))
     }
 
     pub(super) fn render_template_field_menu(
@@ -1322,7 +1382,12 @@ mod tests {
         use gpui_kit::test::TestWindowExt as _;
         cx.update(gpui_kit::init);
         let (root, cx) = cx.add_window_view(|window, cx| {
-            let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+            let app = cx.new(|cx| {
+                let mut app = AppView::new_with_settings_path(None, window, cx);
+                let line_id = app.text_groups[0].lines[0].id;
+                app.text_groups[0].expanded_line_ids = vec![line_id];
+                app
+            });
             let editor = cx.new(|cx| TextGroupWindow::new(0, "文字组".into(), app, cx));
             Root::new(editor, window, cx)
         });
@@ -1348,6 +1413,19 @@ mod tests {
                 .click(2_usize, cx)
         });
         cx.run_until_parked();
+        let line_id = app.read_with(cx, |app, _| app.text_groups[0].lines[0].id);
+        cx.update(|window, cx| {
+            window
+                .within(("text-group-direction", 0_u64))
+                .click(1_usize, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window
+                .within(("text-line-align", line_id))
+                .click(0_usize, cx);
+        });
+        cx.run_until_parked();
         cx.update(|window, cx| window.click(("text-border-enabled", 0_u64), cx));
         cx.run_until_parked();
         for key in ["text-border-top", "text-border-right", "text-border-bottom"] {
@@ -1358,6 +1436,11 @@ mod tests {
             let snapshot = app.current_watermark(cx);
             assert_eq!(snapshot.text_groups[0].position, Placement::Left);
             assert_eq!(snapshot.text_groups[0].align, TextAlign::Right);
+            assert_eq!(snapshot.text_groups[0].direction, TextDirection::Vertical);
+            assert_eq!(
+                snapshot.text_groups[0].text.text_params[0].align,
+                TextAlign::Left
+            );
             let border = &snapshot.text_groups[0].border;
             assert!(border.enabled());
             assert_eq!(border.color(), [192; 3]);
@@ -1374,6 +1457,14 @@ mod tests {
             );
             assert_eq!(app.build_text_groups(cx)[0].position, Placement::Left);
             assert_eq!(app.build_text_groups(cx)[0].align, TextAlign::Right);
+            assert_eq!(
+                app.build_text_groups(cx)[0].direction,
+                TextDirection::Vertical
+            );
+            assert_eq!(
+                app.build_text_groups(cx)[0].text.text_params[0].align,
+                TextAlign::Left
+            );
         });
     }
 

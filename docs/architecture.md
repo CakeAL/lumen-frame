@@ -123,6 +123,10 @@ JPEG 质量是全部照片共用的本机导出偏好，调整后立即保存到
 `crates/core/src/render/gradient.rs` 的 libvips 投影与 16 位查找表，渐变参数纳入背景图层缓存键。
 自动文字颜色以渐变中点为参考，深浅跨度大的背景可手动指定文字颜色。
 
+三种背景均可开启颗粒噪声：`background_grain` 默认关闭，`grain_strength` 保存 0–1 的强度。
+`render/grain.rs` 使用固定种子的单通道高斯噪声，按照片高度缩放后叠加到背景 RGB，保留 alpha；
+在照片、阴影与文字叠加前完成，预览和导出共用这一步。开关和强度只使背景图层缓存失效。
+
 `features::photo_palette::extract_with_theme` 是可复用的取色入口：libvips 将原图按 EXIF 摆正、
 缩小至长边 192 像素并转换为 sRGB，再由 `auto-palette` 提取代表色和面积占比。
 支持默认均衡取色及 Basic、Colorful、Vivid、Muted、Light、Dark 全部 Theme；没有符合某个
