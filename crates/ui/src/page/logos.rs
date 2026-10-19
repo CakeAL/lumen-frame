@@ -73,6 +73,28 @@ impl Render for LogoWindow {
 }
 
 impl AppView {
+    pub(in crate::app) fn begin_external_logo_import(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.logos.busy {
+            return false;
+        }
+        self.logos.busy = true;
+        cx.notify();
+        true
+    }
+
+    pub(in crate::app) fn end_external_logo_import(&mut self, cx: &mut Context<Self>) {
+        self.logos.busy = false;
+        cx.notify();
+    }
+    pub(in crate::app) fn synchronize_logos(
+        &mut self,
+        assets: Vec<LogoAsset>,
+        cx: &mut Context<Self>,
+    ) {
+        self.logos.assets = assets;
+        self.logos.thumbnails.clear();
+        self.load_logo_thumbnails(cx);
+    }
     pub(in crate::app) fn open_logo_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(handle) = self.logos.window.take() {
             // 当前窗口正在更新时，不能通过句柄嵌套更新它；直接激活即可。

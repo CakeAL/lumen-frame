@@ -4425,8 +4425,10 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "lumen-frame-core",
+ "rand 0.9.5",
  "rmcp",
  "schemars",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -4441,8 +4443,10 @@ dependencies = [
  "gpui-kit",
  "image",
  "lumen-frame-core",
+ "lumen-frame-mcp",
  "nom-exif",
  "regex",
+ "tokio",
 ]
 
 [[package]]

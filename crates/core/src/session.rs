@@ -13,6 +13,8 @@ use anyhow::{Context as _, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+/// 克隆仅用于冻结后台操作；提交回桌面前必须检查原会话版本。
+#[derive(Clone)]
 pub struct Session {
     workspace: PhotoWorkspace,
     current: WatermarkPreset,
@@ -94,6 +96,10 @@ impl Session {
     }
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+    /// 本机偏好由持久化服务保存，但它的修改也会使宿主中待提交的设置快照过期。
+    pub fn mark_settings_changed(&mut self) {
+        self.changed();
     }
     pub fn commit_groups(&mut self, groups: Vec<TextGroup>) {
         if self.current.text_groups != groups {

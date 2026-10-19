@@ -19,6 +19,10 @@ impl Default for StoragePaths {
     }
 }
 impl StoragePaths {
+    pub fn with_settings_file(mut self, path: Option<PathBuf>) -> Self {
+        self.settings = path;
+        self
+    }
     pub fn in_directory(root: impl AsRef<Path>) -> Self {
         Self {
             settings: Some(root.as_ref().join("settings.toml")),

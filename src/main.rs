@@ -115,18 +115,25 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     if options.mcp_stdio {
-        lumen_frame_core::initialize_native_text();
-        let storage = options
-            .mcp_storage
-            .map(lumen_frame_core::StoragePaths::in_directory)
-            .unwrap_or_default();
-        let session = lumen_frame_core::Session::from_storage(storage)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
-        return runtime.block_on(lumen_frame_mcp::serve_stdio(session));
+        if options.mcp_headless {
+            lumen_frame_core::initialize_native_text();
+            let storage = options
+                .mcp_storage
+                .map(lumen_frame_core::StoragePaths::in_directory)
+                .unwrap_or_default();
+            let session = lumen_frame_core::Session::from_storage(storage)?;
+            return runtime.block_on(lumen_frame_mcp::serve_stdio(session));
+        }
+        let endpoint = lumen_frame_mcp::ipc::DesktopEndpoint::from_storage(&Default::default())?;
+        return runtime.block_on(lumen_frame_mcp::serve_desktop_stdio(endpoint));
     }
+    let (commands, inbox) = lumen_frame_core::bridge::command_channel();
+    let endpoint = lumen_frame_mcp::ipc::DesktopEndpoint::from_storage(&Default::default())?;
+    let server = lumen_frame_mcp::ipc::DesktopServer::start(endpoint, commands)?;
     let platform = gpui_kit::platform::current_platform(false);
     lumen_frame_core::render::init_font_backend(platform.text_system());
     let app = gpui_kit::Application::with_platform(platform)
@@ -139,17 +146,32 @@ fn main() -> anyhow::Result<()> {
         // 组件内置文案（取色器、日历等）跟随应用语言。
         gpui_kit::component::set_locale("zh-CN");
 
-        let (main_window, _) = gpui_kit::open_window(
+        let (main_window, view) = gpui_kit::open_window(
             WindowOptions {
                 // 预设、工作区与参数面板都需要保留可用宽度。
                 window_min_size: Some(size(px(1180.), px(680.))),
                 ..TitleBar::window_options()
             },
             cx,
-            |window, cx| cx.new(|cx| AppView::new(window, cx)),
+            |window, cx| {
+                cx.new(|cx| {
+                    let mut view = AppView::new(window, cx);
+                    view.attach_command_inbox(inbox, window, cx);
+                    view
+                })
+            },
         )
         .expect("无法打开主窗口");
         close_auxiliary_windows_with_main(main_window, cx);
+        let view = view.downgrade();
+        let mut server = Some(server);
+        cx.on_window_closed(move |cx, closed| {
+            if closed == main_window.window_id() {
+                server.take();
+                let _ = view.update(cx, |view, _| view.disconnect_commands());
+            }
+        })
+        .detach();
     });
     Ok(())
 }

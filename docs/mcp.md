@@ -1,17 +1,24 @@
 # MCP 接入
 
 应用通过官方 Rust SDK `rmcp` 提供 MCP 工具。协议适配位于 `crates/mcp`，工具输入的
-JSON Schema 从 `core::Command` 自动生成。MCP 服务只使用 stdio，工作线程拥有独立的
-`Session`，不依赖界面，也不连接已打开的桌面工作区。
+JSON Schema 从 `core::Command` 自动生成。对外只提供 stdio；默认连接已打开的桌面工作区，
+AI 和界面共享同一个 `Session`，操作后同步控件、照片队列和预览。
 
-## 独立 stdio 会话
+## 桌面桥接（默认）
+
+先正常打开 Lumen Frame，再让 MCP 客户端启动：
 
 ```bash
-cargo run -- --mcp-stdio
+lumen-frame --mcp-stdio
 ```
 
-此模式不创建窗口；工作线程持有独立的 `Session`，从同一持久化服务载入本机偏好和 Logo。
-它不连接已打开的桌面工作区。客户端应直接启动构建好的可执行文件，例如：
+```text
+AI 客户端 ↔ stdio MCP 桥接进程 ↔ 本地 IPC ↔ GPUI 主线程 ↔ 当前 Session
+```
+
+桥接进程不创建照片队列或窗口。桌面关闭时，工具会返回可操作的连接错误；桌面重新打开后，
+后续请求可以重新连接。桥接进程不会自动重试已经发送的操作，因为断线不代表操作没有执行。
+客户端应直接启动构建好的可执行文件，例如：
 
 ```bash
 cargo build --release
@@ -34,13 +41,22 @@ macOS 应用包中对应的可执行路径是 `Lumen Frame.app/Contents/MacOS/lu
 应用包名称为准）。使用该入口仍会执行原有 libvips 模块定位。
 标准输出只用于 MCP 协议，日志写入标准错误。
 
-希望设置、预设和 Logo 完全独立时，增加存储目录：
+## 独立无窗口会话
+
+批量处理且不需要桌面联动时，显式添加 `--mcp-headless`。此时工作线程拥有独立 `Session`，
+在主线程初始化字体，并从同一持久化服务载入本机偏好和 Logo：
 
 ```bash
-cargo run -- --mcp-stdio --mcp-storage /tmp/lumen-mcp-demo
+lumen-frame --mcp-stdio --mcp-headless
 ```
 
-配置中的 `args` 也可追加 `"--mcp-storage", "/指定目录"`。此选项仅适用于独立 stdio 会话。
+希望设置、预设和 Logo 完全独立时，再增加存储目录：
+
+```bash
+cargo run -- --mcp-stdio --mcp-headless --mcp-storage /tmp/lumen-mcp-demo
+```
+
+配置中的 `args` 也可追加 `"--mcp-storage", "/指定目录"`。此选项仅适用于 `--mcp-headless`，避免把自定义目录误认为当前桌面。
 
 ## 工具调用
 
@@ -109,18 +125,25 @@ Logo、预览导出、HDR、Motion Photo、地图和更新操作。完整业务�
 
 ## 状态与调度
 
-- 每个 stdio 服务进程有独立的照片队列、选中项和水印配置。
-- MCP 请求经 `core::bridge` 的有界队列交给会话工作线程，按顺序执行。
-- `expected_revision` 检查会话版本，避免使用过期的照片或文字组下标。
-- 导出使用冻结配置，预览与导出复用相同的后端合成管线。
-- 设置、预设和输出文件的写入不是事务，取消不会撤回已完成的文件操作。
-- 未开始且客户端已断开的命令会跳过；已启动的媒体操作可能继续完成。
+- 桌面进程是唯一状态所有者；多个 stdio 桥可以连接同一桌面，命令经过有界队列串行调度。
+- macOS/Linux 使用 Unix Socket，Windows 使用本机命名管道；没有 HTTP/TCP 监听端口。
+- IPC 位于用户配置目录下的 `ipc` 子目录，以独占文件锁防止多桌面争用。Unix 目录权限为
+  `0700`，令牌文件为 `0600`；每次启动轮换令牌，Windows 管道拒绝远程客户端。
+- IPC 使用带长度的 JSON 帧，检查协议版本和令牌，单帧上限 16 MiB。
+- GPUI 主线程执行状态命令；媒体与文件操作在冻结快照上后台执行，不阻塞窗口。
+- 后台任务需要修改 Session 时，提交前再次检查版本；用户处理中途做的修改不会被旧快照覆盖。
+- 调用前提交文字编辑草稿；调用后同步对应控件和预览。`expected_revision` 防止过期下标修改。
+- 导出使用冻结配置，预览与导出复用相同的后端合成管线；桌面与 MCP 共用导出忙碌状态。
+- 设置、预设和输出文件的写入不是事务，取消/版本冲突不会撤回已经完成的文件操作。
+- 客户端断开后，未开始的命令可以跳过；已启动的媒体操作可能继续完成。
+- 无窗口模式完全独立，不连接桌面；`--mcp-storage` 可隔离其持久化文件。
 
 ## 验证
 
 ```bash
 cargo check --workspace --all-targets
-cargo test -p lumen-frame-mcp --test protocol
+cargo test -p lumen-frame-mcp
+cargo test -p lumen-frame-ui behavior::commands::tests --lib
 ```
 
-协议测试覆盖字节流传输上的真实握手、工具发现、参数转换、版本冲突与预览图片返回。
+验证覆盖 MCP 握手、工具发现、图像返回，以及 IPC 鉴权、重复实例、重连、桌面控件/预览同步和快照冲突。

@@ -71,6 +71,7 @@ impl AppView {
     }
 
     pub(in crate::app) fn persist_settings(&mut self) {
+        self.backend.mark_settings_changed();
         let settings = settings_store::AppSettings {
             appearance: self.appearance,
             light_theme: self.light_theme.as_ref().map(|name| name.to_string()),

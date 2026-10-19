@@ -1,4 +1,4 @@
-//! stdio 服务通过有界命令队列将请求交给独立会话工作线程。
+//! 宿主通过有界命令队列接收操作；桌面主线程和无窗口工作线程复用此边界。
 use crate::{Reply, Request};
 use anyhow::{Result, anyhow};
 use async_channel::{Receiver, Sender};
@@ -17,6 +17,10 @@ pub fn command_channel() -> (CommandClient, CommandInbox) {
     (CommandClient(sender), CommandInbox(receiver))
 }
 impl CommandClient {
+    /// 停止接收新命令，并唤醒等待入队的调用。
+    pub fn close(&self) {
+        self.0.close();
+    }
     pub async fn call(&self, request: Request) -> Result<Reply> {
         let (sender, receiver) = async_channel::bounded(1);
         self.0
@@ -33,6 +37,9 @@ impl CommandClient {
     }
 }
 impl CommandInbox {
+    pub async fn next(&self) -> Option<CommandCall> {
+        self.0.recv().await.ok()
+    }
     pub fn next_blocking(&self) -> Option<CommandCall> {
         self.0.recv_blocking().ok()
     }

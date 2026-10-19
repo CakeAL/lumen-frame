@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Default)]
 pub struct Options {
     pub mcp_stdio: bool,
+    pub mcp_headless: bool,
     pub mcp_storage: Option<PathBuf>,
     pub help: bool,
 }
@@ -15,6 +16,7 @@ impl Options {
         while let Some(argument) = arguments.next() {
             match argument.to_str() {
                 Some("--mcp-stdio") => options.mcp_stdio = true,
+                Some("--mcp-headless") => options.mcp_headless = true,
                 Some("--mcp-storage") => {
                     options.mcp_storage = Some(
                         arguments
@@ -31,14 +33,18 @@ impl Options {
             }
         }
         ensure!(
-            options.mcp_storage.is_none() || options.mcp_stdio,
-            "--mcp-storage 只用于独立 stdio 会话"
+            !options.mcp_headless || options.mcp_stdio,
+            "--mcp-headless 必须与 --mcp-stdio 一起使用"
+        );
+        ensure!(
+            options.mcp_storage.is_none() || options.mcp_headless,
+            "--mcp-storage 只用于 --mcp-stdio --mcp-headless 独立会话"
         );
         Ok(options)
     }
 }
 pub fn print_help() {
     println!(
-        "Lumen Frame\n\n  lumen-frame                         打开桌面应用\n  lumen-frame --mcp-stdio             不打开窗口，启动独立 stdio MCP 会话\n  lumen-frame --mcp-stdio --mcp-storage 目录\n                                      使用独立设置、预设和 Logo 存储目录"
+        "Lumen Frame\n\n  lumen-frame                         打开桌面应用，接收本地 MCP 操作\n  lumen-frame --mcp-stdio             桥接已打开的桌面窗口\n  lumen-frame --mcp-stdio --mcp-headless\n                                      启动独立的无窗口 MCP 会话\n  lumen-frame --mcp-stdio --mcp-headless --mcp-storage 目录\n                                      使用独立设置、预设和 Logo 存储目录"
     );
 }

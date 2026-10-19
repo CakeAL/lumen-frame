@@ -1,11 +1,12 @@
-//! stdio MCP 协议适配；独立会话不依赖桌面 UI。
+//! stdio MCP 协议与本地 IPC 适配；桌面状态经 core 命令队列访问。
+pub mod ipc;
 mod tools;
 mod transport;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use lumen_frame_core::{Command, bridge::CommandClient};
 use rmcp::{ErrorData, RoleServer, ServerHandler, model::*, service::RequestContext};
 use std::{path::PathBuf, sync::Arc};
-pub use transport::serve_stdio;
+pub use transport::{serve_desktop_stdio, serve_stdio};
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -24,7 +25,7 @@ impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("lumen-frame", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Lumen Frame 照片水印工具。通过 stdio 操作独立工作区，不连接桌面会话。先 get_state 获取 PhotoId 和 revision，修改时携带 expected_revision。下标只对应当前快照。文件路径属于运行服务的本机。")
+            .with_instructions("Lumen Frame 照片水印工具。默认通过 stdio 桥接已打开的桌面工作区，操作会同步到界面；显式 --mcp-headless 使用独立工作区。先 get_state 获取 PhotoId 和 revision，修改时携带 expected_revision，用户也可能同时操作界面。下标只对应当前快照。文件路径属于运行服务的本机。")
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
         self.tools.iter().find(|tool| tool.name == name).cloned()

@@ -8,7 +8,7 @@
 lumen-frame（src/main.rs：平台初始化、窗口生命周期、应用组装）
   ├── lumen-frame-ui（GPUI 页面、控件、任务调度、纹理）
   │     └── lumen-frame-core
-  ├── lumen-frame-mcp（协议、工具 schema、stdio 传输）
+  ├── lumen-frame-mcp（协议、工具 schema、stdio 与本地 IPC）
   │     └── lumen-frame-core
   └── lumen-frame-core（会话、命令、模型、渲染、文件与媒体操作）
 ```
@@ -233,6 +233,8 @@ cargo run -p lumen-frame-core --example commands -- /tmp/lumen-demo
 
 后端命令、宿主调度与未来 MCP 接入约定见 [core.md](core.md)。
 
-MCP 仅通过 stdio 提供独立会话，`core::bridge` 的有界命令队列将请求交给会话工作线程。
-它与桌面应用复用同一套后端业务逻辑，但队列和配置互相独立。启动选项由根包
-`src/options.rs` 解析，详细说明见 [mcp.md](mcp.md)。
+MCP 对外只提供 stdio，默认桥接已打开的桌面工作区。`crates/mcp/src/ipc.rs` 负责本地
+Unix Socket / Windows 命名管道、令牌校验和连接生命周期；`core::bridge` 只提供有界命令队列。
+`ui::behavior::commands` 在 GPUI 主线程处理状态操作，在后台运行冻结快照，提交前检查版本，
+并同步控件与预览。桥接进程不持有独立业务状态。`--mcp-headless` 才由工作线程持有独立 Session。
+主窗口关闭时停止 IPC 与接收任务；桌面重启后桥接进程可重新连接。具体配置见 [mcp.md](mcp.md)。

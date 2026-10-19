@@ -123,7 +123,7 @@ fn description(name: &str) -> &'static str {
         "import_photos" => {
             "导入本机照片或目录（递归），返回新增 PhotoId 与路径错误。原文件不修改。"
         }
-        "select_photo" => "切换独立 MCP 工作区中的当前照片。",
+        "select_photo" => "切换当前工作区中的照片，桌面模式同步更新窗口。",
         "remove_photo" => "从队列移除指定照片及其配置；不删除原文件。",
         "clear_photos" => "清空工作区队列与逐照片配置；不删除原文件。",
         "get_watermark" => "读取指定照片或当前照片的完整水印；自定义文本与本机环境另列。",

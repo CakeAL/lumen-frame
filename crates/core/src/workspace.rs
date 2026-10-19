@@ -68,7 +68,7 @@ impl QueuedPhoto {
 /// 照片队列及其选择策略。
 ///
 /// 此类型不处理文件筛选、缩略图解码或导出；这些都是调用方的工作流与展示职责。
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PhotoWorkspace {
     photos: Vec<QueuedPhoto>,
     selected: Option<PhotoId>,

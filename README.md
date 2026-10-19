@@ -63,7 +63,7 @@ macOS 安装包目前采用临时签名，首次打开如被系统拦截，可�
 
 ## MCP
 
-`cargo run -- --mcp-stdio` 启动无窗口的独立 MCP 会话，通过 stdio 提供照片水印和批量处理工具。启动方式和客户端配置见 [MCP 接入说明](docs/mcp.md)。
+正常打开应用后，`lumen-frame --mcp-stdio` 通过本地 IPC 桥接桌面，AI 操作会同步到当前窗口。添加 `--mcp-headless` 可使用独立的无窗口批量处理会话。启动方式和客户端配置见 [MCP 接入说明](docs/mcp.md)。
 
 ## 开发
 

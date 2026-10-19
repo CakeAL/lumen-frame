@@ -154,6 +154,8 @@ pub struct AppView {
     /// 由持久化层提供的配置路径，载入与保存始终使用同一个位置。
     settings_path: Option<PathBuf>,
     update_state: UpdateState,
+    /// 只接收命令；业务状态仍由 backend 唯一持有。窗口关闭时取消接收任务。
+    external_commands: Option<gpui_kit::Task<()>>,
 
     /// 控件订阅。持有它们本身就是目的：条目在，订阅才活着。
     _subscriptions: Vec<Subscription>,
@@ -238,7 +240,9 @@ impl AppView {
 
         let mut view = Self {
             page: AppPage::Watermark,
-            backend: crate::backend::Session::new(global_watermark),
+            backend: crate::backend::Session::new(global_watermark).with_storage(
+                crate::backend::StoragePaths::default().with_settings_file(settings_path.clone()),
+            ),
             queue_focus: cx.focus_handle(),
             queue_scroll: ScrollHandle::new(),
             thumbnails: HashMap::new(),
@@ -283,6 +287,7 @@ impl AppView {
             settings_feedback: None,
             settings_path,
             update_state: UpdateState::Idle,
+            external_commands: None,
             _subscriptions: subscriptions,
         };
         // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
@@ -1125,6 +1130,19 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.backend.replace_current(preset.clone());
+        self.rebuild_text_editors(preset.text_groups, window, cx);
+        self.sync_controls(window, cx);
+        self.refresh_preview(cx);
+    }
+
+    /// 只同步展示，不改写后端版本；外部命令已完成领域状态提交。
+    fn rebuild_text_editors(
+        &mut self,
+        text_groups: Vec<TextGroup>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let editor_windows = std::mem::take(&mut self.text_editor_windows);
         self.opening_text_editor_ids.clear();
         if !editor_windows.is_empty() {
@@ -1135,8 +1153,6 @@ impl AppView {
             });
         }
 
-        self.backend.replace_current(preset.clone());
-        let text_groups = preset.text_groups;
         let targets = text_groups
             .iter()
             .map(|group| group.attachment.as_ref().map(|a| a.target))
@@ -1163,9 +1179,6 @@ impl AppView {
                     .map(|group| group.id)
             });
         }
-
-        self.sync_controls(window, cx);
-        self.refresh_preview(cx);
     }
 
     /// 把所有存了值的控件拉到当前参数上。
