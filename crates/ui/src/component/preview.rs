@@ -4,12 +4,13 @@
 //! 请求一次，请求在实体里合并、防抖，再到后台线程重算。这样拖动滑块时不会每帧都启动
 //! 一次图层更新，也不会让已经过期的结果覆盖新结果。
 
-use std::{sync::Arc, time::Duration};
+use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, Size, StyledExt as _,
     button::{Button, ButtonCustomVariant, ButtonVariants as _},
     h_flex,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     spinner::Spinner,
     v_flex,
 };
@@ -17,13 +18,17 @@ use gpui_kit::prelude::*;
 #[cfg(test)]
 use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
-    AvailableSpace, Bounds, Context, ElementId, FontWeight, ObjectFit, Pixels, RenderImage,
-    SharedString, Task, canvas, div, point, px, size,
+    AvailableSpace, Bounds, Context, ElementId, EntityId, FontWeight, ObjectFit, Pixels,
+    RenderImage, SharedString, Task, Window, canvas, div, point, px, size,
 };
 
 use super::super::AppView;
 use super::field::{description, rgb_to_hsla};
 use crate::backend::render::text::TextGroupRegion;
+use crate::backend::{
+    watermark::{Placement, TextAlign},
+    workspace::PhotoId,
+};
 use crate::image::{LayeredPreview, PreviewJob, PreviewLayerCache};
 
 /// 参数连续变化时先攒一会儿再算。
@@ -36,6 +41,30 @@ const DEBOUNCE: Duration = Duration::from_millis(80);
 enum PreviewEditTarget {
     Text(u64),
     Palette,
+}
+
+#[derive(Clone)]
+struct DraggedPreviewItem {
+    owner: EntityId,
+    photo: PhotoId,
+    generation: u64,
+    target: PreviewEditTarget,
+    label: SharedString,
+}
+
+impl Render for DraggedPreviewItem {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_3()
+            .py_2()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .border_1()
+            .border_color(crate::theme::preview_edit_color(cx))
+            .shadow_md()
+            .child(self.label.clone())
+    }
 }
 
 /// 分层预览的状态。
@@ -245,11 +274,9 @@ impl AppView {
                 h_flex()
                     .flex_shrink_0()
                     .gap_2()
-                    .when(
-                        !self.preview.read(cx).text_regions.is_empty()
-                            || self.preview.read(cx).palette_region.is_some(),
-                        |this| this.child(description("点击预览中的文字组或色卡可编辑")),
-                    )
+                    .when(self.selected_photo_id().is_some(), |this| {
+                        this.child(description("点击编辑，拖动调整位置，右键添加"))
+                    })
                     .child(self.render_preview_status(cx))
                     .child(
                         Button::new("preview-exif")
@@ -365,6 +392,16 @@ impl AppView {
         }
         let image_size = image.size();
         let app = cx.entity().downgrade();
+        let owner = cx.entity_id();
+        let photo = self
+            .selected_photo_id()
+            .expect("可编辑预览必须属于当前照片");
+        let drop_app = app.clone();
+        let menu_app = app.clone();
+        let rotation = self.backend.params().rotation;
+        let fitted_bounds = Rc::new(Cell::new(None));
+        let drop_bounds = fitted_bounds.clone();
+        let menu_bounds = fitted_bounds.clone();
 
         div()
             .id("preview-bitmap")
@@ -382,6 +419,7 @@ impl AppView {
                 canvas(
                     move |bounds, window, cx| {
                         let fitted = ObjectFit::Contain.get_bounds(bounds, image_size);
+                        fitted_bounds.set(Some(fitted));
                         let mut elements = Vec::with_capacity(regions.len());
                         for (target, region) in regions {
                             let rect = preview_region_bounds(fitted, image_size, region);
@@ -395,13 +433,20 @@ impl AppView {
                                     ("preview-palette-card".into(), "编辑照片色卡…".into())
                                 }
                             };
-                            let primary = cx.theme().primary;
+                            let primary = crate::theme::preview_edit_color(cx);
+                            let dragged = DraggedPreviewItem {
+                                owner,
+                                photo,
+                                generation,
+                                target,
+                                label: label.clone().into(),
+                            };
                             let mut element = Button::new(id)
                                 .custom(
                                     ButtonCustomVariant::new(cx)
                                         .foreground(primary)
-                                        .hover(primary.opacity(0.1))
-                                        .active(primary.opacity(0.18)),
+                                        .hover(primary.opacity(0.22))
+                                        .active(primary.opacity(0.3)),
                                 )
                                 .p_0()
                                 .w(rect.size.width)
@@ -443,6 +488,14 @@ impl AppView {
                                     })
                                     .ok();
                                 })
+                                .map(|mut button| {
+                                    button
+                                        .interactivity()
+                                        .on_drag(dragged, |dragged, _, _, cx| {
+                                            cx.new(|_| dragged.clone())
+                                        });
+                                    button
+                                })
                                 .into_any_element();
                             element.prepaint_as_root(
                                 rect.origin,
@@ -463,7 +516,134 @@ impl AppView {
                 .absolute()
                 .inset_0(),
             )
+            .on_drop(move |dragged: &DraggedPreviewItem, window, cx| {
+                let Some(fitted) = drop_bounds.get() else {
+                    return;
+                };
+                let placement = drop_placement(fitted, window.mouse_position(), rotation);
+                let _ = drop_app.update(cx, |this, cx| {
+                    if dragged.owner == cx.entity_id()
+                        && this.selected_photo_id() == Some(dragged.photo)
+                        && this.preview.read(cx).generation == dragged.generation
+                    {
+                        this.move_preview_item(dragged.target, placement, cx);
+                        cx.stop_propagation();
+                    }
+                });
+            })
+            .context_menu(move |menu, window, cx| {
+                let (Some(fitted), Some(view)) = (menu_bounds.get(), menu_app.upgrade()) else {
+                    return menu;
+                };
+                let placement = drop_placement(fitted, window.mouse_position(), rotation);
+                let has_palette = view.read(cx).backend.params().palette_card.enabled();
+                let text_app = view.downgrade();
+                let palette_app = view.downgrade();
+                let delete_app = view.downgrade();
+                let hovered_group = view
+                    .read(cx)
+                    .preview
+                    .read(cx)
+                    .text_regions
+                    .iter()
+                    .rev()
+                    .find(|(_, region)| {
+                        preview_region_bounds(fitted, image_size, *region)
+                            .contains(&window.mouse_position())
+                    })
+                    .map(|(id, _)| *id);
+                menu.item(
+                    PopupMenuItem::new("添加文字组…").on_click(move |_, window, cx| {
+                        let _ = text_app.update(cx, |this, cx| {
+                            if this.selected_photo_id() != Some(photo)
+                                || this.preview.read(cx).generation != generation
+                            {
+                                return;
+                            }
+                            this.add_text_group(window, cx);
+                            if let Some(group) = this.text_groups.last() {
+                                this.move_preview_item(
+                                    PreviewEditTarget::Text(group.id),
+                                    placement,
+                                    cx,
+                                );
+                            }
+                        });
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new(if has_palette {
+                        "编辑色卡…"
+                    } else {
+                        "添加色卡…"
+                    })
+                    .on_click(move |_, window, cx| {
+                        let _ = palette_app.update(cx, |this, cx| {
+                            if this.selected_photo_id() != Some(photo)
+                                || this.preview.read(cx).generation != generation
+                            {
+                                return;
+                            }
+                            if !this.backend.params().palette_card.enabled() {
+                                this.backend.params_mut().palette_card.set_enabled(true);
+                                this.move_preview_item(PreviewEditTarget::Palette, placement, cx);
+                            }
+                            this.open_palette_card(window, cx);
+                        });
+                    }),
+                )
+                .when_some(hovered_group, |menu, id| {
+                    menu.separator()
+                        .item(PopupMenuItem::new("删除文字组").on_click(move |_, _, cx| {
+                            let _ = delete_app.update(cx, |this, cx| {
+                                if this.selected_photo_id() == Some(photo)
+                                    && this.preview.read(cx).generation == generation
+                                {
+                                    this.remove_text_group(id, cx);
+                                }
+                            });
+                        }))
+                })
+            })
     }
+
+    fn move_preview_item(
+        &mut self,
+        target: PreviewEditTarget,
+        (position, align): (Placement, TextAlign),
+        cx: &mut Context<Self>,
+    ) {
+        match target {
+            PreviewEditTarget::Text(id) => {
+                let Some(group) = self.text_groups.iter_mut().find(|group| group.id == id) else {
+                    return;
+                };
+                group.attachment_target = None;
+                group.position = position;
+                group.align = align;
+            }
+            PreviewEditTarget::Palette => {
+                let card = &mut self.backend.params_mut().palette_card;
+                card.set_attachment(None);
+                card.set_position(position);
+                card.set_align(align);
+            }
+        }
+        self.refresh_preview(cx);
+        cx.notify();
+    }
+}
+
+fn drop_placement(
+    fitted: Bounds<Pixels>,
+    point: gpui_kit::Point<Pixels>,
+    rotation: crate::backend::rotation::Rotation,
+) -> (Placement, TextAlign) {
+    Placement::from_normalized_point(
+        f64::from((point.x - fitted.origin.x).as_f32() / fitted.size.width.as_f32().max(1.0)),
+        f64::from((point.y - fitted.origin.y).as_f32() / fitted.size.height.as_f32().max(1.0)),
+        rotation,
+    )
 }
 
 /// 位图坐标 → 当前窗口坐标；每帧重新映射，窗口缩放与 rem 变化不会留下旧的缓存。
@@ -598,6 +778,126 @@ mod tests {
         group.text.text_params.truncate(1);
         group.text.text_params[0].size = 0.04;
         group
+    }
+
+    #[gpui_kit::test]
+    fn dragging_preview_group_updates_backend_without_opening_editor(cx: &mut TestAppContext) {
+        let (view, cx) = workspace(cx, vec![text_group(Placement::Bottom)]);
+        settle(&view, cx);
+        let id = view.read_with(cx, |view, _| view.text_groups[0].id);
+        cx.update(|window, cx| {
+            let image_size = view
+                .read(cx)
+                .preview
+                .read(cx)
+                .state
+                .layers()
+                .unwrap()
+                .size();
+            let fitted =
+                ObjectFit::Contain.get_bounds(window.find("preview-bitmap").bounds(), image_size);
+            let from = window.find(("preview-text-group", id)).bounds().center();
+            let to = point(
+                fitted.left() + fitted.size.width * 0.8,
+                fitted.top() + fitted.size.height * 0.05,
+            );
+            window.drag(from, to, cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            let group = &view.backend.current().text_groups[0];
+            assert_eq!(
+                (group.position, group.align),
+                (Placement::Up, TextAlign::Right)
+            );
+            assert_eq!(view.text_editor_window_count(), 0);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn preview_context_menu_adds_group_or_palette_at_clicked_position(cx: &mut TestAppContext) {
+        let (view, cx) = workspace(cx, vec![]);
+        settle(&view, cx);
+        let press = cx.update(|window, cx| {
+            let image_size = view
+                .read(cx)
+                .preview
+                .read(cx)
+                .state
+                .layers()
+                .unwrap()
+                .size();
+            let fitted =
+                ObjectFit::Contain.get_bounds(window.find("preview-bitmap").bounds(), image_size);
+            point(
+                fitted.left() + fitted.size.width * 0.5,
+                fitted.top() + fitted.size.height * 0.05,
+            )
+        });
+        cx.simulate_mouse_down(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.simulate_mouse_up(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
+        cx.run_until_parked();
+        let editor = view.read_with(cx, |view, _| {
+            assert_eq!(view.backend.current().text_groups.len(), 1);
+            assert_eq!(
+                view.backend.current().text_groups[0].position,
+                Placement::Up
+            );
+            *view.text_editor_windows.values().next().unwrap()
+        });
+        cx.update(|_, cx| {
+            editor
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap()
+        });
+        settle(&view, cx);
+        cx.simulate_mouse_down(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.simulate_mouse_up(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.press("down", cx);
+            window.press("down", cx);
+            window.press("enter", cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            let card = &view.backend.params().palette_card;
+            assert!(card.enabled());
+            assert_eq!(card.position(), Placement::Up);
+            assert!(view.palette_editor_window().is_some());
+        });
+    }
+
+    #[gpui_kit::test]
+    fn preview_context_menu_deletes_only_the_targeted_group(cx: &mut TestAppContext) {
+        let group = text_group(Placement::Center);
+        let (view, cx) = workspace(cx, vec![group.clone(), group]);
+        settle(&view, cx);
+        let (first, last) = view.read_with(cx, |view, _| {
+            (view.text_groups[0].id, view.text_groups[1].id)
+        });
+        let press =
+            cx.update(|window, _| window.find(("preview-text-group", last)).bounds().center());
+        cx.simulate_mouse_down(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.simulate_mouse_up(press, gpui_kit::MouseButton::Right, Default::default());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            // 最后一项是删除；菜单跳过分隔线。
+            window.press("up", cx);
+            window.press("enter", cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.text_groups.len(), 1);
+            assert_eq!(view.text_groups[0].id, first);
+            assert_eq!(view.backend.current().text_groups.len(), 1);
+            assert_eq!(view.text_editor_window_count(), 0);
+        });
     }
 
     #[gpui_kit::test]

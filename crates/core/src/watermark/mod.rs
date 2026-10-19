@@ -38,6 +38,48 @@ pub enum Placement {
     Left,
 }
 
+impl Placement {
+    /// 按成片中的归一化落点选择放置边和对齐；先还原最终导出旋转。
+    pub fn from_normalized_point(x: f64, y: f64, rotation: Rotation) -> (Self, TextAlign) {
+        let (x, y) = if x.is_finite() && y.is_finite() {
+            (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0))
+        } else {
+            (0.5, 0.5)
+        };
+        let (x, y) = match rotation {
+            Rotation::None => (x, y),
+            Rotation::Clockwise90 => (y, 1.0 - x),
+            Rotation::HalfTurn => (1.0 - x, 1.0 - y),
+            Rotation::CounterClockwise90 => (1.0 - y, x),
+        };
+        if (1.0 / 3.0..=2.0 / 3.0).contains(&x) && (1.0 / 3.0..=2.0 / 3.0).contains(&y) {
+            return (Self::Center, TextAlign::Center);
+        }
+        let (_, position) = [
+            (y, Self::Up),
+            (1.0 - y, Self::Bottom),
+            (x, Self::Left),
+            (1.0 - x, Self::Right),
+        ]
+        .into_iter()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .unwrap();
+        let along = if matches!(position, Self::Up | Self::Bottom) {
+            x
+        } else {
+            y
+        };
+        let align = if along < 1.0 / 3.0 {
+            TextAlign::Left
+        } else if along > 2.0 / 3.0 {
+            TextAlign::Right
+        } else {
+            TextAlign::Center
+        };
+        (position, align)
+    }
+}
+
 /// 水印生成参数。
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -265,7 +307,58 @@ impl TextParams {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_FONT, TextParams};
+    use super::{DEFAULT_FONT, Placement, Rotation, TextAlign, TextParams};
+
+    #[test]
+    fn preview_drop_selects_edge_alignment_and_undoes_output_rotation() {
+        for (x, y, rotation, expected) in [
+            (
+                0.5,
+                0.5,
+                Rotation::None,
+                (Placement::Center, TextAlign::Center),
+            ),
+            (0.8, 0.05, Rotation::None, (Placement::Up, TextAlign::Right)),
+            (
+                0.1,
+                0.95,
+                Rotation::None,
+                (Placement::Bottom, TextAlign::Left),
+            ),
+            (
+                0.05,
+                0.5,
+                Rotation::None,
+                (Placement::Left, TextAlign::Center),
+            ),
+            (
+                0.95,
+                0.8,
+                Rotation::None,
+                (Placement::Right, TextAlign::Right),
+            ),
+            (
+                0.5,
+                0.05,
+                Rotation::Clockwise90,
+                (Placement::Left, TextAlign::Center),
+            ),
+            (
+                0.5,
+                0.05,
+                Rotation::HalfTurn,
+                (Placement::Bottom, TextAlign::Center),
+            ),
+            (
+                0.5,
+                0.05,
+                Rotation::CounterClockwise90,
+                (Placement::Right, TextAlign::Center),
+            ),
+        ] {
+            assert_eq!(Placement::from_normalized_point(x, y, rotation), expected);
+        }
+    }
 
     #[test]
     fn text_font_uses_global_default_only_when_unspecified() {

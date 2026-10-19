@@ -10,6 +10,12 @@ use gpui_kit::component::{ThemeConfig, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, SharedString};
 use std::rc::Rc;
 
+/// 预览编辑区域的交互颜色，独立于可能为黑白色的主题 primary。
+pub(crate) fn preview_edit_color(cx: &App) -> gpui_kit::Hsla {
+    use gpui_kit::component::ActiveTheme as _;
+    cx.theme().blue
+}
+
 /// 编译期内嵌的主题定义。
 const BUNDLED_THEMES: &[&str] = &[
     include_str!("../../../assets/themes/adventure.json"),
