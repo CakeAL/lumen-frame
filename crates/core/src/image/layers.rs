@@ -7,7 +7,7 @@ use crate::{
         Photo,
         layers::{LayerRenderer, PositionedLayer},
     },
-    render::{canvas, image as photo_image, text::TextGroupRegion},
+    render::{canvas, image as photo_image, photo_contrast::PhotoContrast, text::TextGroupRegion},
     rotation::Rotation,
     watermark::{BackgroundGradient, PaletteCard, PhotoAnchor, PhotoPlacement, TextGroup},
 };
@@ -142,6 +142,7 @@ pub struct PreviewLayerCache {
     shadow: Option<CachedShadow>,
     border: Option<(BorderKey, ShadowImage)>,
     texts: Vec<(TextKey, Option<TextLayer>)>,
+    contrast: Option<PhotoContrast>,
     palette: Option<((PaletteCard, String), Option<TextLayer>)>,
     rotated: Vec<(Arc<RasterImage>, Rotation, Arc<RasterImage>)>,
     #[cfg(feature = "test-support")]
@@ -366,7 +367,18 @@ impl LayerRenderer for CachedRenderer<'_> {
             .unwrap_or((0, 0, w, h)))
     }
 
-    fn text(&mut self, group: &TextGroup) -> Result<Option<TextLayer>> {
+    fn text(
+        &mut self,
+        group: &TextGroup,
+        auto_color: Option<[u8; 3]>,
+    ) -> Result<Option<TextLayer>> {
+        let resolved;
+        let group = if let Some(color) = auto_color {
+            resolved = group.with_auto_color(color);
+            &resolved
+        } else {
+            group
+        };
         let key = TextKey {
             // 相邻排版只改变位置，不应重绘内容纹理。
             group: TextGroup {
@@ -400,7 +412,12 @@ impl LayerRenderer for CachedRenderer<'_> {
                 String::new()
             },
         };
-        let image = if let Some((_, image)) = self.cache.texts.iter().find(|(old, _)| *old == key) {
+        let image = if let Some((_, image)) = self
+            .next_texts
+            .iter()
+            .chain(&self.cache.texts)
+            .find(|(old, _)| *old == key)
+        {
             image.clone()
         } else {
             #[cfg(feature = "test-support")]
@@ -424,8 +441,17 @@ impl LayerRenderer for CachedRenderer<'_> {
                 })
                 .transpose()?
         };
-        self.next_texts.push((key, image.clone()));
+        if !self.next_texts.iter().any(|(old, _)| *old == key) {
+            self.next_texts.push((key, image.clone()));
+        }
         Ok(image)
+    }
+
+    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>> {
+        if self.cache.contrast.is_none() {
+            self.cache.contrast = Some(PhotoContrast::new(self.base()?)?);
+        }
+        Ok(self.cache.contrast.as_ref().unwrap().text_color(rect))
     }
 
     fn palette(&mut self) -> Result<Option<TextLayer>> {

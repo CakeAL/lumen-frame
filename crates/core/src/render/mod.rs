@@ -5,5 +5,6 @@ mod gradient;
 mod grain;
 pub mod image;
 pub(crate) mod palette_card;
+pub(crate) mod photo_contrast;
 pub mod text;
 mod text_border;

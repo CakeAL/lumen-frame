@@ -236,6 +236,15 @@ impl Text {
 }
 
 impl TextGroup {
+    /// 自动颜色属于渲染结果，不能写回配置；行与富文本的手动颜色保持优先。
+    pub(crate) fn with_auto_color(&self, color: [u8; 3]) -> Self {
+        let mut resolved = self.clone();
+        for line in &mut resolved.text.text_params {
+            line.color.get_or_insert(color);
+        }
+        resolved
+    }
+
     pub(crate) fn uses_custom_text(&self) -> bool {
         self.text
             .template
@@ -357,7 +366,7 @@ impl TextGroup {
 #[derive(Debug, Clone)]
 enum Segment {
     /// 需要插入相机 logo
-    Logo,
+    Logo(TextStyle),
     CustomLogo(String),
     /// 已经用 EXIF 渲染好的普通文本
     Text(String, TextStyle),
@@ -390,7 +399,7 @@ fn parse_template(
             ));
         }
         segments.push(if m.as_str() == "{Logo}" {
-            Segment::Logo
+            Segment::Logo(style_at(&params.spans, m.start()))
         } else {
             Segment::CustomLogo(m.as_str()[1..m.as_str().len() - 1].to_owned())
         });
@@ -495,7 +504,7 @@ pub fn render_styled_template_preview(
             Segment::Text(value, style) => {
                 append_styled_text(&mut text, &mut spans, &value, &style)
             }
-            Segment::Logo => text.push_str("[品牌 Logo]"),
+            Segment::Logo(_) => text.push_str("[品牌 Logo]"),
             Segment::CustomLogo(name) => text.push_str(&format!("[{name}]")),
         }
     }
@@ -657,7 +666,7 @@ fn prepare_line(
                 }
                 append_styled_text(&mut text, &mut spans, value, style);
             }
-            Segment::Logo | Segment::CustomLogo(_) => {
+            Segment::Logo(_) | Segment::CustomLogo(_) => {
                 let make = exif.make.as_deref().unwrap_or_default();
                 let logo = match segment {
                     Segment::CustomLogo(name) => watermark
@@ -667,7 +676,10 @@ fn prepare_line(
                         .map(|bytes| load_custom_logo(bytes, custom_h))
                         .transpose()?
                         .flatten(),
-                    _ => find_make_logo(make, watermark),
+                    Segment::Logo(style) => {
+                        find_make_logo(make, style.color.or(params.color), watermark)
+                    }
+                    _ => unreachable!(),
                 };
                 if let Some(logo) = logo {
                     line.text(&text, &spans, params, size, watermark)?;
@@ -691,7 +703,7 @@ fn prepare_line(
                     line.top = line.top.min(-h);
                     line.x += w as f32;
                     leading = false;
-                } else if matches!(segment, Segment::Logo) {
+                } else if matches!(segment, Segment::Logo(_)) {
                     let brand = clean_make_display(make);
                     if !brand.is_empty() {
                         leading = false;
@@ -1321,13 +1333,16 @@ fn format_fnumber(value: &Rational) -> String {
 /// 标志在编译期就嵌进二进制，而不是运行期按相对路径读 `static/`：打包成 `.app` 之后
 /// 进程的工作目录不再是项目根目录，相对路径会静默失效，表现就是导出时 `{Logo}` 凭空
 /// 消失 —— 而且只在别人的机器上出现。
-fn find_make_logo(make: &str, watermark_params: &WatermarkParams) -> Option<VipsImage> {
+fn find_make_logo(
+    make: &str,
+    color: Option<[u8; 3]>,
+    watermark_params: &WatermarkParams,
+) -> Option<VipsImage> {
     let make = make.replace("CORPORATION", "").trim().to_lowercase();
-    let suffix = if auto_color(watermark_params) {
-        'b'
-    } else {
-        'w'
-    };
+    let black = color
+        .map(|[r, g, b]| is_dark_color(r, g, b))
+        .unwrap_or_else(|| auto_color(watermark_params));
+    let suffix = if black { 'b' } else { 'w' };
 
     // 亮色背景配黑色标志，深色背景配白色标志。
     let svg = match (make.as_str(), suffix) {

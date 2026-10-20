@@ -18,6 +18,107 @@ use lumen_frame_core::{
 
 const PHOTO: &str = "./test_images/DSC_4587.jpg";
 
+#[test]
+fn inside_text_and_logo_follow_local_photo_contrast_after_moving() {
+    use lumen_frame_core::{
+        image::{PreviewJob, layers::PreviewLayerCache, render_preview},
+        watermark::{GroupAttachment, PhotoAnchor, PhotoPlacement},
+    };
+
+    let path =
+        std::env::temp_dir().join(format!("lumen-photo-contrast-{}.png", std::process::id()));
+    image::RgbImage::from_fn(640, 320, |x, _| {
+        image::Rgb(if x < 320 { [35; 3] } else { [240; 3] })
+    })
+    .save(&path)
+    .unwrap();
+    let mut request = PreviewJob {
+        path: path.clone(),
+        exif: Some(ExifInfo {
+            make: Some("NIKON CORPORATION".into()),
+            ..Default::default()
+        }),
+        params: WatermarkParams {
+            solid_background: true,
+            background: [255; 3],
+            border_ratio: (0.0, 0.0, 0.0, 0.0),
+            border_radius: 0.0,
+            shadow_size: 0.0,
+            ..Default::default()
+        },
+        text_groups: vec![TextGroup {
+            text: Text {
+                template: vec!["{Logo} X".into()],
+                text_params: vec![TextParams {
+                    size: 0.06,
+                    ..Default::default()
+                }],
+            },
+            photo_placement: Some(PhotoPlacement::new(PhotoAnchor::BottomLeft)),
+            ..Default::default()
+        }],
+        max_edge: 640,
+    };
+    // 依附于照片内文字组的子组也按实际照片区域取色。
+    request.text_groups.push(TextGroup {
+        attachment: Some(GroupAttachment {
+            target: 0,
+            side: Placement::Up,
+            gap: 0.01,
+        }),
+        photo_placement: None,
+        ..request.text_groups[0].clone()
+    });
+    let mut cache = PreviewLayerCache::default();
+    for (anchor, manual, expected) in [
+        (PhotoAnchor::BottomLeft, None, 255),
+        (PhotoAnchor::BottomRight, None, 0),
+        (PhotoAnchor::BottomRight, Some([255; 3]), 255),
+    ] {
+        request.text_groups[0].photo_placement = Some(PhotoPlacement::new(anchor));
+        for group in &mut request.text_groups {
+            group.text.text_params[0].color = manual;
+        }
+        let scene = cache.render(&request).unwrap();
+        for layer in scene
+            .layers()
+            .iter()
+            .filter(|layer| layer.group_ix().is_some())
+        {
+            let pixels = layer.image().pixels().as_chunks::<4>().0;
+            let visible: Vec<_> = pixels.iter().filter(|p| p[3] >= 240).collect();
+            assert!(visible.len() > 40, "Logo 和文字都应有可见像素");
+            assert!(
+                visible
+                    .iter()
+                    .all(|p| p[..3].iter().all(|c| c.abs_diff(expected) <= 20)),
+                "{anchor:?}: Logo 与文字应使用相同的自动颜色，并遵守手动颜色，异常像素 {:?}",
+                visible
+                    .iter()
+                    .filter(|p| p[..3] != [expected; 3])
+                    .take(8)
+                    .collect::<Vec<_>>()
+            );
+        }
+        let full = render_preview(&request).unwrap();
+        assert_eq!((full.width() as i32, full.height() as i32), scene.size());
+        let max_error = scene
+            .image()
+            .pixels()
+            .iter()
+            .zip(full.pixels())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(max_error <= 2, "分层预览与完整合成应一致：{max_error}");
+    }
+    assert_eq!(
+        request.text_groups[0].text.text_params[0].color,
+        Some([255; 3])
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
 fn job(params: WatermarkParams) -> PreviewJob {
     let path = PathBuf::from(PHOTO);
     PreviewJob {

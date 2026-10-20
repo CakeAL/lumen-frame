@@ -11,7 +11,7 @@ use crate::{
         ExifInfo, ensure_vips, load_base_image,
         vips::{VipsImage, from_owned_ptr, image_metadata_string, image_op},
     },
-    render::{canvas, image, text::TextGroupRegion},
+    render::{canvas, image, photo_contrast::PhotoContrast, text::TextGroupRegion},
     watermark::{TextGroup, WatermarkParams},
 };
 
@@ -113,6 +113,7 @@ impl Photo {
             exif,
             params,
             rounded: None,
+            contrast: None,
         };
         let scene =
             Self::prepare_watermark_layers(&mut renderer, (img_w, img_h), params, text_groups)?;
@@ -275,6 +276,7 @@ struct VipsLayerRenderer<'a> {
     exif: Option<&'a ExifInfo>,
     params: &'a WatermarkParams,
     rounded: Option<VipsImage>,
+    contrast: Option<PhotoContrast>,
 }
 
 impl layers::LayerRenderer for VipsLayerRenderer<'_> {
@@ -299,8 +301,26 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
         )
     }
 
-    fn text(&mut self, group: &TextGroup) -> Result<Option<VipsImage>> {
+    fn text(
+        &mut self,
+        group: &TextGroup,
+        auto_color: Option<[u8; 3]>,
+    ) -> Result<Option<VipsImage>> {
+        let resolved;
+        let group = if let Some(color) = auto_color {
+            resolved = group.with_auto_color(color);
+            &resolved
+        } else {
+            group
+        };
         Ok(group.render_for_photo(self.exif, self.img.height() as i32, self.params)?)
+    }
+
+    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>> {
+        if self.contrast.is_none() {
+            self.contrast = Some(PhotoContrast::new(self.img)?);
+        }
+        Ok(self.contrast.as_ref().unwrap().text_color(rect))
     }
 
     fn palette(&mut self) -> Result<Option<VipsImage>> {

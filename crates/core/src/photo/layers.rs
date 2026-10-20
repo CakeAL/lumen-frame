@@ -29,7 +29,12 @@ pub(crate) trait LayerRenderer {
     fn dimensions(image: &Self::Image) -> (i32, i32);
     fn content_bounds(image: &Self::Image) -> Result<(i32, i32, i32, i32)>;
     fn crop(image: Self::Image, rect: (i32, i32, i32, i32)) -> Result<Self::Image>;
-    fn text(&mut self, group: &TextGroup) -> Result<Option<Self::Image>>;
+    fn text(
+        &mut self,
+        group: &TextGroup,
+        auto_color: Option<[u8; 3]>,
+    ) -> Result<Option<Self::Image>>;
+    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>>;
     fn palette(&mut self) -> Result<Option<Self::Image>>;
     fn background(&mut self, size: (i32, i32)) -> Result<Self::Image>;
     fn photo(&mut self) -> Result<Self::Image>;
@@ -77,7 +82,7 @@ pub(crate) fn prepare<R: LayerRenderer>(
     let mut content_bounds = vec![None; placements.len()];
     let has_attachments = placements.iter().any(|group| group.attachment.is_some());
     for (group_ix, group) in groups.iter().enumerate() {
-        if let Some(image) = renderer.text(group)? {
+        if let Some(image) = renderer.text(group, None)? {
             let (w, h) = R::dimensions(&image);
             dimensions[group_ix] = Some((w, h));
             content_bounds[group_ix] = Some(if has_attachments {
@@ -288,6 +293,27 @@ pub(crate) fn prepare<R: LayerRenderer>(
         origin.0 += x;
         origin.1 += y;
         if placements[root].photo_placement.is_some() {
+            if let Some(group) = groups.get(group_ix)
+                && group
+                    .text
+                    .text_params
+                    .iter()
+                    .any(|line| line.color.is_none())
+            {
+                // 定位后才能取得真正覆盖的照片区域；自动颜色只用于本次渲染。
+                let (x, y, w, h) = R::content_bounds(&image)?;
+                let color = renderer.photo_text_color((
+                    origin.0 - img_x + x,
+                    origin.1 - img_y + y,
+                    w,
+                    h,
+                ))?;
+                if color.is_some()
+                    && let Some(resolved) = renderer.text(group, color)?
+                {
+                    image = resolved;
+                }
+            }
             // 超长内容及其依附项也只能覆盖照片，不溢出到外侧边框。
             let (w, h) = R::dimensions(&image);
             let (left, top) = (origin.0.max(img_x), origin.1.max(img_y));

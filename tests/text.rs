@@ -34,6 +34,70 @@ fn test_render_exif_template() {
 }
 
 #[test]
+fn camera_logo_honors_line_and_token_colors_without_recoloring_custom_logos() {
+    use lumen_frame_core::{
+        media::{ensure_vips, image_write_to_memory},
+        watermark::{TextSpan, TextStyle},
+    };
+    ensure_vips();
+    let exif = ExifInfo {
+        make: Some("NIKON CORPORATION".into()),
+        ..Default::default()
+    };
+    let mut params = WatermarkParams {
+        solid_background: true,
+        background: [255; 3],
+        ..Default::default()
+    };
+    params.custom_logos.insert("测试logo".into(), std::sync::Arc::new(
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#e02050"/></svg>"##.to_vec(),
+    ));
+    for (template, spans, expected) in [
+        ("{Logo}", vec![], [255; 3]),
+        (
+            "{Logo}",
+            vec![TextSpan {
+                start: 0,
+                end: 6,
+                style: TextStyle {
+                    color: Some([0; 3]),
+                    ..Default::default()
+                },
+            }],
+            [0; 3],
+        ),
+        ("{测试logo}", vec![], [224, 32, 80]),
+    ] {
+        let image = Text {
+            template: vec![template.into()],
+            text_params: vec![TextParams {
+                color: Some([255; 3]),
+                spans,
+                ..Default::default()
+            }],
+        }
+        .render_text(&exif, 1000, &params, "")
+        .unwrap()
+        .unwrap();
+        let pixels = image_write_to_memory(&image).unwrap();
+        let visible: Vec<_> = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[3] >= 240)
+            .collect();
+        assert!(!visible.is_empty());
+        assert!(
+            visible.iter().all(|p| p[..3]
+                .iter()
+                .zip(expected)
+                .all(|(c, expected)| c.abs_diff(expected) <= 20)),
+            "{template} 的颜色应尊重其来源"
+        );
+    }
+}
+
+#[test]
 fn line_borders_frame_values_without_enclosing_units() {
     use lumen_frame_core::{media::image_write_to_memory, watermark::TextBorder};
     let mut border = TextBorder::default();
