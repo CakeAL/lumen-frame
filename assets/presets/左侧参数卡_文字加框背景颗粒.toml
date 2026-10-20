@@ -1,0 +1,436 @@
+name = "左侧参数卡_文字加框背景颗粒"
+
+[params]
+background = [
+    255,
+    255,
+    255,
+]
+background_grain = true
+blur_sigma = 60.0
+border_equal = false
+border_radius = 0.018
+border_ratio = [
+    0.05,
+    0.05,
+    0.1,
+    0.05,
+]
+grain_strength = 0.2
+position = "Right"
+rotation = "None"
+shadow_color = [
+    0,
+    0,
+    0,
+]
+shadow_density = 0.8
+shadow_size = 0.025
+solid_background = false
+
+[params.gradient_palette]
+theme = "Default"
+
+[params.palette_card]
+align = "Right"
+direction = "Horizontal"
+enabled = false
+gap = 0.01
+label_color = [
+    64,
+    64,
+    64,
+]
+label_size = 0.01
+length = 0.35
+padding = 0.01
+position = "Bottom"
+proportional = false
+radius = 0.006
+selected = [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+]
+shape = "Circle"
+show_hex = false
+show_ratio = false
+size = 0.03
+theme = "Default"
+width = 0.05
+
+[params.photo_border]
+color = [
+    255,
+    255,
+    255,
+]
+enabled = false
+width = 0.005
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["F"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.025999999046325682
+size = 0.025999999046325682
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    230,
+    235,
+    238,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.06
+min_width = 0.11
+radius = 0.01
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0019999998807907105
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.attachment]
+gap = 0.065
+side = "Right"
+target = 0
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["{光圈}"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.04
+size = 0.04
+underline = false
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.attachment]
+gap = 0.065
+side = "Bottom"
+target = 0
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["MM"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.025999999046325682
+size = 0.025999999046325682
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    230,
+    235,
+    238,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.06
+min_width = 0.11
+radius = 0.01
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0019999998807907105
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.attachment]
+gap = 0.0925
+side = "Bottom"
+target = 1
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["{实际焦距}"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.04
+size = 0.04
+underline = false
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.attachment]
+gap = 0.065
+side = "Bottom"
+target = 2
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["S"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.025999999046325682
+size = 0.025999999046325682
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    230,
+    235,
+    238,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.06
+min_width = 0.11
+radius = 0.01
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0019999998807907105
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.attachment]
+gap = 0.0890000057220459
+side = "Bottom"
+target = 3
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["{快门}"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    255,
+    255,
+    255,
+]
+italic = false
+line_spacing = 1.0
+logo_size = 0.04
+size = 0.04
+underline = false
+
+[[text_groups]]
+align = "Left"
+direction = "Horizontal"
+padding = 0.22
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = ["{Logo}"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+italic = false
+line_spacing = 1.0
+logo_size = 0.075
+size = 0.065
+underline = false

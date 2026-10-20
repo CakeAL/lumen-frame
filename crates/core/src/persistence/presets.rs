@@ -42,12 +42,28 @@ const BUILTIN_PRESETS: &[(&str, &str)] = &[
         include_str!("../../../../assets/presets/纯色背景_文字在下.toml"),
     ),
     (
-        "右侧参数卡",
-        include_str!("../../../../assets/presets/右侧参数卡.toml"),
+        "百分比色卡&自定义尼康logo",
+        include_str!("../../../../assets/presets/百分比色卡&自定义尼康logo.toml"),
     ),
     (
-        "左侧标签相框",
-        include_str!("../../../../assets/presets/左侧标签相框.toml"),
+        "色卡",
+        include_str!("../../../../assets/presets/色卡.toml"),
+    ),
+    (
+        "文字在图片内部",
+        include_str!("../../../../assets/presets/文字在图片内部.toml"),
+    ),
+    (
+        "右侧参数卡_文字加框",
+        include_str!("../../../../assets/presets/右侧参数卡_文字加框.toml"),
+    ),
+    (
+        "左侧参数卡_文字加框背景颗粒",
+        include_str!("../../../../assets/presets/左侧参数卡_文字加框背景颗粒.toml"),
+    ),
+    (
+        "colorwalk_背景色卡",
+        include_str!("../../../../assets/presets/colorwalk_背景色卡.toml"),
     ),
 ];
 

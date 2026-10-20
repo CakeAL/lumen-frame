@@ -1,0 +1,169 @@
+name = "文字在图片内部"
+
+[params]
+background = [
+    0,
+    0,
+    0,
+]
+background_grain = false
+blur_sigma = 15.0
+border_equal = false
+border_radius = 0.0
+border_ratio = [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+]
+grain_strength = 0.2
+position = "Center"
+rotation = "None"
+shadow_color = [
+    0,
+    0,
+    0,
+]
+shadow_density = 0.0
+shadow_size = 0.0
+solid_background = true
+
+[params.gradient_palette]
+theme = "Default"
+
+[params.palette_card]
+align = "Right"
+direction = "Horizontal"
+enabled = false
+gap = 0.01
+label_color = [
+    64,
+    64,
+    64,
+]
+label_size = 0.01
+length = 0.35
+padding = 0.01
+position = "Bottom"
+proportional = false
+radius = 0.006
+selected = [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+]
+shape = "Circle"
+show_hex = false
+show_ratio = false
+size = 0.03
+theme = "Default"
+width = 0.05
+
+[params.photo_border]
+color = [
+    255,
+    255,
+    255,
+]
+enabled = false
+width = 0.005
+
+[[text_groups]]
+align = "Right"
+direction = "Horizontal"
+padding = 0.03
+position = "Left"
+time_format = "%Y/%m/%d"
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.photo_placement]
+anchor = "BottomLeft"
+inset = 0.02
+
+[text_groups.text]
+template = ["{Logo} {型号}"]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = true
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.03
+size = 0.03
+underline = false
+
+[[text_groups]]
+align = "Right"
+direction = "Horizontal"
+padding = 0.03
+position = "Right"
+time_format = "%Y/%m/%d"
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.photo_placement]
+anchor = "BottomRight"
+inset = 0.02
+
+[text_groups.text]
+template = [
+    "{拍摄日期} {区} {自定义文本}",
+    "{等效焦距}mm f/{光圈} {快门}s ISO{ISO}",
+]
+
+[[text_groups.text.text_params]]
+align = "Right"
+bold = false
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.02200000047683716
+size = 0.02200000047683716
+underline = false
+
+[[text_groups.text.text_params]]
+align = "Right"
+bold = false
+color = [
+    214,
+    211,
+    209,
+]
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.02200000047683716
+size = 0.02200000047683716
+underline = false

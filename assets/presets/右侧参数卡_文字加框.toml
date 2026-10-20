@@ -1,0 +1,323 @@
+name = "右侧参数卡_文字加框"
+
+[params]
+background = [
+    255,
+    255,
+    255,
+]
+background_grain = false
+blur_sigma = 15.0
+border_equal = false
+border_radius = 0.0
+border_ratio = [
+    0.03,
+    0.03,
+    0.02,
+    0.055,
+]
+grain_strength = 0.2
+position = "Center"
+rotation = "None"
+shadow_color = [
+    0,
+    0,
+    0,
+]
+shadow_density = 0.0
+shadow_size = 0.0
+solid_background = true
+
+[params.gradient_palette]
+theme = "Light"
+
+[params.palette_card]
+align = "Right"
+direction = "Horizontal"
+enabled = false
+gap = 0.01
+label_color = [
+    64,
+    64,
+    64,
+]
+label_size = 0.01
+length = 0.35
+padding = 0.01
+position = "Bottom"
+proportional = false
+radius = 0.006
+selected = [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+]
+shape = "Circle"
+show_hex = false
+show_ratio = false
+size = 0.03
+theme = "Default"
+width = 0.05
+
+[params.photo_border]
+color = [
+    255,
+    255,
+    255,
+]
+enabled = false
+width = 0.005
+
+[[text_groups]]
+align = "Center"
+direction = "Horizontal"
+padding = 0.0
+position = "Right"
+time_format = "%Y/%m/%d"
+
+[text_groups.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
+
+[text_groups.text]
+template = [
+    "{实际焦距}",
+    "mm",
+    "{光圈}",
+    "f",
+    "{快门}",
+    "s",
+    "{ISO}",
+    "ISO",
+    "{Logo}",
+]
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    38,
+    38,
+    38,
+]
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.025
+size = 0.025
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    190,
+    195,
+    198,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.055
+min_width = 0.14
+radius = 0.008999999761581421
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0015000000596046448
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    140,
+    140,
+    140,
+]
+italic = false
+line_spacing = 2.0
+logo_size = 0.02
+size = 0.02
+underline = false
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    38,
+    38,
+    38,
+]
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.025
+size = 0.025
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    190,
+    195,
+    198,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.055
+min_width = 0.14
+radius = 0.008999999761581421
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0015000000596046448
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    140,
+    140,
+    140,
+]
+italic = false
+line_spacing = 2.0
+logo_size = 0.02
+size = 0.02
+underline = false
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    38,
+    38,
+    38,
+]
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.025
+size = 0.025
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    190,
+    195,
+    198,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.055
+min_width = 0.14
+radius = 0.008999999761581421
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0015000000596046448
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    140,
+    140,
+    140,
+]
+italic = false
+line_spacing = 2.0
+logo_size = 0.02
+size = 0.02
+underline = false
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    38,
+    38,
+    38,
+]
+italic = false
+line_spacing = 1.2999999523162842
+logo_size = 0.025
+size = 0.025
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    190,
+    195,
+    198,
+]
+enabled = true
+inset = 0.0030000001192092896
+min_height = 0.055
+min_width = 0.14
+radius = 0.008999999761581421
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0015000000596046448
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+color = [
+    140,
+    140,
+    140,
+]
+italic = false
+line_spacing = 2.0
+logo_size = 0.02
+size = 0.02
+underline = false
+
+[[text_groups.text.text_params]]
+align = "Center"
+bold = false
+italic = false
+line_spacing = 2.0
+logo_size = 0.06
+size = 0.04
+underline = false
+
+[text_groups.text.text_params.border]
+color = [
+    192,
+    192,
+    192,
+]
+enabled = false
+inset = 0.004000000059604645
+radius = 0.0030000001192092896
+sides = [
+    true,
+    true,
+    true,
+    true,
+]
+width = 0.0007999999821186065
