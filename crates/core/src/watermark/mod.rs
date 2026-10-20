@@ -272,6 +272,9 @@ pub struct TextParams {
     /// 模板内局部样式；空列表沿用旧版整行样式。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spans: Vec<TextSpan>,
+    /// 只包围本行可见内容，单位或说明可放在另一条未加边框的文字行。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<TextBorder>,
 }
 
 impl Default for TextParams {
@@ -287,6 +290,7 @@ impl Default for TextParams {
             bold: false,
             align: TextAlign::default(),
             spans: Vec::new(),
+            border: None,
         }
     }
 }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Placement;
 
-/// 文字组的独立边框，尺寸均以照片高度为基准。四边顺序为上、右、下、左。
+/// 文字行或整组的独立边框，尺寸均以照片高度为基准。四边顺序为上、右、下、左。
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -13,6 +13,11 @@ pub struct TextBorder {
     width: f64,
     radius: f64,
     inset: f64,
+    /// 外框最小尺寸，0 表示随内容；内容过长时仍自动扩展，避免裁字。
+    #[serde(skip_serializing_if = "is_zero")]
+    min_width: f64,
+    #[serde(skip_serializing_if = "is_zero")]
+    min_height: f64,
 }
 
 impl Default for TextBorder {
@@ -24,6 +29,8 @@ impl Default for TextBorder {
             width: 0.0008,
             radius: 0.003,
             inset: 0.004,
+            min_width: 0.0,
+            min_height: 0.0,
         }
     }
 }
@@ -79,6 +86,22 @@ impl TextBorder {
         self.inset = finite_ratio(inset, 0.0, 0.05, 0.004);
     }
 
+    pub fn min_width(&self) -> f64 {
+        finite_ratio(self.min_width, 0.0, 1.0, 0.0)
+    }
+
+    pub fn set_min_width(&mut self, width: f64) {
+        self.min_width = finite_ratio(width, 0.0, 1.0, 0.0);
+    }
+
+    pub fn min_height(&self) -> f64 {
+        finite_ratio(self.min_height, 0.0, 1.0, 0.0)
+    }
+
+    pub fn set_min_height(&mut self, height: f64) {
+        self.min_height = finite_ratio(height, 0.0, 1.0, 0.0);
+    }
+
     pub(crate) fn visible(&self) -> bool {
         self.enabled && self.sides.iter().any(|enabled| *enabled)
     }
@@ -92,6 +115,10 @@ impl TextBorder {
             Placement::Center => None,
         }
     }
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 fn finite_ratio(value: f64, min: f64, max: f64, fallback: f64) -> f64 {

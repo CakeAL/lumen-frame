@@ -14,8 +14,8 @@ use crate::{
         vips::{VipsImage, from_owned_ptr, image_op},
     },
     watermark::{
-        DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
-        TextSpan, TextStyle, WatermarkParams, rich_text::style_at,
+        DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextBorder, TextDirection, TextGroup,
+        TextParams, TextSpan, TextStyle, WatermarkParams, rich_text::style_at,
     },
 };
 
@@ -161,7 +161,17 @@ impl Text {
                 }
             }
             for row in rows {
-                prepared.push(prepare_line(&row, params, img_h, exif, watermark_params)?);
+                let line = prepare_line(&row, params, img_h, exif, watermark_params)?;
+                prepared.push(
+                    if let Some(border) = &params.border
+                        && border.visible()
+                        && line.width > 0
+                    {
+                        frame_line(line, border, img_h)?
+                    } else {
+                        line
+                    },
+                );
             }
         }
         let width = prepared.iter().map(|line| line.width).max().unwrap_or(0);
@@ -171,7 +181,14 @@ impl Text {
         // 为紧凑行的显式行间距预留空间，压缩字体行框后不能把行距一起截掉。
         let total_h: usize = prepared
             .iter()
-            .map(|line| line.height + if line.compact { line.gap } else { 0 })
+            .map(|line| {
+                line.height
+                    + if line.compact || line.framed {
+                        line.gap
+                    } else {
+                        0
+                    }
+            })
             .sum();
 
         let mut canvas = vec![0u8; width as usize * total_h * 4];
@@ -195,7 +212,12 @@ impl Text {
                 canvas[row_start + visible_h * width as usize * 4..row_end].fill(0);
                 y_off += (visible_h + gap) as i32;
             } else {
-                y_off += line.height as i32;
+                let gap = if line.framed && i + 1 < prepared.len() {
+                    line.gap
+                } else {
+                    0
+                };
+                y_off += (line.height + gap) as i32;
             }
         }
         let total_h = y_off as usize;
@@ -504,6 +526,7 @@ struct PreparedLine {
     height: usize,
     align: TextAlign,
     compact: bool,
+    framed: bool,
     gap: usize,
 }
 
@@ -696,7 +719,42 @@ fn prepare_line(
             .max(1) as usize,
         align: params.align,
         compact,
+        framed: false,
         gap: (size * (params.line_spacing as f32 - 1.0).max(0.0)).round() as usize,
+    })
+}
+
+/// 行边框包住可见文字，不把字体行框和行距也装进框内。行距留在框外。
+fn frame_line(line: PreparedLine, border: &TextBorder, img_h: i32) -> Result<PreparedLine> {
+    let mut pixels = vec![0u8; line.width as usize * line.height * 4];
+    render_line_into(&mut pixels, line.width, line.height as i32, 0, &line)?;
+    let Some((left, top, right, bottom)) = alpha_bounds(&pixels, line.width as usize) else {
+        // 没有解析出内容的行不产生空框。
+        return Ok(line);
+    };
+    let (w, h) = (right - left, bottom - top);
+    let mut ink = Vec::with_capacity(w * h * 4);
+    for row in top..bottom {
+        let start = (row * line.width as usize + left) * 4;
+        ink.extend_from_slice(&pixels[start..start + w * 4]);
+    }
+    let image = VipsImage::from_memory(
+        ink,
+        w as u32,
+        h as u32,
+        4,
+        VipsBandFormat::VIPS_FORMAT_UCHAR,
+    )?;
+    let image = set_rgba_srgb(&image, w as i32, h as i32)?;
+    let image = super::text_border::apply(image, border, img_h)?;
+    Ok(PreparedLine {
+        width: image.width() as i32,
+        height: image.height() as usize,
+        items: vec![LineItem::Logo { image, x: 0, y: 0 }],
+        align: line.align,
+        compact: false,
+        framed: true,
+        gap: line.gap,
     })
 }
 

@@ -1,4 +1,4 @@
-//! 在已完成文字方向变换的位图外绘制边框，之后再添加用于组对齐的透明留白。
+//! 为文字行或整组位图绘制边框；最小尺寸只增加留白，不缩放内容。
 
 use crate::{
     media::{
@@ -26,9 +26,14 @@ pub(super) fn apply(image: VipsImage, border: &TextBorder, photo_height: i32) ->
     .map(|side| border.side(side));
     // 只为启用的边预留描边和内边距，单边分隔线不能撑开另外三个方向。
     let offsets = [up, right_side, down, left_side].map(|enabled| if enabled { inset } else { 0 });
-    let [offset_top, offset_right, offset_bottom, offset_left] = offsets;
-    let w = image.width() as i32 + offset_left + offset_right;
-    let h = image.height() as i32 + offset_top + offset_bottom;
+    let [mut offset_top, offset_right, offset_bottom, mut offset_left] = offsets;
+    let natural_w = image.width() as i32 + offset_left + offset_right;
+    let natural_h = image.height() as i32 + offset_top + offset_bottom;
+    let w = natural_w.max((border.min_width() * scale).round() as i32);
+    let h = natural_h.max((border.min_height() * scale).round() as i32);
+    // 最小宽高只增加留白；描边仍沿外框绘制，内容在框内居中，不能拉伸字形。
+    offset_left += (w - natural_w) / 2;
+    offset_top += (h - natural_h) / 2;
     let left = if left_side { stroke / 2.0 } else { 0.0 };
     let top = if up { stroke / 2.0 } else { 0.0 };
     let right = w as f64 - if right_side { stroke / 2.0 } else { 0.0 };

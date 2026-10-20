@@ -107,6 +107,10 @@ fn preset_round_trips_through_a_file() {
     original.text_groups[0].border.set_radius(0.006);
     original.text_groups[0].border.set_inset(0.008);
     original.text_groups[0].border.set_color([160, 165, 170]);
+    original.text_groups[0].border.set_min_width(0.1);
+    original.text_groups[0].border.set_min_height(0.05);
+    original.text_groups[0].text.text_params[0].border =
+        Some(original.text_groups[0].border.clone());
     original.text_groups[0]
         .border
         .set_side(Placement::Up, false);
@@ -339,9 +343,11 @@ fn bundled_presets_load_from_assets() {
         .map(|(name, _)| name.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(presets.len(), 5);
+    assert_eq!(presets.len(), 7);
     assert!(names.contains(&"基础样式"));
     assert!(names.contains(&"纯色背景_文字在下"));
+    assert!(names.contains(&"右侧参数卡"));
+    assert!(names.contains(&"左侧标签相框"));
     assert!(
         presets
             .iter()
@@ -350,6 +356,8 @@ fn bundled_presets_load_from_assets() {
     assert!(
         presets
             .iter()
+            // 新示例继承用户字体；已有预设允许保留显式的字体选择。
+            .filter(|(name, _)| ["右侧参数卡", "左侧标签相框"].contains(&name.as_str()))
             .flat_map(|(_, preset)| &preset.text_groups)
             .all(|group| {
                 group

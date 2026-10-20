@@ -34,6 +34,81 @@ fn test_render_exif_template() {
 }
 
 #[test]
+fn line_borders_frame_values_without_enclosing_units() {
+    use lumen_frame_core::{media::image_write_to_memory, watermark::TextBorder};
+    let mut border = TextBorder::default();
+    border.set_enabled(true);
+    border.set_width(0.002);
+    border.set_color([0, 120, 220]);
+    border.set_min_width(0.12);
+    border.set_min_height(0.045);
+    let style = TextParams {
+        size: 0.02,
+        color: Some([0; 3]),
+        border: Some(border),
+        ..Default::default()
+    };
+    let params = WatermarkParams::default();
+    for (value, unit) in [("16", "mm"), ("2.8", "f"), ("1/100", "s"), ("250", "ISO")] {
+        let mut text = Text {
+            template: vec![value.into()],
+            text_params: vec![style.clone()],
+        };
+        let framed = text
+            .render_text(&ExifInfo::default(), 1000, &params, "")
+            .unwrap()
+            .unwrap();
+        assert_eq!((framed.width(), framed.height()), (120, 45));
+        text.template.push(unit.into());
+        text.text_params.push(TextParams {
+            size: 0.014,
+            color: Some([100; 3]),
+            ..Default::default()
+        });
+        let labelled = text
+            .render_text(&ExifInfo::default(), 1000, &params, "")
+            .unwrap()
+            .unwrap();
+        assert_eq!(labelled.width(), 120);
+        assert!(labelled.height() > 45);
+        let pixels = image_write_to_memory(&labelled).unwrap();
+        let mut frame_pixels = 0;
+        let mut unit_pixels = 0;
+        for (ix, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
+            let y = ix / 120;
+            if pixel[0..3] == [0, 120, 220] && pixel[3] > 0 {
+                frame_pixels += 1;
+                assert!(y < 45, "边框不应包住下方的单位");
+            }
+            if pixel[0..3] == [100; 3] && pixel[3] > 0 {
+                unit_pixels += 1;
+                assert!(y > 45, "单位应在外框下方");
+            }
+        }
+        assert!(frame_pixels > 0 && unit_pixels > 0);
+    }
+    let empty = Text {
+        template: vec!["{型号}".into()],
+        text_params: vec![style.clone()],
+    };
+    assert!(
+        empty
+            .render_text(&ExifInfo::default(), 1000, &params, "")
+            .unwrap()
+            .is_none()
+    );
+    let long = Text {
+        template: vec!["1/100000000000000".into()],
+        text_params: vec![style],
+    };
+    let long = long
+        .render_text(&ExifInfo::default(), 1000, &params, "")
+        .unwrap()
+        .unwrap();
+    assert!(long.width() > 120, "长文字应撑开最小宽度，不能裁字");
+}
+
+#[test]
 fn text_group_border_keeps_each_side_independent_after_rotation() {
     use lumen_frame_core::media::image_write_to_memory;
     let params = WatermarkParams::default();

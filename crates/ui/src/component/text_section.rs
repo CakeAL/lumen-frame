@@ -156,6 +156,7 @@ pub(in crate::app) struct TextLine {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub border: TextBorderControls,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -223,6 +224,8 @@ impl TextLine {
             cx,
         );
         let color = ColorField::new(params.color.unwrap_or([255, 255, 255]), window, cx);
+        let border =
+            TextBorderControls::new(&params.border.clone().unwrap_or_default(), window, cx);
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(
@@ -278,6 +281,7 @@ impl TextLine {
             bold: params.bold,
             italic: params.italic,
             underline: params.underline,
+            border,
             _subscriptions: subscriptions,
         }
     }
@@ -292,6 +296,7 @@ impl TextLine {
             .unwrap_or_default()
             .to_string();
         TextParams {
+            border: self.border.to_optional_border(cx),
             spans: self.rich.spans.clone(),
             font: if selected_font == INHERIT_FONT_LABEL {
                 String::new()
@@ -1139,7 +1144,7 @@ impl AppView {
 
         item.open(open)
             .title(title)
-            .child(self.render_rich_composer(line, view, cx))
+            .child(self.render_rich_composer(line, view.clone(), cx))
             .child(resolved)
             .child(line.size.render("字号", false, cx))
             .when(has_logo, |this| {
@@ -1176,6 +1181,7 @@ impl AppView {
                     }),
                 cx,
             ))
+            .child(line.border.render_line(id, view, cx))
     }
 
     pub(super) fn render_template_field_menu(
@@ -1426,6 +1432,16 @@ mod tests {
                 .click(0_usize, cx);
         });
         cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.click(
+                (
+                    gpui_kit::ElementId::from(("text-line-border", line_id)),
+                    "text-border-enabled",
+                ),
+                cx,
+            );
+        });
+        cx.run_until_parked();
         cx.update(|window, cx| window.click(("text-border-enabled", 0_u64), cx));
         cx.run_until_parked();
         for key in ["text-border-top", "text-border-right", "text-border-bottom"] {
@@ -1442,6 +1458,18 @@ mod tests {
                 TextAlign::Left
             );
             let border = &snapshot.text_groups[0].border;
+            assert!(
+                snapshot.text_groups[0].text.text_params[0]
+                    .border
+                    .as_ref()
+                    .unwrap()
+                    .enabled()
+            );
+            assert!(
+                snapshot.text_groups[0].text.text_params[1].border.is_none(),
+                "{:?}",
+                snapshot.text_groups[0].text.text_params[1].border
+            );
             assert!(border.enabled());
             assert_eq!(border.color(), [192; 3]);
             assert!(border.side(Placement::Left));
@@ -1454,6 +1482,10 @@ mod tests {
             assert_eq!(
                 app.build_text_groups(cx)[0].border,
                 snapshot.text_groups[0].border
+            );
+            assert_eq!(
+                app.build_text_groups(cx)[0].text.text_params[0].border,
+                snapshot.text_groups[0].text.text_params[0].border
             );
             assert_eq!(app.build_text_groups(cx)[0].position, Placement::Left);
             assert_eq!(app.build_text_groups(cx)[0].align, TextAlign::Right);

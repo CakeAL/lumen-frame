@@ -41,6 +41,14 @@ const BUILTIN_PRESETS: &[(&str, &str)] = &[
         "纯色背景_文字在下",
         include_str!("../../../../assets/presets/纯色背景_文字在下.toml"),
     ),
+    (
+        "右侧参数卡",
+        include_str!("../../../../assets/presets/右侧参数卡.toml"),
+    ),
+    (
+        "左侧标签相框",
+        include_str!("../../../../assets/presets/左侧标签相框.toml"),
+    ),
 ];
 
 pub fn builtin() -> Result<Vec<(String, WatermarkPreset)>> {
