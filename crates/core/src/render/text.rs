@@ -295,7 +295,11 @@ impl TextGroup {
             image
         };
         let image = super::text_border::apply(image, &self.border, img_h)?;
-        let padding = (img_h as f64 * self.padding.max(0.0)).round() as i32;
+        let padding = if self.photo_placement.is_some() {
+            0
+        } else {
+            (img_h as f64 * self.padding.max(0.0)).round() as i32
+        };
         if padding == 0 || !matches!(self.align, TextAlign::Left | TextAlign::Right) {
             return Ok(Some(image));
         }
@@ -997,7 +1001,7 @@ fn load_custom_logo(bytes: &[u8], height: f64) -> Result<Option<VipsImage>> {
 }
 
 /// RGBA 的半开可见边界；全透明素材不占用排版位置。
-fn alpha_bounds(pixels: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+pub(crate) fn alpha_bounds(pixels: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
     let (mut left, mut top, mut right, mut bottom) = (width, usize::MAX, 0, 0);
     for (ix, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
         if pixel[3] != 0 {

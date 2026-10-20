@@ -79,6 +79,7 @@ async fn test_generate_watermark() {
             direction: TextDirection::Vertical,
             align: TextAlign::Center,
             padding: 0.03,
+            photo_placement: None,
             time_format: "%Y/%m/%d".to_owned(),
             attachment: None,
             border: Default::default(),

@@ -4,7 +4,9 @@ use anyhow::Result;
 
 use crate::{
     render::{canvas, image},
-    watermark::{GroupAttachment, Placement, TextAlign, TextGroup, WatermarkParams},
+    watermark::{
+        GroupAttachment, PhotoPlacement, Placement, TextAlign, TextGroup, WatermarkParams,
+    },
 };
 
 pub(crate) struct PositionedLayer<I> {
@@ -26,6 +28,7 @@ pub(crate) trait LayerRenderer {
 
     fn dimensions(image: &Self::Image) -> (i32, i32);
     fn content_bounds(image: &Self::Image) -> Result<(i32, i32, i32, i32)>;
+    fn crop(image: Self::Image, rect: (i32, i32, i32, i32)) -> Result<Self::Image>;
     fn text(&mut self, group: &TextGroup) -> Result<Option<Self::Image>>;
     fn palette(&mut self) -> Result<Option<Self::Image>>;
     fn background(&mut self, size: (i32, i32)) -> Result<Self::Image>;
@@ -40,6 +43,7 @@ struct LayoutPlacement {
     position: Placement,
     align: TextAlign,
     attachment: Option<GroupAttachment>,
+    photo_placement: Option<PhotoPlacement>,
 }
 
 pub(crate) fn prepare<R: LayerRenderer>(
@@ -55,10 +59,12 @@ pub(crate) fn prepare<R: LayerRenderer>(
             position: group.position,
             align: group.align,
             attachment: group.attachment.clone().filter(|a| a.target < groups.len()),
+            photo_placement: group.photo_placement.clone(),
         })
         .collect::<Vec<_>>();
     let card = &params.palette_card;
     placements.push(LayoutPlacement {
+        photo_placement: None,
         position: card.position(),
         align: card.align(),
         attachment: card
@@ -129,6 +135,9 @@ pub(crate) fn prepare<R: LayerRenderer>(
         let Some((left, top, right, bottom)) = bounds else {
             continue;
         };
+        if placements[root].photo_placement.is_some() {
+            continue;
+        }
         let side = match placements[root].position {
             Placement::Up => Some((0, bottom - top)),
             Placement::Right => Some((1, right - left)),
@@ -153,7 +162,9 @@ pub(crate) fn prepare<R: LayerRenderer>(
         margin.include_text_thickness(side, value);
     }
     // 色卡所在的相邻树整体可能超出照片，按根组对齐方向扩展，保留首尾内容。
-    if let Some((root, _, _)) = origins[palette_ix] {
+    if let Some((root, _, _)) = origins[palette_ix]
+        && placements[root].photo_placement.is_none()
+    {
         let (left, top, right, bottom) = bounds[root].unwrap();
         let placement = &placements[root];
         let mut fit = |before, after, extent: i32, available: i32, align| {
@@ -233,6 +244,14 @@ pub(crate) fn prepare<R: LayerRenderer>(
         };
         let group = &placements[root];
         let (text_w, text_h) = (right - left, bottom - top);
+        if let Some(inside) = &group.photo_placement {
+            let inset = (inside.inset() * img_h as f64).round() as i32;
+            let (x, y) = inside
+                .anchor()
+                .origin((img_w, img_h), (text_w, text_h), inset);
+            cluster_origins[root] = (img_x + x - left, img_y + y - top);
+            continue;
+        }
         let aligned_x = match group.align {
             TextAlign::Left => img_x,
             TextAlign::Center => img_x + (img_w - text_w) / 2,
@@ -259,18 +278,41 @@ pub(crate) fn prepare<R: LayerRenderer>(
         cluster_origins[root] = (x - left, y - top);
     }
     let mut palette_layer_ix = None;
-    for (group_ix, image) in texts {
+    for (group_ix, mut image) in texts {
         let (root, x, y) = origins[group_ix].unwrap();
         let mut origin = cluster_origins[root];
         if group_ix == palette_ix {
-            palette_layer_ix = Some(layers.len());
             origin.0 += palette_offset.0;
             origin.1 += palette_offset.1;
         }
+        origin.0 += x;
+        origin.1 += y;
+        if placements[root].photo_placement.is_some() {
+            // 超长内容及其依附项也只能覆盖照片，不溢出到外侧边框。
+            let (w, h) = R::dimensions(&image);
+            let (left, top) = (origin.0.max(img_x), origin.1.max(img_y));
+            let (right, bottom) = (
+                (origin.0 + w).min(img_x + img_w),
+                (origin.1 + h).min(img_y + img_h),
+            );
+            if right <= left || bottom <= top {
+                continue;
+            }
+            if (left, top, right - left, bottom - top) != (origin.0, origin.1, w, h) {
+                image = R::crop(
+                    image,
+                    (left - origin.0, top - origin.1, right - left, bottom - top),
+                )?;
+            }
+            origin = (left, top);
+        }
+        if group_ix == palette_ix {
+            palette_layer_ix = Some(layers.len());
+        }
         layers.push(PositionedLayer {
             image,
-            x: origin.0 + x,
-            y: origin.1 + y,
+            x: origin.0,
+            y: origin.1,
             group_ix: (group_ix < palette_ix).then_some(group_ix),
         });
     }

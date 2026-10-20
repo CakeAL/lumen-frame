@@ -420,6 +420,7 @@ fn simple_group(position: Placement, align: TextAlign, direction: TextDirection)
         direction,
         align,
         padding: 0.0,
+        photo_placement: None,
         time_format: "%Y/%m/%d".to_owned(),
         attachment: None,
         border: Default::default(),

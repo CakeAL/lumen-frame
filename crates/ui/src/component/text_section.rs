@@ -4,7 +4,8 @@
 //! 实体，并把组级参数与文字行分列展示，因此调整参数时主窗口中的照片预览仍然可见。
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, IndexPath, Sizable as _, TitleBar,
+    ActiveTheme as _, Disableable as _, IconName, IndexPath, Selectable as _, Sizable as _,
+    TitleBar,
     accordion::{Accordion, AccordionItem},
     button::{Button, ButtonVariants as _},
     combobox::{ComboboxEvent, ComboboxState},
@@ -27,7 +28,8 @@ use gpui_kit::{
 use crate::backend::media::ExifInfo;
 use crate::backend::render::text::{TIME_FORMAT_EXAMPLES, time_format_is_valid};
 use crate::backend::watermark::{
-    GroupAttachment, Placement, Text, TextAlign, TextDirection, TextGroup, TextParams,
+    GroupAttachment, PhotoAnchor, PhotoPlacement, Placement, Text, TextAlign, TextDirection,
+    TextGroup, TextParams,
 };
 
 use super::super::AppView;
@@ -44,6 +46,46 @@ pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("居中", TextAlign::Center),
     ("右对齐", TextAlign::Right),
 ];
+
+const PHOTO_ANCHORS: &[(&str, &str, &str, Option<PhotoAnchor>)] = &[
+    (
+        "text-photo-top-left",
+        "↖",
+        "左上",
+        Some(PhotoAnchor::TopLeft),
+    ),
+    ("text-photo-top", "↑", "上方", Some(PhotoAnchor::Top)),
+    (
+        "text-photo-top-right",
+        "↗",
+        "右上",
+        Some(PhotoAnchor::TopRight),
+    ),
+    ("text-photo-left", "←", "左侧", Some(PhotoAnchor::Left)),
+    ("text-photo-center", "", "", None),
+    ("text-photo-right", "→", "右侧", Some(PhotoAnchor::Right)),
+    (
+        "text-photo-bottom-left",
+        "↙",
+        "左下",
+        Some(PhotoAnchor::BottomLeft),
+    ),
+    ("text-photo-bottom", "↓", "下方", Some(PhotoAnchor::Bottom)),
+    (
+        "text-photo-bottom-right",
+        "↘",
+        "右下",
+        Some(PhotoAnchor::BottomRight),
+    ),
+];
+
+fn photo_anchor_label(anchor: PhotoAnchor) -> &'static str {
+    PHOTO_ANCHORS
+        .iter()
+        .find(|(_, _, _, value)| *value == Some(anchor))
+        .unwrap()
+        .2
+}
 
 const HORIZONTAL_GROUP_ALIGNS: &[(&str, TextAlign)] = &[
     ("左侧", TextAlign::Left),
@@ -328,6 +370,8 @@ pub(in crate::app) struct TextGroupEditor {
     pub id: u64,
     pub position: Placement,
     pub align: TextAlign,
+    pub photo_anchor: Option<PhotoAnchor>,
+    pub photo_inset: NumberField,
     pub direction: Entity<DirectionSelect>,
     pub padding: NumberField,
     pub border: TextBorderControls,
@@ -356,6 +400,20 @@ impl TextGroupEditor {
             cx,
         );
         let padding = NumberField::new(group.padding, 0.0, 30.0, 0.5, 1, 100.0, "%", window, cx);
+        let photo_inset = NumberField::new(
+            group
+                .photo_placement
+                .as_ref()
+                .map_or(0.02, PhotoPlacement::inset),
+            0.0,
+            30.0,
+            0.1,
+            1,
+            100.0,
+            "%",
+            window,
+            cx,
+        );
         let border = TextBorderControls::new(&group.border, window, cx);
         let attachment_side = group
             .attachment
@@ -381,6 +439,7 @@ impl TextGroupEditor {
         let mut subscriptions = Vec::new();
         subscriptions.push(on_select(&direction, window, cx, |_, _, _| {}));
         subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
+        subscriptions.extend(photo_inset.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(attachment_gap.subscribe(window, cx, |_, _| {}));
         subscriptions.push(
             cx.subscribe_in(&time_format, window, |this, _, event, _, cx| {
@@ -406,6 +465,8 @@ impl TextGroupEditor {
             id,
             position: group.position,
             align: group.align,
+            photo_anchor: group.photo_placement.as_ref().map(PhotoPlacement::anchor),
+            photo_inset,
             direction,
             padding,
             border,
@@ -445,6 +506,11 @@ impl TextGroupEditor {
                 .copied()
                 .unwrap_or_default(),
             align: self.align,
+            photo_placement: self.photo_anchor.map(|anchor| {
+                let mut inside = PhotoPlacement::new(anchor);
+                inside.set_inset(self.photo_inset.value(cx));
+                inside
+            }),
             padding: self.padding.value(cx),
             border: self.border.to_border(cx),
             time_format: self.time_format.read(cx).value().to_string(),
@@ -542,7 +608,20 @@ impl AppView {
             direction_label(value.direction),
             value.text.template.len()
         );
-        if !matches!(value.align, TextAlign::Center) && value.padding > 0.0 {
+        if let Some(inside) = &value.photo_placement
+            && group.attachment_target.is_none()
+        {
+            summary = format!(
+                "照片内{} · {} · {} 行",
+                photo_anchor_label(inside.anchor()),
+                direction_label(value.direction),
+                value.text.template.len()
+            );
+        }
+        if value.photo_placement.is_none()
+            && !matches!(value.align, TextAlign::Center)
+            && value.padding > 0.0
+        {
             summary.push_str(&format!(
                 " · 文字与图片边缘留白 {:.1}%",
                 value.padding * 100.0
@@ -880,21 +959,16 @@ impl AppView {
                     .when(group.attachment_target.is_none(), |this| {
                         let view = view.clone();
                         this.child(field(
-                            "位置",
-                            TabBar::new(("text-group-position", group_id))
+                            "放置区域",
+                            TabBar::new(("text-group-placement-mode", group_id))
                                 .segmented()
                                 .w_full()
                                 .children(
-                                    POSITIONS
-                                        .iter()
-                                        .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                                    ["画布位置", "照片内部"]
+                                        .into_iter()
+                                        .map(|label| Tab::new().label(label).flex_1()),
                                 )
-                                .selected_index(
-                                    POSITIONS
-                                        .iter()
-                                        .position(|(_, position)| *position == value.position)
-                                        .unwrap_or(0),
-                                )
+                                .selected_index(usize::from(group.photo_anchor.is_some()))
                                 .on_click(move |index: &usize, _, cx| {
                                     view.update(cx, |this, cx| {
                                         if let Some(group) = this
@@ -902,7 +976,15 @@ impl AppView {
                                             .iter_mut()
                                             .find(|group| group.id == group_id)
                                         {
-                                            group.position = POSITIONS[*index].1;
+                                            group.photo_anchor = if *index == 1 {
+                                                Some(
+                                                    group
+                                                        .photo_anchor
+                                                        .unwrap_or(PhotoAnchor::BottomRight),
+                                                )
+                                            } else {
+                                                None
+                                            };
                                             this.refresh_preview(cx);
                                             cx.notify();
                                         }
@@ -911,46 +993,139 @@ impl AppView {
                             cx,
                         ))
                     })
-                    .when(group.attachment_target.is_none(), |this| {
-                        let view = view.clone();
-                        let aligns = group_aligns(value.position);
-                        this.child(field(
-                            "组对齐",
-                            TabBar::new(("text-group-align", group_id))
-                                .segmented()
-                                .w_full()
-                                .children(
-                                    aligns
-                                        .iter()
-                                        .map(|(label, _)| Tab::new().label(*label).flex_1()),
-                                )
-                                .selected_index(
-                                    aligns
-                                        .iter()
-                                        .position(|(_, align)| *align == value.align)
-                                        .unwrap_or(1),
-                                )
-                                .on_click(move |index: &usize, _, cx| {
-                                    view.update(cx, |this, cx| {
-                                        if let Some(group) = this
-                                            .text_groups
-                                            .iter_mut()
-                                            .find(|group| group.id == group_id)
-                                        {
-                                            group.align = aligns[*index].1;
-                                            this.refresh_preview(cx);
-                                            cx.notify();
-                                        }
-                                    });
-                                }),
-                            cx,
-                        ))
-                    })
-                    .child(
-                        group
-                            .padding
-                            .render("文字与图片边缘留白", !show_padding, cx),
+                    .when(
+                        group.attachment_target.is_none() && group.photo_anchor.is_some(),
+                        |this| {
+                            this.child(field(
+                                "内部位置",
+                                v_flex()
+                                    .gap_1()
+                                    .children(PHOTO_ANCHORS.chunks(3).map(|row| {
+                                        h_flex().gap_1().children(row.iter().map(
+                                            |&(key, arrow, label, anchor)| {
+                                                let view = view.clone();
+                                                Button::new((key, group_id))
+                                                    .label(arrow)
+                                                    .size_9()
+                                                    .outline()
+                                                    .disabled(anchor.is_none())
+                                                    .selected(
+                                                        anchor.is_some()
+                                                            && anchor == group.photo_anchor,
+                                                    )
+                                                    .tooltip(format!("照片内{label}"))
+                                                    .accessibility_label(format!(
+                                                        "放在照片内{label}"
+                                                    ))
+                                                    .on_click(move |_, _, cx| {
+                                                        if anchor.is_none() {
+                                                            return;
+                                                        }
+                                                        view.update(cx, |this, cx| {
+                                                            if let Some(group) = this
+                                                                .text_groups
+                                                                .iter_mut()
+                                                                .find(|group| group.id == group_id)
+                                                            {
+                                                                group.photo_anchor = anchor;
+                                                                this.refresh_preview(cx);
+                                                                cx.notify();
+                                                            }
+                                                        });
+                                                    })
+                                            },
+                                        ))
+                                    })),
+                                cx,
+                            ))
+                            .child(group.photo_inset.render("内侧留白", false, cx))
+                            .child(description(
+                                "按照片高度计算内侧留白；照片内的文字组不会增加外侧边框。",
+                            ))
+                        },
                     )
+                    .when(
+                        group.attachment_target.is_none() && group.photo_anchor.is_none(),
+                        |this| {
+                            let view = view.clone();
+                            this.child(field(
+                                "位置",
+                                TabBar::new(("text-group-position", group_id))
+                                    .segmented()
+                                    .w_full()
+                                    .children(
+                                        POSITIONS
+                                            .iter()
+                                            .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                                    )
+                                    .selected_index(
+                                        POSITIONS
+                                            .iter()
+                                            .position(|(_, position)| *position == value.position)
+                                            .unwrap_or(0),
+                                    )
+                                    .on_click(move |index: &usize, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            if let Some(group) = this
+                                                .text_groups
+                                                .iter_mut()
+                                                .find(|group| group.id == group_id)
+                                            {
+                                                group.position = POSITIONS[*index].1;
+                                                this.refresh_preview(cx);
+                                                cx.notify();
+                                            }
+                                        });
+                                    }),
+                                cx,
+                            ))
+                        },
+                    )
+                    .when(
+                        group.attachment_target.is_none() && group.photo_anchor.is_none(),
+                        |this| {
+                            let view = view.clone();
+                            let aligns = group_aligns(value.position);
+                            this.child(field(
+                                "组对齐",
+                                TabBar::new(("text-group-align", group_id))
+                                    .segmented()
+                                    .w_full()
+                                    .children(
+                                        aligns
+                                            .iter()
+                                            .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                                    )
+                                    .selected_index(
+                                        aligns
+                                            .iter()
+                                            .position(|(_, align)| *align == value.align)
+                                            .unwrap_or(1),
+                                    )
+                                    .on_click(move |index: &usize, _, cx| {
+                                        view.update(cx, |this, cx| {
+                                            if let Some(group) = this
+                                                .text_groups
+                                                .iter_mut()
+                                                .find(|group| group.id == group_id)
+                                            {
+                                                group.align = aligns[*index].1;
+                                                this.refresh_preview(cx);
+                                                cx.notify();
+                                            }
+                                        });
+                                    }),
+                                cx,
+                            ))
+                        },
+                    )
+                    .when(group.photo_anchor.is_none(), |this| {
+                        this.child(
+                            group
+                                .padding
+                                .render("文字与图片边缘留白", !show_padding, cx),
+                        )
+                    })
                     .child(field(
                         "方向",
                         TabBar::new(("text-group-direction", group_id))
@@ -1448,8 +1623,19 @@ mod tests {
             cx.update(|window, cx| window.click((key, 0_u64), cx));
             cx.run_until_parked();
         }
+        cx.update(|window, cx| {
+            window
+                .within(("text-group-placement-mode", 0_u64))
+                .click(1_usize, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.click(("text-photo-top-left", 0_u64), cx));
+        cx.run_until_parked();
         app.update_in(cx, |app, window, cx| {
             let snapshot = app.current_watermark(cx);
+            let inside = snapshot.text_groups[0].photo_placement.as_ref().unwrap();
+            assert_eq!(inside.anchor(), PhotoAnchor::TopLeft);
+            assert!((inside.inset() - 0.02).abs() < 1e-8);
             assert_eq!(snapshot.text_groups[0].position, Placement::Left);
             assert_eq!(snapshot.text_groups[0].align, TextAlign::Right);
             assert_eq!(snapshot.text_groups[0].direction, TextDirection::Vertical);
@@ -1479,6 +1665,7 @@ mod tests {
             app.add_text_group(window, cx);
             assert!(!app.build_text_groups(cx)[1].border.enabled());
             app.restore_watermark(snapshot.clone(), window, cx);
+            assert_eq!(app.text_groups[0].photo_anchor, Some(PhotoAnchor::TopLeft));
             assert_eq!(
                 app.build_text_groups(cx)[0].border,
                 snapshot.text_groups[0].border

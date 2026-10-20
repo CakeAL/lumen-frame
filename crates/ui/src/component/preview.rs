@@ -26,7 +26,7 @@ use super::super::AppView;
 use super::field::{description, rgb_to_hsla};
 use crate::backend::render::text::TextGroupRegion;
 use crate::backend::{
-    watermark::{Placement, TextAlign},
+    watermark::{PhotoAnchor, Placement, TextAlign},
     workspace::PhotoId,
 };
 use crate::image::{LayeredPreview, PreviewJob, PreviewLayerCache};
@@ -41,6 +41,12 @@ const DEBOUNCE: Duration = Duration::from_millis(80);
 enum PreviewEditTarget {
     Text(u64),
     Palette,
+}
+
+#[derive(Clone, Copy)]
+struct PreviewPlacement {
+    outside: (Placement, TextAlign),
+    inside: Option<PhotoAnchor>,
 }
 
 #[derive(Clone)]
@@ -391,6 +397,7 @@ impl AppView {
             regions.push((PreviewEditTarget::Palette, region));
         }
         let image_size = image.size();
+        let photo_region = image.photo_region();
         let app = cx.entity().downgrade();
         let owner = cx.entity_id();
         let photo = self
@@ -520,7 +527,12 @@ impl AppView {
                 let Some(fitted) = drop_bounds.get() else {
                     return;
                 };
-                let placement = drop_placement(fitted, window.mouse_position(), rotation);
+                let placement = drop_placement(
+                    fitted,
+                    window.mouse_position(),
+                    rotation,
+                    preview_region_bounds(fitted, image_size, photo_region),
+                );
                 let _ = drop_app.update(cx, |this, cx| {
                     if dragged.owner == cx.entity_id()
                         && this.selected_photo_id() == Some(dragged.photo)
@@ -535,7 +547,12 @@ impl AppView {
                 let (Some(fitted), Some(view)) = (menu_bounds.get(), menu_app.upgrade()) else {
                     return menu;
                 };
-                let placement = drop_placement(fitted, window.mouse_position(), rotation);
+                let placement = drop_placement(
+                    fitted,
+                    window.mouse_position(),
+                    rotation,
+                    preview_region_bounds(fitted, image_size, photo_region),
+                );
                 let has_palette = view.read(cx).backend.params().palette_card.enabled();
                 let text_app = view.downgrade();
                 let palette_app = view.downgrade();
@@ -610,9 +627,10 @@ impl AppView {
     fn move_preview_item(
         &mut self,
         target: PreviewEditTarget,
-        (position, align): (Placement, TextAlign),
+        placement: PreviewPlacement,
         cx: &mut Context<Self>,
     ) {
+        let (position, align) = placement.outside;
         match target {
             PreviewEditTarget::Text(id) => {
                 let Some(group) = self.text_groups.iter_mut().find(|group| group.id == id) else {
@@ -621,6 +639,7 @@ impl AppView {
                 group.attachment_target = None;
                 group.position = position;
                 group.align = align;
+                group.photo_anchor = placement.inside;
             }
             PreviewEditTarget::Palette => {
                 let card = &mut self.backend.params_mut().palette_card;
@@ -638,12 +657,21 @@ fn drop_placement(
     fitted: Bounds<Pixels>,
     point: gpui_kit::Point<Pixels>,
     rotation: crate::backend::rotation::Rotation,
-) -> (Placement, TextAlign) {
-    Placement::from_normalized_point(
+    photo: Bounds<Pixels>,
+) -> PreviewPlacement {
+    let outside = Placement::from_normalized_point(
         f64::from((point.x - fitted.origin.x).as_f32() / fitted.size.width.as_f32().max(1.0)),
         f64::from((point.y - fitted.origin.y).as_f32() / fitted.size.height.as_f32().max(1.0)),
         rotation,
-    )
+    );
+    let inside = photo.contains(&point).then(|| {
+        PhotoAnchor::from_normalized_point(
+            f64::from((point.x - photo.left()).as_f32() / photo.size.width.as_f32().max(1.0)),
+            f64::from((point.y - photo.top()).as_f32() / photo.size.height.as_f32().max(1.0)),
+            rotation,
+        )
+    });
+    PreviewPlacement { outside, inside }
 }
 
 /// 位图坐标 → 当前窗口坐标；每帧重新映射，窗口缩放与 rem 变化不会留下旧的缓存。
@@ -809,6 +837,36 @@ mod tests {
             assert_eq!(
                 (group.position, group.align),
                 (Placement::Up, TextAlign::Right)
+            );
+            assert_eq!(
+                group.photo_placement.as_ref().unwrap().anchor(),
+                PhotoAnchor::TopRight
+            );
+            assert_eq!(view.text_editor_window_count(), 0);
+        });
+        settle(&view, cx);
+        cx.update(|window, cx| {
+            let layers = view
+                .read(cx)
+                .preview
+                .read(cx)
+                .state
+                .layers()
+                .unwrap()
+                .clone();
+            let fitted = ObjectFit::Contain
+                .get_bounds(window.find("preview-bitmap").bounds(), layers.size());
+            let photo = preview_region_bounds(fitted, layers.size(), layers.photo_region());
+            let from = window.find(("preview-text-group", id)).bounds().center();
+            let to = point(photo.center().x, (fitted.top() + photo.top()) / 2.);
+            window.drag(from, to, cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.backend.current().text_groups[0]
+                    .photo_placement
+                    .is_none()
             );
             assert_eq!(view.text_editor_window_count(), 0);
         });

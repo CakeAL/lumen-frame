@@ -18,6 +18,8 @@ mod palette_card;
 pub use palette_card::{PaletteCard, PaletteShape};
 mod text_border;
 pub use text_border::TextBorder;
+mod photo_placement;
+pub use photo_placement::{PhotoAnchor, PhotoPlacement};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackgroundKind {
@@ -208,6 +210,9 @@ pub struct TextGroup {
     pub position: Placement,
     pub direction: TextDirection,
     pub align: TextAlign,
+    /// 设置后放在照片内部，不增加外侧文字带；依附组跟随根组定位。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_placement: Option<PhotoPlacement>,
     /// 文字与相邻图片边缘的留白比例；上下位置沿水平方向，左右位置沿垂直方向。
     #[serde(default)]
     pub padding: f64,
@@ -408,6 +413,7 @@ impl Default for TextGroup {
             direction: TextDirection::Horizontal,
             align: TextAlign::Center,
             padding: 0.0,
+            photo_placement: None,
             border: TextBorder::default(),
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
             attachment: None,

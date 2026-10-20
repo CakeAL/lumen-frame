@@ -29,6 +29,10 @@ impl LayeredPreview {
     pub(crate) fn size(&self) -> Size<DevicePixels> {
         self.size
     }
+
+    pub(crate) fn photo_region(&self) -> TextGroupRegion {
+        self.raster.photo_region()
+    }
     pub(crate) fn image(&self) -> &Arc<RenderImage> {
         self.flattened.get_or_init(|| {
             to_gpui((**self.raster.image()).clone()).expect("后端保证 RGBA 像素尺寸")
@@ -575,6 +579,72 @@ mod tests {
         let replaced = cache.render(&job).unwrap();
         assert_ne!(next.size, replaced.size);
         assert!(!same(&next, &replaced, 0));
+    }
+
+    #[test]
+    fn inside_anchors_keep_canvas_size_and_match_full_composition() {
+        use crate::backend::watermark::{PhotoAnchor, PhotoPlacement};
+        let mut job = job();
+        job.text_groups.truncate(1);
+        job.text_groups[0].text.template = vec!["Inside".into()];
+        job.text_groups[0].text.text_params.truncate(1);
+        let mut empty = job.clone();
+        empty.text_groups.clear();
+        let expected_size = PreviewLayerCache::default().render(&empty).unwrap().size();
+        for anchor in [
+            PhotoAnchor::TopLeft,
+            PhotoAnchor::Top,
+            PhotoAnchor::TopRight,
+            PhotoAnchor::Left,
+            PhotoAnchor::Right,
+            PhotoAnchor::BottomLeft,
+            PhotoAnchor::Bottom,
+            PhotoAnchor::BottomRight,
+        ] {
+            job.text_groups[0].photo_placement = Some(PhotoPlacement::new(anchor));
+            let scene = PreviewLayerCache::default().render(&job).unwrap();
+            assert_eq!(scene.size(), expected_size);
+            let photo = scene.photo_region();
+            let region = scene.text_regions[0];
+            assert!(region.x >= photo.x && region.y >= photo.y);
+            assert!(region.x + region.width <= photo.x + photo.width);
+            assert!(region.y + region.height <= photo.y + photo.height);
+            let x = (region.x + region.width / 2 - photo.x) as f64 / photo.width as f64;
+            let y = (region.y + region.height / 2 - photo.y) as f64 / photo.height as f64;
+            assert_eq!(
+                PhotoAnchor::from_normalized_point(x, y, Rotation::None),
+                anchor
+            );
+        }
+        // 超长文字的裁切、竖排和旋转也复用同一规则，并保留 HDR 预览管线。
+        job.path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test_images/ultra_hdr.jpg"
+        )
+        .into();
+        job.exif = Some(ExifInfo::default());
+        job.text_groups[0].text.template[0] = "{自定义文本}".into();
+        job.params.custom_text = "Long text ".repeat(80);
+        job.text_groups[0].direction = TextDirection::Vertical;
+        job.params.rotation = Rotation::Clockwise90;
+        let scene = PreviewLayerCache::default().render(&job).unwrap();
+        let full = super::super::render_preview_with_regions(&job).unwrap();
+        assert_eq!(scene.text_regions, full.text_regions);
+        let photo = scene.photo_region();
+        let region = scene.text_regions[0];
+        assert!(region.x >= photo.x && region.y >= photo.y);
+        assert!(region.x + region.width <= photo.x + photo.width);
+        assert!(region.y + region.height <= photo.y + photo.height);
+        let max_error = scene
+            .image()
+            .as_bytes(0)
+            .unwrap()
+            .iter()
+            .zip(full.image.as_bytes(0).unwrap())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(max_error <= 2, "内部文字的预览与导出像素差异：{max_error}");
     }
 
     #[test]

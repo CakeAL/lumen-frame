@@ -284,6 +284,12 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
         (image.width() as i32, image.height() as i32)
     }
 
+    fn crop(image: VipsImage, (x, y, w, h): (i32, i32, i32, i32)) -> Result<VipsImage> {
+        Ok(image_op(|out| unsafe {
+            vips_sys::vips_extract_area(image.as_ptr(), out, x, y, w, h, std::ptr::null::<i8>())
+        })?)
+    }
+
     fn content_bounds(image: &VipsImage) -> Result<(i32, i32, i32, i32)> {
         let (w, h) = Self::dimensions(image);
         Ok(

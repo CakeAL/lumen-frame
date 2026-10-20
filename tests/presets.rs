@@ -62,6 +62,7 @@ fn colourful_preset() -> WatermarkPreset {
             direction: TextDirection::Vertical,
             align: TextAlign::Right,
             padding: 0.04,
+            photo_placement: None,
             time_format: "%Y年%m月%d日".to_owned(),
             attachment: None,
             border: Default::default(),
@@ -73,6 +74,11 @@ fn colourful_preset() -> WatermarkPreset {
 fn preset_round_trips_through_a_file() {
     let dir = scratch_dir("round-trip");
     let mut original = colourful_preset();
+    let mut inside = lumen_frame_core::watermark::PhotoPlacement::new(
+        lumen_frame_core::watermark::PhotoAnchor::TopRight,
+    );
+    inside.set_inset(0.027);
+    original.text_groups[0].photo_placement = Some(inside);
     original.params.photo_border.set_enabled(true);
     original.params.photo_border.set_width(0.017);
     original.params.palette_card.set_enabled(true);

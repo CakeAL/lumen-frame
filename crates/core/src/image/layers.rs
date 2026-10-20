@@ -9,7 +9,7 @@ use crate::{
     },
     render::{canvas, image as photo_image, text::TextGroupRegion},
     rotation::Rotation,
-    watermark::{BackgroundGradient, PaletteCard, TextGroup},
+    watermark::{BackgroundGradient, PaletteCard, PhotoAnchor, PhotoPlacement, TextGroup},
 };
 use anyhow::{Context as _, Result};
 use image::{ImageBuffer, Rgba};
@@ -25,12 +25,18 @@ pub struct LayeredPreview {
     layers: Vec<PreviewLayer>,
     text_regions: Vec<TextGroupRegion>,
     palette_region: Option<TextGroupRegion>,
+    photo_region: TextGroupRegion,
     flattened: OnceLock<Arc<RasterImage>>,
 }
 
 impl LayeredPreview {
     pub fn size(&self) -> (i32, i32) {
         self.size
+    }
+
+    /// 最终输出中照片的矩形，不包含阴影与外侧边框。
+    pub fn photo_region(&self) -> TextGroupRegion {
+        self.photo_region
     }
 
     pub fn image(&self) -> &Arc<RasterImage> {
@@ -251,6 +257,14 @@ impl PreviewLayerCache {
             layers,
             text_regions: regions,
             palette_region,
+            photo_region: TextGroupRegion {
+                group_ix: 0,
+                x: scene.photo_origin.0,
+                y: scene.photo_origin.1,
+                width: dimensions.0,
+                height: dimensions.1,
+            }
+            .rotated(job.params.rotation, scene.size),
             flattened: OnceLock::new(),
         }))
     }
@@ -319,6 +333,31 @@ impl LayerRenderer for CachedRenderer<'_> {
         (size.0, size.1)
     }
 
+    fn crop(image: TextLayer, (x, y, w, h): (i32, i32, i32, i32)) -> Result<TextLayer> {
+        let buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(
+            image.image.width(),
+            image.image.height(),
+            image.image.pixels().to_vec(),
+        )
+        .expect("后端保证 RGBA 尺寸");
+        let cropped =
+            image::imageops::crop_imm(&buffer, x as u32, y as u32, w as u32, h as u32).to_image();
+        // 裁切可能移除了原范围最外侧的字形，必须按剩余像素重新测量命中区。
+        let visible = crate::render::text::alpha_bounds(cropped.as_raw(), w as usize).map(
+            |(left, top, right, bottom)| TextGroupRegion {
+                group_ix: 0,
+                x: left as i32,
+                y: top as i32,
+                width: (right - left) as i32,
+                height: (bottom - top) as i32,
+            },
+        );
+        Ok(TextLayer {
+            image: bitmap(w as u32, h as u32, cropped.into_raw()),
+            visible,
+        })
+    }
+
     fn content_bounds(image: &TextLayer) -> Result<(i32, i32, i32, i32)> {
         let (w, h) = Self::dimensions(image);
         Ok(image
@@ -332,6 +371,11 @@ impl LayerRenderer for CachedRenderer<'_> {
             // 相邻排版只改变位置，不应重绘内容纹理。
             group: TextGroup {
                 attachment: None,
+                // 内侧锚点和留白只改变位置；保留模式差别，因为内部不使用外侧 padding。
+                photo_placement: group
+                    .photo_placement
+                    .as_ref()
+                    .map(|_| PhotoPlacement::new(PhotoAnchor::BottomRight)),
                 ..group.clone()
             },
             default_font: self.job.params.default_font.clone(),
