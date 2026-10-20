@@ -743,7 +743,9 @@ impl AppView {
                     .w_full()
                     .flex_shrink_0()
                     .gap_2()
-                    .p_4()
+                    .px_4()
+                    .pt_4()
+                    .pb_2()
                     .child(field(
                         "预设应用范围",
                         TabBar::new("preset-scope")
@@ -800,7 +802,9 @@ impl AppView {
                     .flex_1()
                     .min_h_0()
                     .gap_3()
-                    .p_4()
+                    .px_4()
+                    .pt_2()
+                    .pb_4()
                     .overflow_y_scroll()
                     .child(
                         BaseAccordion::new("builtin-presets")

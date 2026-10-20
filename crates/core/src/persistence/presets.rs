@@ -51,6 +51,10 @@ const BUILTIN_PRESETS: &[(&str, &str)] = &[
         include_str!("../../../../assets/presets/文字在图片内部.toml"),
     ),
     (
+        "文字组背景色",
+        include_str!("../../../../assets/presets/文字组背景色.toml"),
+    ),
+    (
         "右侧参数卡_文字加框",
         include_str!("../../../../assets/presets/右侧参数卡_文字加框.toml"),
     ),

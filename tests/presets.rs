@@ -351,11 +351,23 @@ fn bundled_presets_load_from_assets() {
         .map(|(name, _)| name.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(presets.len(), 7);
-    assert!(names.contains(&"基础样式"));
-    assert!(names.contains(&"纯色背景_文字在下"));
-    assert!(names.contains(&"右侧参数卡"));
-    assert!(names.contains(&"左侧标签相框"));
+    assert_eq!(
+        names,
+        [
+            "16_9",
+            "基础样式",
+            "文字在上",
+            "白色边框",
+            "纯色背景_文字在下",
+            "百分比色卡&自定义尼康logo",
+            "色卡",
+            "文字在图片内部",
+            "文字组背景色",
+            "右侧参数卡_文字加框",
+            "左侧参数卡_文字加框背景颗粒",
+            "colorwalk_背景色卡",
+        ]
+    );
     assert!(
         presets
             .iter()
@@ -365,7 +377,12 @@ fn bundled_presets_load_from_assets() {
         presets
             .iter()
             // 新示例继承用户字体；已有预设允许保留显式的字体选择。
-            .filter(|(name, _)| ["右侧参数卡", "左侧标签相框"].contains(&name.as_str()))
+            .filter(|(name, _)| [
+                "右侧参数卡_文字加框",
+                "左侧参数卡_文字加框背景颗粒",
+                "文字组背景色"
+            ]
+            .contains(&name.as_str()))
             .flat_map(|(_, preset)| &preset.text_groups)
             .all(|group| {
                 group
@@ -374,6 +391,36 @@ fn bundled_presets_load_from_assets() {
                     .iter()
                     .all(|line| line.font.is_empty())
             })
+    );
+    let background = lumen_frame_core::persistence::presets::load_builtin("文字组背景色").unwrap();
+    assert!(lumen_frame_core::persistence::presets::is_builtin(
+        "文字组背景色"
+    ));
+    assert_eq!(background.text_groups.len(), 2);
+    assert_eq!(
+        background.text_groups[0].background,
+        Some([254, 225, 0, 204])
+    );
+    assert_eq!(
+        background.text_groups[1].background,
+        Some([255, 255, 255, 204])
+    );
+    assert!(background.text_groups.iter().all(|group| {
+        !group.border.enabled()
+            && group.photo_placement.is_some()
+            && group
+                .text
+                .text_params
+                .iter()
+                .all(|line| line.color.is_none())
+    }));
+    assert_eq!(
+        background.text_groups[0]
+            .attachment
+            .as_ref()
+            .unwrap()
+            .target,
+        1
     );
 }
 
