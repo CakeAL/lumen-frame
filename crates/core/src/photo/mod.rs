@@ -316,11 +316,15 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
         Ok(group.render_for_photo(self.exif, self.img.height() as i32, self.params)?)
     }
 
-    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>> {
+    fn photo_text_color(
+        &mut self,
+        rect: (i32, i32, i32, i32),
+        background: Option<[u8; 4]>,
+    ) -> Result<Option<[u8; 3]>> {
         if self.contrast.is_none() {
             self.contrast = Some(PhotoContrast::new(self.img)?);
         }
-        Ok(self.contrast.as_ref().unwrap().text_color(rect))
+        Ok(self.contrast.as_ref().unwrap().text_color(rect, background))
     }
 
     fn palette(&mut self) -> Result<Option<VipsImage>> {

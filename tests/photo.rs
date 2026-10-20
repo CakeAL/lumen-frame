@@ -83,6 +83,7 @@ async fn test_generate_watermark() {
             time_format: "%Y/%m/%d".to_owned(),
             attachment: None,
             border: Default::default(),
+            background: None,
         },
     ];
     let params = WatermarkParams {

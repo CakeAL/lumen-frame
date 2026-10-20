@@ -66,6 +66,7 @@ fn colourful_preset() -> WatermarkPreset {
             time_format: "%Y年%m月%d日".to_owned(),
             attachment: None,
             border: Default::default(),
+            background: None,
         }],
     }
 }
@@ -108,6 +109,7 @@ fn preset_round_trips_through_a_file() {
             gap: 0.015,
         },
     ));
+    original.text_groups[0].background = Some([12, 34, 56, 128]);
     original.text_groups[0].border.set_enabled(true);
     original.text_groups[0].border.set_width(0.0012);
     original.text_groups[0].border.set_radius(0.006);
@@ -442,4 +444,20 @@ fn names_cannot_escape_the_preset_directory() {
 fn default_directory_sits_under_the_user_config() {
     let dir = directory().expect("系统应该有配置目录");
     assert!(dir.ends_with("lumen-frame/presets"), "{}", dir.display());
+}
+
+#[test]
+fn legacy_text_groups_have_no_background_and_zero_alpha_roundtrips() {
+    let mut preset = colourful_preset();
+    let legacy = toml::to_string(&preset).unwrap();
+    let loaded: WatermarkPreset = toml::from_str(&legacy).unwrap();
+    assert_eq!(loaded.text_groups[0].background, None);
+    for alpha in [0, 1, 128, 255] {
+        preset.text_groups[0].background = Some([10, 20, 30, alpha]);
+        let loaded: WatermarkPreset = toml::from_str(&toml::to_string(&preset).unwrap()).unwrap();
+        assert_eq!(
+            loaded.text_groups[0].background,
+            preset.text_groups[0].background
+        );
+    }
 }

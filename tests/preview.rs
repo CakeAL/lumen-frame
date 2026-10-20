@@ -70,14 +70,20 @@ fn inside_text_and_logo_follow_local_photo_contrast_after_moving() {
         ..request.text_groups[0].clone()
     });
     let mut cache = PreviewLayerCache::default();
-    for (anchor, manual, expected) in [
-        (PhotoAnchor::BottomLeft, None, 255),
-        (PhotoAnchor::BottomRight, None, 0),
-        (PhotoAnchor::BottomRight, Some([255; 3]), 255),
+    for (anchor, manual, background, expected) in [
+        (PhotoAnchor::BottomLeft, None, None, 255),
+        (PhotoAnchor::BottomRight, None, None, 0),
+        (PhotoAnchor::BottomRight, Some([255; 3]), None, 255),
+        (PhotoAnchor::BottomRight, None, Some([0, 0, 0, 255]), 255),
+        (PhotoAnchor::BottomLeft, None, Some([255, 255, 255, 255]), 0),
+        (PhotoAnchor::BottomRight, None, Some([0, 0, 0, 64]), 0),
+        (PhotoAnchor::BottomRight, None, Some([0, 0, 0, 200]), 255),
+        (PhotoAnchor::BottomLeft, None, Some([255, 255, 255, 0]), 255),
     ] {
         request.text_groups[0].photo_placement = Some(PhotoPlacement::new(anchor));
         for group in &mut request.text_groups {
             group.text.text_params[0].color = manual;
+            group.background = background;
         }
         let scene = cache.render(&request).unwrap();
         for layer in scene
@@ -86,19 +92,25 @@ fn inside_text_and_logo_follow_local_photo_contrast_after_moving() {
             .filter(|layer| layer.group_ix().is_some())
         {
             let pixels = layer.image().pixels().as_chunks::<4>().0;
-            let visible: Vec<_> = pixels.iter().filter(|p| p[3] >= 240).collect();
-            assert!(visible.len() > 40, "Logo 和文字都应有可见像素");
-            assert!(
-                visible
-                    .iter()
-                    .all(|p| p[..3].iter().all(|c| c.abs_diff(expected) <= 20)),
-                "{anchor:?}: Logo 与文字应使用相同的自动颜色，并遵守手动颜色，异常像素 {:?}",
-                visible
-                    .iter()
-                    .filter(|p| p[..3] != [expected; 3])
-                    .take(8)
-                    .collect::<Vec<_>>()
-            );
+            if background.is_some() {
+                assert!(
+                    pixels
+                        .iter()
+                        .filter(|p| p[..3] == [expected; 3] && p[3] == 255)
+                        .count()
+                        > 40,
+                    "{anchor:?} {background:?}: 文字和 Logo 应按叠加后的背景选择 {expected}"
+                );
+            } else {
+                let visible: Vec<_> = pixels.iter().filter(|p| p[3] >= 240).collect();
+                assert!(visible.len() > 40, "Logo 和文字都应有可见像素");
+                assert!(
+                    visible
+                        .iter()
+                        .all(|p| p[..3].iter().all(|c| c.abs_diff(expected) <= 20)),
+                    "{anchor:?}: Logo 与文字应使用相同的自动颜色，并遵守手动颜色"
+                );
+            }
         }
         let full = render_preview(&request).unwrap();
         assert_eq!((full.width() as i32, full.height() as i32), scene.size());
@@ -112,10 +124,7 @@ fn inside_text_and_logo_follow_local_photo_contrast_after_moving() {
             .unwrap();
         assert!(max_error <= 2, "分层预览与完整合成应一致：{max_error}");
     }
-    assert_eq!(
-        request.text_groups[0].text.text_params[0].color,
-        Some([255; 3])
-    );
+    assert_eq!(request.text_groups[0].text.text_params[0].color, None);
     std::fs::remove_file(path).unwrap();
 }
 
@@ -266,7 +275,10 @@ fn ultra_hdr_rotation_keeps_the_preview_pipeline_valid() {
                 background_grain: true,
                 ..Default::default()
             },
-            text_groups: Vec::new(),
+            text_groups: vec![TextGroup {
+                background: Some([0, 0, 0, 128]),
+                ..Default::default()
+            }],
             max_edge: 1600,
         })
         .expect("旋转 Ultra HDR 预览失败")
@@ -525,6 +537,7 @@ fn simple_group(position: Placement, align: TextAlign, direction: TextDirection)
         time_format: "%Y/%m/%d".to_owned(),
         attachment: None,
         border: Default::default(),
+        background: None,
     }
 }
 

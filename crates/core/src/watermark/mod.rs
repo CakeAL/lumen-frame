@@ -218,6 +218,9 @@ pub struct TextGroup {
     pub padding: f64,
     #[serde(default)]
     pub border: TextBorder,
+    /// 文字组背景 RGBA；None 为关闭，Alpha 为 0–255。与边框共用圆角、内边距和最小尺寸。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<[u8; 4]>,
     pub time_format: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<GroupAttachment>,
@@ -415,6 +418,7 @@ impl Default for TextGroup {
             padding: 0.0,
             photo_placement: None,
             border: TextBorder::default(),
+            background: None,
             time_format: DEFAULT_TIME_FORMAT.to_owned(),
             attachment: None,
         }

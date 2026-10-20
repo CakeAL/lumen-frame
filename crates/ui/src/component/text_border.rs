@@ -128,17 +128,24 @@ impl TextBorderControls {
         self.configured.then(|| self.to_border(cx))
     }
 
-    pub(super) fn render(&self, id: u64, view: Entity<AppView>, cx: &App) -> impl IntoElement {
-        self.render_target(BorderTarget::Group(id), view, cx)
+    pub(super) fn render(
+        &self,
+        id: u64,
+        background_enabled: bool,
+        view: Entity<AppView>,
+        cx: &App,
+    ) -> impl IntoElement {
+        self.render_target(BorderTarget::Group(id), background_enabled, view, cx)
     }
 
     pub(super) fn render_line(&self, id: u64, view: Entity<AppView>, cx: &App) -> impl IntoElement {
-        self.render_target(BorderTarget::Line(id), view, cx)
+        self.render_target(BorderTarget::Line(id), false, view, cx)
     }
 
     fn render_target(
         &self,
         target: BorderTarget,
+        background_enabled: bool,
         view: Entity<AppView>,
         cx: &App,
     ) -> impl IntoElement {
@@ -189,7 +196,9 @@ impl TextBorderControls {
                 )
                 .child(self.color.render("颜色", false, cx))
                 .child(self.width.render("粗细", false, cx))
-                .child(self.radius.render("圆角", false, cx))
+            })
+            .when(self.enabled || background_enabled, |this| {
+                this.child(self.radius.render("圆角", false, cx))
                 .child(self.inset.render("内边距", false, cx))
                 .child(self.min_width.render("最小宽度", false, cx))
                 .child(self.min_height.render("最小高度", false, cx))
@@ -197,7 +206,10 @@ impl TextBorderControls {
                     this.child(description("只包围本行内容，行距留在框外；单位或说明可放在另一行。"))
                 })
                 .child(description(
-                    "尺寸按照片高度计算；宽高为 0 时随内容。设置相同宽高可统一多个框的大小，文字在框内居中。",
+                    match target {
+                        BorderTarget::Group(_) => "尺寸按照片高度计算；背景与边框共用圆角、内边距和最小尺寸。宽高为 0 时随内容，文字在框内居中。",
+                        BorderTarget::Line(_) => "尺寸按照片高度计算；宽高为 0 时随内容。设置相同宽高可统一多个框的大小，文字在框内居中。",
+                    },
                 ))
             })
     }

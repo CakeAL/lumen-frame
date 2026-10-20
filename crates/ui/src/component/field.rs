@@ -304,14 +304,19 @@ impl NumberField {
 pub(in crate::app) struct ColorField {
     picker: Entity<ColorPickerState>,
     hex: Entity<InputState>,
+    alpha: bool,
 }
 
 impl ColorField {
     /// 用于已有行标签的紧凑颜色编辑器。
     pub(in crate::app) fn render_control(&self) -> impl IntoElement {
-        let picker = div()
-            .id("field-color-picker")
-            .child(ColorPicker::new(&self.picker));
+        let picker = div().id("field-color-picker").child(
+            ColorPicker::new(&self.picker).accessibility_label(if self.alpha {
+                "RGBA 颜色"
+            } else {
+                "颜色"
+            }),
+        );
         #[cfg(test)]
         let picker = {
             use gpui_kit::test::TestSupportExt as _;
@@ -322,7 +327,8 @@ impl ColorField {
                 .id("gradient-color-hex")
                 .aria_label("颜色值")
                 .small()
-                .w_24(),
+                .w_24()
+                .when(self.alpha, |this| this.w_32()),
         )
     }
 
@@ -331,13 +337,36 @@ impl ColorField {
         window: &mut Window,
         cx: &mut Context<AppView>,
     ) -> Self {
-        let picker = cx.new(|cx| ColorPickerState::new(window, cx).default_value(rgb_to_hsla(rgb)));
+        Self::new_color([rgb[0], rgb[1], rgb[2], 255], false, window, cx)
+    }
+
+    pub(super) fn new_rgba(rgba: [u8; 4], window: &mut Window, cx: &mut Context<AppView>) -> Self {
+        Self::new_color(rgba, true, window, cx)
+    }
+
+    fn new_color(
+        rgba: [u8; 4],
+        alpha: bool,
+        window: &mut Window,
+        cx: &mut Context<AppView>,
+    ) -> Self {
+        let picker = cx.new(|cx| {
+            let mut state = ColorPickerState::new(window, cx).default_value(rgba_to_hsla(rgba));
+            if alpha {
+                state.set_active_tab(1, cx);
+            }
+            state
+        });
         let hex = cx.new(|cx| {
             InputState::new(window, cx)
-                .default_value(hex_string(rgb))
-                .placeholder("#RRGGBB")
+                .default_value(color_hex(rgba, alpha))
+                .placeholder(if alpha { "#RRGGBBAA" } else { "#RRGGBB" })
         });
-        Self { picker, hex }
+        Self { picker, hex, alpha }
+    }
+
+    pub(super) fn rgba_value(&self, cx: &App) -> [u8; 4] {
+        self.picker.read(cx).value().map_or([0; 4], hsla_to_rgba)
     }
 
     pub(super) fn is_open(&self, cx: &App) -> bool {
@@ -363,6 +392,7 @@ impl ColorField {
         cx: &mut Context<AppView>,
         apply: impl Fn(&mut AppView, [u8; 3], &mut Window, &mut Context<AppView>) + Clone + 'static,
     ) -> Vec<Subscription> {
+        let alpha = self.alpha;
         let from_picker = {
             let hex = self.hex.clone();
             let apply = apply.clone();
@@ -370,13 +400,14 @@ impl ColorField {
                 let ColorPickerEvent::Change(Some(color)) = event else {
                     return;
                 };
-                let rgb = hsla_to_rgb(*color);
+                let rgba = hsla_to_rgba(*color);
+                let rgb = [rgba[0], rgba[1], rgba[2]];
                 apply(this, rgb, window, cx);
 
                 // 输入框里已经是这个颜色就别动它，免得打字打到一半被规范化。
                 let typed = hex.read(cx).value().to_string();
-                if parse_hex(&typed) != Some(rgb) {
-                    write_text(&hex, hex_string(rgb), window, cx);
+                if parse_color_hex(&typed, alpha) != Some(rgba) {
+                    write_text(&hex, color_hex(rgba, alpha), window, cx);
                 }
                 this.refresh_preview(cx);
                 cx.notify();
@@ -390,11 +421,11 @@ impl ColorField {
                     return;
                 }
                 let text = state.read(cx).value().to_string();
-                let Some(rgb) = parse_hex(&text) else {
+                let Some(rgba) = parse_color_hex(&text, alpha) else {
                     return;
                 };
-                apply(this, rgb, window, cx);
-                let color = rgb_to_hsla(rgb);
+                apply(this, [rgba[0], rgba[1], rgba[2]], window, cx);
+                let color = rgba_to_hsla(rgba);
                 if picker.read(cx).value() != Some(color) {
                     picker.update(cx, |state, cx| state.update_color(color, window, cx));
                 }
@@ -422,6 +453,7 @@ impl ColorField {
         disabled: bool,
         cx: &App,
     ) -> AnyElement {
+        let label = label.into();
         h_flex()
             .w_full()
             .justify_between()
@@ -431,14 +463,24 @@ impl ColorField {
                     .flex_shrink_0()
                     .text_sm()
                     .text_color(label_color(cx, disabled))
-                    .child(label.into()),
+                    .child(label.clone()),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(ColorPicker::new(&self.picker))
-                    .child(Input::new(&self.hex).small().w_24()),
+                    .child(ColorPicker::new(&self.picker).accessibility_label(label))
+                    .child(
+                        Input::new(&self.hex)
+                            .aria_label(if self.alpha {
+                                "RGBA 颜色值"
+                            } else {
+                                "颜色值"
+                            })
+                            .small()
+                            .w_24()
+                            .when(self.alpha, |this| this.w_32()),
+                    ),
             )
             .into_any_element()
     }
@@ -553,6 +595,44 @@ pub(super) fn parse_hex(text: &str) -> Option<[u8; 3]> {
     Some([r, g, b])
 }
 
+fn color_hex(rgba: [u8; 4], alpha: bool) -> String {
+    let rgb = hex_string([rgba[0], rgba[1], rgba[2]]);
+    if alpha {
+        format!("{rgb}{:02X}", rgba[3])
+    } else {
+        rgb
+    }
+}
+
+fn parse_color_hex(text: &str, alpha: bool) -> Option<[u8; 4]> {
+    let cleaned = text.trim().trim_start_matches('#').trim();
+    if !cleaned.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    if alpha && matches!(cleaned.len(), 4 | 8) {
+        let expanded = if cleaned.len() == 4 {
+            cleaned.chars().flat_map(|ch| [ch, ch]).collect::<String>()
+        } else {
+            cleaned.to_owned()
+        };
+        return u32::from_str_radix(&expanded, 16)
+            .ok()
+            .map(u32::to_be_bytes);
+    }
+    parse_hex(text).map(|[r, g, b]| [r, g, b, 255])
+}
+
+fn hsla_to_rgba(color: Hsla) -> [u8; 4] {
+    let [r, g, b] = hsla_to_rgb(color);
+    [r, g, b, (color.a.clamp(0.0, 1.0) * 255.0).round() as u8]
+}
+
+fn rgba_to_hsla([r, g, b, a]: [u8; 4]) -> Hsla {
+    let mut color = rgb_to_hsla([r, g, b]);
+    color.a = f32::from(a) / 255.0;
+    color
+}
+
 pub(super) fn hsla_to_rgb(color: Hsla) -> [u8; 3] {
     let rgba: Rgba = color.into();
     [
@@ -612,6 +692,99 @@ mod tests {
     use gpui_kit::component::Root;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{Render, TestAppContext};
+    #[test]
+    fn rgba_hex_preserves_alpha_and_rejects_invalid_channels() {
+        for (text, expected) in [
+            ("#12345680", [0x12, 0x34, 0x56, 128]),
+            ("#1230", [0x11, 0x22, 0x33, 0]),
+            ("#123456", [0x12, 0x34, 0x56, 255]),
+        ] {
+            assert_eq!(parse_color_hex(text, true), Some(expected));
+            assert_eq!(hsla_to_rgba(rgba_to_hsla(expected)), expected);
+            assert_eq!(
+                parse_color_hex(&color_hex(expected, true), true),
+                Some(expected)
+            );
+        }
+        for text in ["#12345", "+1234567", "#gg000080", "#💡💡"] {
+            assert_eq!(parse_color_hex(text, true), None);
+        }
+        assert_eq!(parse_color_hex("#12345680", false), None);
+    }
+
+    struct BackgroundControl {
+        app: Entity<AppView>,
+    }
+    impl Render for BackgroundControl {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().w_96().p_4().child(
+                self.app.read(cx).text_groups[0]
+                    .background_color
+                    .render_control(),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn background_color_picker_and_hex_keep_the_same_alpha(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let app = cx.new(|cx| {
+                let mut app = AppView::new_with_settings_path(None, window, cx);
+                app.text_groups[0].background_enabled = true;
+                app
+            });
+            let view = cx.new(|_| BackgroundControl { app });
+            Root::new(view, window, cx)
+        });
+        let view = root.read_with(cx, |root, _| {
+            root.view()
+                .clone()
+                .downcast::<BackgroundControl>()
+                .ok()
+                .unwrap()
+        });
+        let app = view.read_with(cx, |view, _| view.app.clone());
+        let color = app.read_with(cx, |app, _| app.text_groups[0].background_color.clone());
+        cx.run_until_parked();
+        for (text, expected) in [
+            ("#12345680", [18, 52, 86, 128]),
+            ("#12345600", [18, 52, 86, 0]),
+            ("#123456FF", [18, 52, 86, 255]),
+        ] {
+            cx.update(|window, cx| {
+                window.click("gradient-color-hex", cx);
+                window.press("cmd-a", cx);
+                window.input(text, cx);
+            });
+            cx.run_until_parked();
+            app.read_with(cx, |app, cx| {
+                assert_eq!(app.build_text_groups(cx)[0].background, Some(expected))
+            });
+        }
+        cx.update(|window, cx| window.click("field-color-picker", cx));
+        cx.run_until_parked();
+        assert!(color.picker.read_with(cx, |state, _| state.is_open()));
+        let alpha = color
+            .picker
+            .read_with(cx, |state, _| state.sliders().alpha().clone());
+        let bounds = alpha.read_with(cx, |state, _| state.bounds());
+        assert!(bounds.size.width > gpui_kit::px(0.));
+        cx.simulate_click(bounds.center(), gpui_kit::Modifiers::default());
+        cx.run_until_parked();
+        app.read_with(cx, |app, cx| {
+            let rgba = app.build_text_groups(cx)[0].background.unwrap();
+            assert!(rgba[3].abs_diff(128) <= 3, "Alpha 滑块应写回颜色：{rgba:?}");
+            assert_eq!(
+                parse_color_hex(&color.hex.read(cx).value(), true),
+                Some(rgba)
+            );
+        });
+        cx.update(|window, cx| window.press("escape", cx));
+        cx.run_until_parked();
+        assert!(!color.picker.read_with(cx, |state, _| state.is_open()));
+    }
+
     struct BorderControl {
         app: Entity<AppView>,
     }

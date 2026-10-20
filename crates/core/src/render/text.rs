@@ -284,9 +284,22 @@ impl TextGroup {
         img_h: i32,
         watermark_params: &WatermarkParams,
     ) -> Result<Option<VipsImage>> {
-        let Some(image) =
-            self.text
-                .render_text(exif, img_h, watermark_params, &self.time_format)?
+        // 已采样的照片内自动颜色和手动颜色均已写入临时副本，不可再次覆盖。
+        let resolved;
+        let text = if let Some(background) = self.background.filter(|rgba| rgba[3] > 0) {
+            let base = watermark_params.text_background_color().unwrap_or([0; 3]);
+            let [r, g, b] = super::photo_contrast::blend_background(base, Some(background));
+            let color = if is_dark_color(r, g, b) {
+                [255; 3]
+            } else {
+                [0; 3]
+            };
+            resolved = self.with_auto_color(color);
+            &resolved.text
+        } else {
+            &self.text
+        };
+        let Some(image) = text.render_text(exif, img_h, watermark_params, &self.time_format)?
         else {
             return Ok(None);
         };
@@ -303,7 +316,8 @@ impl TextGroup {
         } else {
             image
         };
-        let image = super::text_border::apply(image, &self.border, img_h)?;
+        let image =
+            super::text_border::apply_background(image, &self.border, img_h, self.background)?;
         let padding = if self.photo_placement.is_some() {
             0
         } else {

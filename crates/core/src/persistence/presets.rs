@@ -45,10 +45,7 @@ const BUILTIN_PRESETS: &[(&str, &str)] = &[
         "百分比色卡&自定义尼康logo",
         include_str!("../../../../assets/presets/百分比色卡&自定义尼康logo.toml"),
     ),
-    (
-        "色卡",
-        include_str!("../../../../assets/presets/色卡.toml"),
-    ),
+    ("色卡", include_str!("../../../../assets/presets/色卡.toml")),
     (
         "文字在图片内部",
         include_str!("../../../../assets/presets/文字在图片内部.toml"),

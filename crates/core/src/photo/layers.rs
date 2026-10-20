@@ -34,7 +34,11 @@ pub(crate) trait LayerRenderer {
         group: &TextGroup,
         auto_color: Option<[u8; 3]>,
     ) -> Result<Option<Self::Image>>;
-    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>>;
+    fn photo_text_color(
+        &mut self,
+        rect: (i32, i32, i32, i32),
+        background: Option<[u8; 4]>,
+    ) -> Result<Option<[u8; 3]>>;
     fn palette(&mut self) -> Result<Option<Self::Image>>;
     fn background(&mut self, size: (i32, i32)) -> Result<Self::Image>;
     fn photo(&mut self) -> Result<Self::Image>;
@@ -302,12 +306,10 @@ pub(crate) fn prepare<R: LayerRenderer>(
             {
                 // 定位后才能取得真正覆盖的照片区域；自动颜色只用于本次渲染。
                 let (x, y, w, h) = R::content_bounds(&image)?;
-                let color = renderer.photo_text_color((
-                    origin.0 - img_x + x,
-                    origin.1 - img_y + y,
-                    w,
-                    h,
-                ))?;
+                let color = renderer.photo_text_color(
+                    (origin.0 - img_x + x, origin.1 - img_y + y, w, h),
+                    group.background,
+                )?;
                 if color.is_some()
                     && let Some(resolved) = renderer.text(group, color)?
                 {

@@ -1,4 +1,4 @@
-//! 为文字行或整组位图绘制边框；最小尺寸只增加留白，不缩放内容。
+//! 为文字行或整组位图绘制边框及组背景；最小尺寸只增加留白，不缩放内容。
 
 use crate::{
     media::{
@@ -10,12 +10,25 @@ use crate::{
 use vips::{Result, VipsBlendMode};
 
 pub(super) fn apply(image: VipsImage, border: &TextBorder, photo_height: i32) -> Result<VipsImage> {
+    apply_background(image, border, photo_height, None)
+}
+
+pub(super) fn apply_background(
+    image: VipsImage,
+    border: &TextBorder,
+    photo_height: i32,
+    background: Option<[u8; 4]>,
+) -> Result<VipsImage> {
     ensure_vips();
-    if !border.visible() {
+    if !border.visible() && background.is_none() {
         return Ok(image);
     }
     let scale = photo_height as f64;
-    let stroke = (border.width() * scale).max(0.1);
+    let stroke = if border.visible() {
+        (border.width() * scale).max(0.1)
+    } else {
+        0.0
+    };
     let inset = (border.inset() * scale + stroke).ceil() as i32;
     let [up, right_side, down, left_side] = [
         Placement::Up,
@@ -23,9 +36,15 @@ pub(super) fn apply(image: VipsImage, border: &TextBorder, photo_height: i32) ->
         Placement::Bottom,
         Placement::Left,
     ]
-    .map(|side| border.side(side));
-    // 只为启用的边预留描边和内边距，单边分隔线不能撑开另外三个方向。
-    let offsets = [up, right_side, down, left_side].map(|enabled| if enabled { inset } else { 0 });
+    .map(|side| border.enabled() && border.side(side));
+    // 背景在四边保留内边距；纯描边只为启用的边留白，单边分隔线不撑开其它方向。
+    let offsets = [up, right_side, down, left_side].map(|enabled| {
+        if enabled || background.is_some() {
+            inset
+        } else {
+            0
+        }
+    });
     let [mut offset_top, offset_right, offset_bottom, mut offset_left] = offsets;
     let natural_w = image.width() as i32 + offset_left + offset_right;
     let natural_h = image.height() as i32 + offset_top + offset_bottom;
@@ -74,8 +93,13 @@ pub(super) fn apply(image: VipsImage, border: &TextBorder, photo_height: i32) ->
         }
     }
     let [r, g, b] = border.color();
+    let fill = background.map(|[r, g, b, a]| {
+        let radius = (border.radius() * scale + stroke / 2.0).min(w.min(h) as f64 / 2.0);
+        let opacity = f64::from(a) / 255.0;
+        format!(r#"<rect width="{w}" height="{h}" rx="{radius}" fill="rgb({r},{g},{b})" fill-opacity="{opacity}"/>"#)
+    }).unwrap_or_default();
     let svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><path d="{path}" fill="none" stroke="rgb({r},{g},{b})" stroke-width="{stroke}" stroke-linejoin="round"/></svg>"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">{fill}<path d="{path}" fill="none" stroke="rgb({r},{g},{b})" stroke-width="{stroke}" stroke-linejoin="round"/></svg>"#
     );
     let borrowed = vips::VipsImage::from_buffer(svg.as_bytes())?;
     // 立即求值，不能让延迟解码借用局部 SVG 字符串。

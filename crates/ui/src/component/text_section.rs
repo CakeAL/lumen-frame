@@ -16,6 +16,7 @@ use gpui_kit::component::{
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::SelectState,
+    switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -375,6 +376,8 @@ pub(in crate::app) struct TextGroupEditor {
     pub direction: Entity<DirectionSelect>,
     pub padding: NumberField,
     pub border: TextBorderControls,
+    pub background_enabled: bool,
+    pub background_color: ColorField,
     pub time_format: Entity<InputState>,
     pub lines: Vec<TextLine>,
     pub expanded_line_ids: Vec<u64>,
@@ -415,6 +418,8 @@ impl TextGroupEditor {
             cx,
         );
         let border = TextBorderControls::new(&group.border, window, cx);
+        let background_color =
+            ColorField::new_rgba(group.background.unwrap_or([0, 0, 0, 255]), window, cx);
         let attachment_side = group
             .attachment
             .as_ref()
@@ -439,6 +444,7 @@ impl TextGroupEditor {
         let mut subscriptions = Vec::new();
         subscriptions.push(on_select(&direction, window, cx, |_, _, _| {}));
         subscriptions.extend(padding.subscribe(window, cx, |_, _| {}));
+        subscriptions.extend(background_color.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(photo_inset.subscribe(window, cx, |_, _| {}));
         subscriptions.extend(attachment_gap.subscribe(window, cx, |_, _| {}));
         subscriptions.push(
@@ -470,6 +476,8 @@ impl TextGroupEditor {
             direction,
             padding,
             border,
+            background_enabled: group.background.is_some(),
+            background_color,
             time_format,
             lines,
             expanded_line_ids: Vec::new(),
@@ -478,6 +486,35 @@ impl TextGroupEditor {
             attachment_gap,
             _subscriptions: subscriptions,
         }
+    }
+
+    fn render_background(&self, view: Entity<AppView>, cx: &App) -> impl IntoElement {
+        let id = self.id;
+        v_flex()
+            .w_full()
+            .gap_3()
+            .child(
+                Switch::new(("text-group-background", id))
+                    .label("文字组背景")
+                    .checked(self.background_enabled)
+                    .on_change(move |enabled, _, cx| {
+                        view.update(cx, |this, cx| {
+                            if let Some(group) =
+                                this.text_groups.iter_mut().find(|group| group.id == id)
+                            {
+                                group.background_enabled = *enabled;
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            }
+                        });
+                    }),
+            )
+            .when(self.background_enabled, |this| {
+                this.child(self.background_color.render("背景颜色", false, cx))
+                    .child(description(
+                        "在颜色选择器中调整不透明度，或输入 #RRGGBBAA；自动文字颜色会考虑叠加后的背景。",
+                    ))
+            })
     }
 
     pub(in crate::app) fn attachment(&self, target: usize, cx: &App) -> GroupAttachment {
@@ -513,6 +550,9 @@ impl TextGroupEditor {
             }),
             padding: self.padding.value(cx),
             border: self.border.to_border(cx),
+            background: self
+                .background_enabled
+                .then(|| self.background_color.rgba_value(cx)),
             time_format: self.time_format.read(cx).value().to_string(),
             attachment: None,
         }
@@ -1155,7 +1195,13 @@ impl AppView {
                             }),
                         cx,
                     ))
-                    .child(group.border.render(group_id, view.clone(), cx))
+                    .child(group.render_background(view.clone(), cx))
+                    .child(group.border.render(
+                        group_id,
+                        group.background_enabled,
+                        view.clone(),
+                        cx,
+                    ))
                     .child(field(
                         "时间格式",
                         h_flex()
@@ -1617,6 +1663,8 @@ mod tests {
             );
         });
         cx.run_until_parked();
+        cx.update(|window, cx| window.click(("text-group-background", 0_u64), cx));
+        cx.run_until_parked();
         cx.update(|window, cx| window.click(("text-border-enabled", 0_u64), cx));
         cx.run_until_parked();
         for key in ["text-border-top", "text-border-right", "text-border-bottom"] {
@@ -1643,6 +1691,7 @@ mod tests {
                 snapshot.text_groups[0].text.text_params[0].align,
                 TextAlign::Left
             );
+            assert_eq!(snapshot.text_groups[0].background, Some([0, 0, 0, 255]));
             let border = &snapshot.text_groups[0].border;
             assert!(
                 snapshot.text_groups[0].text.text_params[0]
@@ -1664,7 +1713,13 @@ mod tests {
             }
             app.add_text_group(window, cx);
             assert!(!app.build_text_groups(cx)[1].border.enabled());
+            let mut snapshot = snapshot;
+            snapshot.text_groups[0].background = Some([12, 34, 56, 128]);
             app.restore_watermark(snapshot.clone(), window, cx);
+            assert_eq!(
+                app.build_text_groups(cx)[0].background,
+                Some([12, 34, 56, 128])
+            );
             assert_eq!(app.text_groups[0].photo_anchor, Some(PhotoAnchor::TopLeft));
             assert_eq!(
                 app.build_text_groups(cx)[0].border,

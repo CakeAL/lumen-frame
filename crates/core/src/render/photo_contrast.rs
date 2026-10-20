@@ -40,7 +40,11 @@ impl PhotoContrast {
     }
 
     /// 范围使用照片坐标；忽略照片外和完全透明的像素。
-    pub(crate) fn text_color(&self, (x, y, w, h): (i32, i32, i32, i32)) -> Option<[u8; 3]> {
+    pub(crate) fn text_color(
+        &self,
+        (x, y, w, h): (i32, i32, i32, i32),
+        background: Option<[u8; 4]>,
+    ) -> Option<[u8; 3]> {
         let (left, top) = (x.max(0), y.max(0));
         let (right, bottom) = ((x + w).min(self.size.0), (y + h).min(self.size.1));
         if left >= right || top >= bottom {
@@ -65,10 +69,8 @@ impl PhotoContrast {
                 let ix = (py * self.probe.width() as usize + px) * 4;
                 let pixel = &self.probe.pixels()[ix..ix + 4];
                 let alpha = f64::from(pixel[3]) / 255.0;
-                luminance += alpha
-                    * (0.2126 * linear(pixel[0])
-                        + 0.7152 * linear(pixel[1])
-                        + 0.0722 * linear(pixel[2]));
+                let [r, g, b] = blend_background([pixel[0], pixel[1], pixel[2]], background);
+                luminance += alpha * (0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b));
                 weight += alpha;
             }
         }
@@ -83,4 +85,17 @@ impl PhotoContrast {
             [255; 3]
         })
     }
+}
+
+/// 与 SVG / OVER 合成相同的 sRGB 通道混合，自动配色必须考虑 Alpha。
+pub(super) fn blend_background(base: [u8; 3], background: Option<[u8; 4]>) -> [u8; 3] {
+    let Some([r, g, b, a]) = background else {
+        return base;
+    };
+    std::array::from_fn(|ix| {
+        ((u32::from([r, g, b][ix]) * u32::from(a)
+            + u32::from(base[ix]) * (255 - u32::from(a))
+            + 127)
+            / 255) as u8
+    })
 }

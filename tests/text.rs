@@ -702,3 +702,75 @@ fn templates_preserve_internal_spaces_around_logo_fields() {
         "A   B"
     );
 }
+
+#[test]
+fn group_background_uses_alpha_shared_frame_and_automatic_text_color() {
+    use lumen_frame_core::media::image_write_to_memory;
+    let params = WatermarkParams {
+        solid_background: true,
+        background: [255; 3],
+        ..Default::default()
+    };
+    let mut group = TextGroup::default();
+    group.text.template = vec!["BACKGROUND".into()];
+    group.text.text_params.truncate(1);
+    group.border.set_min_width(0.4);
+    group.border.set_min_height(0.12);
+    group.border.set_radius(0.025);
+    group.border.set_inset(0.01);
+    for direction in [TextDirection::Horizontal, TextDirection::Vertical] {
+        group.direction = direction;
+        for (background, expected) in [
+            ([0, 0, 0, 255], [255; 3]),
+            ([255, 255, 255, 255], [0; 3]),
+            ([0, 0, 0, 64], [0; 3]),
+            ([0, 0, 0, 200], [255; 3]),
+        ] {
+            group.background = Some(background);
+            let image = group
+                .render_text(&ExifInfo::default(), 1000, &params)
+                .unwrap()
+                .unwrap();
+            let (w, h) = (image.width() as usize, image.height() as usize);
+            assert!(w >= 400 && h >= 120);
+            let pixels = image_write_to_memory(&image).unwrap();
+            assert_eq!(pixels[3], 0, "背景圆角之外应透明");
+            assert_eq!(&pixels[(w / 2) * 4..(w / 2) * 4 + 4], &background);
+            assert!(
+                pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|p| p[..3] == expected && p[3] == 255),
+                "自动文字应与叠加后的背景形成对比"
+            );
+            assert!(
+                group.text.text_params[0].color.is_none(),
+                "派生颜色不能写回输入"
+            );
+        }
+    }
+    group.direction = TextDirection::Horizontal;
+    group.background = Some([0, 0, 0, 128]);
+    group.text.text_params[0].color = Some([255, 0, 0]);
+    group.border.set_enabled(true);
+    group.border.set_color([0, 120, 220]);
+    group.border.set_width(0.002);
+    for side in [Placement::Up, Placement::Right, Placement::Bottom] {
+        group.border.set_side(side, false);
+    }
+    let image = group
+        .render_text(&ExifInfo::default(), 1000, &params)
+        .unwrap()
+        .unwrap();
+    let (w, h) = (image.width() as usize, image.height() as usize);
+    let pixels = image_write_to_memory(&image).unwrap();
+    assert_eq!(
+        &pixels[(h / 2 * w) * 4..(h / 2 * w) * 4 + 4],
+        &[0, 120, 220, 255]
+    );
+    assert!(
+        pixels.as_chunks::<4>().0.contains(&[255, 0, 0, 255]),
+        "手动文字颜色优先"
+    );
+}

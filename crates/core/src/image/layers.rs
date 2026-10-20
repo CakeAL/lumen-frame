@@ -447,11 +447,20 @@ impl LayerRenderer for CachedRenderer<'_> {
         Ok(image)
     }
 
-    fn photo_text_color(&mut self, rect: (i32, i32, i32, i32)) -> Result<Option<[u8; 3]>> {
+    fn photo_text_color(
+        &mut self,
+        rect: (i32, i32, i32, i32),
+        background: Option<[u8; 4]>,
+    ) -> Result<Option<[u8; 3]>> {
         if self.cache.contrast.is_none() {
             self.cache.contrast = Some(PhotoContrast::new(self.base()?)?);
         }
-        Ok(self.cache.contrast.as_ref().unwrap().text_color(rect))
+        Ok(self
+            .cache
+            .contrast
+            .as_ref()
+            .unwrap()
+            .text_color(rect, background))
     }
 
     fn palette(&mut self) -> Result<Option<TextLayer>> {
