@@ -41,6 +41,35 @@ macOS 应用包中对应的可执行路径是 `Lumen Frame.app/Contents/MacOS/lu
 应用包名称为准）。使用该入口仍会执行原有 libvips 模块定位。
 标准输出只用于 MCP 协议，日志写入标准错误。
 
+### Windows 与 PowerShell
+
+MCP stdio 的 JSON 必须使用 **UTF-8**。直接配置 MCP 客户端启动 `.exe` 即可；自行用
+PowerShell 的 `ProcessStartInfo` 重定向管道时，必须在 `Start()` 前显式指定编码：
+
+```powershell
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+$info.StandardInputEncoding = $utf8
+$info.StandardOutputEncoding = $utf8
+$info.StandardErrorEncoding = $utf8
+```
+
+不要依赖终端编码或 Windows 默认代码页。默认编码可能让 `get_state` 等纯 ASCII 请求成功，
+但中文预设名、文字模板或文件路径变成非 UTF-8，表现为 `load_preset`、`add_text_group`
+等调用一直等待。服务遇到无效 UTF-8 会关闭连接，并在 stderr 提示编码修正方法；请修正
+客户端后重新连接，不要反复重发修改请求。读取回复时同时检查 JSON-RPC `error` 和工具
+`result.isError`，不能把收到了回复视为操作成功。
+
+可用随仓库提供的脚本检查真实 Windows 桌面连接（先打开应用）：
+
+```powershell
+./script/test-mcp-windows.ps1 -Executable 'C:\应用目录\lumen-frame.exe'
+./script/test-mcp-windows.ps1 -Executable 'C:\应用目录\lumen-frame.exe' -ExerciseWorkspace
+```
+
+默认检查握手、工具发现、工作区读取和预设列表。`-ExerciseWorkspace` 还会加载
+「右侧参数卡_文字加框」和「colorwalk_背景色卡」，添加中文文字组，并在结束前用版本检查
+恢复原水印；运行期间请勿编辑工作区。如发生并发修改，脚本会报告冲突并保留新状态。
+
 ## 独立无窗口会话
 
 批量处理且不需要桌面联动时，显式添加 `--mcp-headless`。此时工作线程拥有独立 `Session`，

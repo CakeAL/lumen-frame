@@ -507,6 +507,46 @@ mod tests {
         );
         assert!(imported.result.is_ok(), "{imported:?}");
         assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 1);
+        for name in ["右侧参数卡_文字加框", "colorwalk_背景色卡"] {
+            let loaded = call(
+                &endpoint,
+                Command::LoadPreset {
+                    name: name.into(),
+                    all_photos: false,
+                },
+                None,
+                cx,
+            );
+            assert!(loaded.result.is_ok(), "{name}: {loaded:?}");
+            let expected = crate::backend::presets::load_builtin(name).unwrap();
+            assert_eq!(
+                view.read_with(cx, |view, cx| view
+                    .build_text_groups(cx)
+                    .into_iter()
+                    .map(|group| (group.position, group.text.template))
+                    .collect::<Vec<_>>()),
+                expected
+                    .text_groups
+                    .into_iter()
+                    .map(|group| (group.position, group.text.template))
+                    .collect::<Vec<_>>(),
+                "中文预设必须同步到桌面文字控件"
+            );
+        }
+        let count = view.read_with(cx, |view, _| view.text_groups.len());
+        let added = call(
+            &endpoint,
+            Command::AddTextGroup {
+                group: TextGroup::default(),
+            },
+            None,
+            cx,
+        );
+        assert!(added.result.is_ok(), "{added:?}");
+        assert_eq!(
+            view.read_with(cx, |view, _| view.text_groups.len()),
+            count + 1
+        );
         let reply = call(
             &endpoint,
             Command::SetCustomText {

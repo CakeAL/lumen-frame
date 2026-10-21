@@ -53,9 +53,43 @@ async fn tools_follow_core_schemas_and_report_conflicts_over_the_wire() {
         .find(|tool| tool.name == "set_text_groups")
         .unwrap();
     assert!(groups.input_schema["$defs"].get("TextGroup").is_some());
+    for name in ["右侧参数卡_文字加框", "colorwalk_背景色卡"] {
+        let loaded = call(
+            &client,
+            "load_preset",
+            json!({"name": name, "all_photos": false}),
+        )
+        .await;
+        assert_ne!(loaded.is_error, Some(true), "{loaded:?}");
+    }
+    let added = call(
+        &client,
+        "add_text_group",
+        json!({"group": {
+            "text": {"template": ["下方文字框 📷"], "text_params": [{}]},
+            "position": "Bottom", "direction": "Horizontal", "align": "Center",
+            "time_format": "%Y/%m/%d"
+        }}),
+    )
+    .await;
+    assert_ne!(added.is_error, Some(true), "{added:?}");
+    assert_eq!(
+        owner
+            .lock()
+            .unwrap()
+            .current()
+            .text_groups
+            .last()
+            .unwrap()
+            .text
+            .template[0],
+        "下方文字框 📷"
+    );
     let state = call(&client, "get_state", json!({})).await;
-    assert_eq!(state.structured_content.as_ref().unwrap()["revision"], 0);
-    let result = call(&client,"patch_params",json!({"expected_revision":0,"changes":{"shadow_color":[255,255,255],"shadow_density":3.0}})).await;
+    let revision = state.structured_content.as_ref().unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let result = call(&client,"patch_params",json!({"expected_revision":revision,"changes":{"shadow_color":[255,255,255],"shadow_density":3.0}})).await;
     assert_ne!(result.is_error, Some(true));
     assert_eq!(owner.lock().unwrap().params().shadow_color, [255; 3]);
     let stale = call(
