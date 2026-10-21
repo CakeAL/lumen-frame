@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - website/**
+      - pics/**
+      - script/build-website.py
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -27,9 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Build static website
+        run: python3 script/build-website.py
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: website
+          path: target/website
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

@@ -21,25 +21,76 @@ Lumen Frame 是一款添加边框水印的工具。
 
 ## 界面预览
 
-默认样式：
+### 主界面
 
-<img src="pics/1.png" width="500">
+左侧选择或保存预设，中间查看照片与批量队列，右侧按「画面 / 水印」调整参数。底部统一设置导出目录、JPEG 质量与旋转，并支持导出当前照片或全部照片。
 
-白色边框样式：
+<img src="pics/main_page.jpg" alt="主界面：预设、照片预览与队列、参数面板及底部导出栏" width="800">
 
-<img src="pics/2.png" width="500">
+### 文字组编辑
 
-宽高比设置为16:9，左侧竖排文字，右侧显示时间和地区的样式：
+点击预览中的文字组打开独立编辑窗口，调整放置区域、位置、对齐、背景和边框；每行可使用 EXIF 模板字段，并分别设置字体、颜色和文字样式。
 
-<img src="pics/5.png" width="500">
+<img src="pics/text_group.jpg" alt="文字组编辑窗口：组布局设置与富文本模板编辑" width="800">
 
-生成黑白 + 彩色 Gain Map：
+### 黑白底图与彩色 Gain Map
 
-<img src="pics/3.png" width="500">
+预览黑白底图及对应的彩色 Gain Map，并导出包含两者的 JPEG。
 
-从视频生成 Motion Photo (需要手动指定FFmpeg的文件路径，本体不自带)：
+<img src="pics/black&amp;color_gain_map_image.png" alt="小工具：生成黑白底图与彩色 Gain Map" width="800">
 
-<img src="pics/4.png" width="500">
+### Motion Photo（实况照片）
+
+从视频中选择片段和封面帧，生成 Motion Photo。需要另行安装 FFmpeg，可自动检测或手动指定路径。
+
+<img src="pics/generate_motion_photo.png" alt="小工具：选择视频、片段与封面帧以生成 Motion Photo" width="800">
+
+<details>
+<summary>展开查看内置预设效果示例（10 款）</summary>
+
+以下为部分内置预设的效果，可在应用中载入后继续调整。
+
+**基础样式**
+
+<img src="pics/presets/基础样式.jpeg" alt="基础样式预设效果" width="700">
+
+**白色边框**
+
+<img src="pics/presets/白色边框.jpeg" alt="白色边框预设效果" width="700">
+
+**16:9**
+
+<img src="pics/presets/16_9.jpeg" alt="16:9预设效果" width="700">
+
+**文字在上**
+
+<img src="pics/presets/文字在上.jpeg" alt="文字在上预设效果" width="700">
+
+**色卡**
+
+<img src="pics/presets/色卡.jpeg" alt="色卡预设效果" width="700">
+
+**百分比色卡与自定义尼康 Logo**
+
+<img src="pics/presets/百分比色卡&amp;自定义尼康logo.jpeg" alt="百分比色卡与自定义尼康 Logo预设效果" width="700">
+
+**Colorwalk 背景色卡**
+
+<img src="pics/presets/colorwalk_背景色卡.jpeg" alt="Colorwalk 背景色卡预设效果" width="700">
+
+**右侧参数卡：文字加框**
+
+<img src="pics/presets/右侧参数卡_文字加框.jpeg" alt="右侧参数卡：文字加框预设效果" width="700">
+
+**左侧参数卡：文字加框与背景颗粒**
+
+<img src="pics/presets/左侧参数卡_文字加框背景颗粒.jpeg" alt="左侧参数卡：文字加框与背景颗粒预设效果" width="700">
+
+**文字组背景色**
+
+<img src="pics/presets/文字组背景色.jpeg" alt="文字组背景色预设效果" width="700">
+
+</details>
 
 ## 下载与使用
 

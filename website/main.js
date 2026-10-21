@@ -4,63 +4,153 @@ const patterns = {
   "mac-intel": /^Lumen-Frame-.+-macOS-x86_64\.dmg$/i,
   windows: /^Lumen-Frame-.+-Windows-x86_64\.zip$/i,
 };
-
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const menuToggle = document.querySelector(".menu-toggle");
 const navLinks = document.querySelector(".nav-links");
+function closeMenu() {
+  menuToggle.setAttribute("aria-expanded", "false");
+  menuToggle.setAttribute("aria-label", "打开导航菜单");
+  navLinks.classList.remove("is-open");
+}
 menuToggle.addEventListener("click", () => {
   const expanded = menuToggle.getAttribute("aria-expanded") === "true";
   menuToggle.setAttribute("aria-expanded", String(!expanded));
   menuToggle.setAttribute("aria-label", expanded ? "打开导航菜单" : "关闭导航菜单");
   navLinks.classList.toggle("is-open", !expanded);
 });
-navLinks.addEventListener("click", (event) => {
-  if (event.target.closest("a")) {
-    menuToggle.setAttribute("aria-expanded", "false");
-    menuToggle.setAttribute("aria-label", "打开导航菜单");
-    navLinks.classList.remove("is-open");
+navLinks.addEventListener("click", event => { if (event.target.closest("a")) closeMenu(); });
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && menuToggle.getAttribute("aria-expanded") === "true") {
+    closeMenu();
+    menuToggle.focus();
   }
 });
 
-const track = document.querySelector(".carousel-track");
-const slides = [...track.querySelectorAll(".carousel-slide")];
-const dots = [...document.querySelectorAll(".carousel-dots button")];
+const gallery = document.querySelector("#presets");
+const track = document.querySelector("#preset-track");
+const slides = [...track.querySelectorAll(".preset-slide")];
+const selectors = [...document.querySelectorAll("[data-slide]")];
 const prev = document.querySelector(".carousel-prev");
 const next = document.querySelector(".carousel-next");
 const count = document.querySelector("#carousel-count");
 let currentSlide = 0;
-
 function updateCarousel(index) {
   currentSlide = Math.max(0, Math.min(slides.length - 1, index));
   count.textContent = `${String(currentSlide + 1).padStart(2, "0")} / ${String(slides.length).padStart(2, "0")}`;
-  dots.forEach((dot, dotIndex) => {
-    if (dotIndex === currentSlide) dot.setAttribute("aria-current", "true");
-    else dot.removeAttribute("aria-current");
+  selectors.forEach((button, ix) => {
+    if (ix === currentSlide) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  });
+  // 非当前页不进入键盘焦点顺序，方向键仍可在轮播区域切换。
+  slides.forEach((slide, ix) => {
+    const active = ix === currentSlide;
+    slide.querySelector("button").tabIndex = active ? 0 : -1;
+    if (active) slide.removeAttribute("aria-hidden");
+    else slide.setAttribute("aria-hidden", "true");
   });
   prev.disabled = currentSlide === 0;
   next.disabled = currentSlide === slides.length - 1;
 }
-function showSlide(index) {
-  const targetIndex = Math.max(0, Math.min(slides.length - 1, index));
-  track.scrollTo({
-    left: slides[targetIndex].offsetLeft - slides[0].offsetLeft,
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-  });
-  updateCarousel(targetIndex);
+function showSlide(index, behavior = reducedMotion.matches ? "instant" : "smooth") {
+  const target = Math.max(0, Math.min(slides.length - 1, index));
+  updateCarousel(target);
+  track.scrollTo({ left: slides[target].offsetLeft - slides[0].offsetLeft, behavior });
 }
 prev.addEventListener("click", () => showSlide(currentSlide - 1));
 next.addEventListener("click", () => showSlide(currentSlide + 1));
-dots.forEach((dot, index) => dot.addEventListener("click", () => showSlide(index)));
+selectors.forEach((button, ix) => button.addEventListener("click", () => showSlide(ix)));
+let scrollFrame = 0;
 track.addEventListener("scroll", () => {
-  const index = Math.round(track.scrollLeft / track.clientWidth);
-  updateCarousel(index);
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0;
+    if (track.clientWidth) updateCarousel(Math.round(track.scrollLeft / track.clientWidth));
+  });
 }, { passive: true });
-track.addEventListener("keydown", (event) => {
-  if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+track.addEventListener("keydown", event => {
+  if (["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
     event.preventDefault();
-    showSlide(currentSlide + (event.key === "ArrowRight" ? 1 : -1));
+    const index = event.key === "Home" ? 0 : event.key === "End" ? slides.length - 1 : currentSlide + (event.key === "ArrowRight" ? 1 : -1);
+    // 避免焦点停留在随后移出可视区域的放大按钮上。
+    if (event.target !== track) track.focus({ preventScroll: true });
+    showSlide(index);
   }
 });
+gallery.addEventListener("toggle", () => { if (gallery.open) showSlide(currentSlide, "instant"); });
+let galleryWidth = 0;
+new ResizeObserver(() => {
+  if (track.clientWidth && track.clientWidth !== galleryWidth) {
+    galleryWidth = track.clientWidth;
+    showSlide(currentSlide, "instant");
+  }
+}).observe(track);
 updateCarousel(0);
+
+const configTabs = [...document.querySelectorAll('[role="tab"]')];
+function selectConfig(tab) {
+  configTabs.forEach(button => {
+    const selected = button === tab;
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    document.getElementById(button.getAttribute("aria-controls")).hidden = !selected;
+  });
+}
+configTabs.forEach((tab, ix) => {
+  tab.addEventListener("click", () => selectConfig(tab));
+  tab.addEventListener("keydown", event => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const target = event.key === "Home" ? 0 : event.key === "End" ? configTabs.length - 1 : (ix + (event.key === "ArrowRight" ? 1 : -1) + configTabs.length) % configTabs.length;
+    selectConfig(configTabs[target]);
+    configTabs[target].focus();
+  });
+});
+for (const button of document.querySelectorAll("[data-copy]")) {
+  let feedbackTimer;
+  button.addEventListener("click", async () => {
+    const code = document.getElementById(button.dataset.copy);
+    const status = document.querySelector("#copy-status");
+    clearTimeout(feedbackTimer);
+    try {
+      await navigator.clipboard.writeText(code.textContent);
+      button.textContent = "已复制";
+      status.textContent = "配置已复制到剪贴板";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      button.textContent = "请手动复制";
+      status.textContent = "无法访问剪贴板，已选中配置，请按系统复制快捷键";
+    }
+    feedbackTimer = setTimeout(() => { button.textContent = "复制配置"; }, 2200);
+  });
+}
+
+const viewer = document.querySelector("#image-viewer");
+const viewerImage = document.querySelector("#viewer-image");
+let viewerTrigger;
+for (const button of document.querySelectorAll("[data-image]")) {
+  button.addEventListener("click", () => {
+    viewerTrigger = button;
+    viewerImage.src = button.dataset.image;
+    viewerImage.alt = button.dataset.caption;
+    document.querySelector("#viewer-caption").textContent = button.dataset.caption;
+    viewer.showModal();
+    document.body.classList.add("viewer-open");
+  });
+}
+document.querySelector(".viewer-close").addEventListener("click", () => viewer.close());
+viewer.addEventListener("click", event => {
+  const bounds = viewer.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) viewer.close();
+});
+viewer.addEventListener("close", () => {
+  document.body.classList.remove("viewer-open");
+  viewerImage.removeAttribute("src");
+  viewerTrigger?.focus({ preventScroll: true });
+});
 
 function recommend(platform, architecture) {
   const row = document.querySelector(`.download-row[data-platform="${platform}"]${architecture ? `[data-arch="${architecture}"]` : ""}`);
