@@ -2,9 +2,9 @@ name = "colorwalk_背景色卡"
 
 [params]
 background = [
-    164,
-    64,
-    23,
+    213,
+    221,
+    233,
 ]
 background_grain = true
 background_palette_rank = 0
@@ -30,7 +30,7 @@ shadow_size = 0.21
 solid_background = true
 
 [params.gradient_palette]
-theme = "Default"
+theme = "Colorful"
 
 [params.palette_card]
 align = "Right"
@@ -97,7 +97,7 @@ sides = [
 width = 0.0007999999821186065
 
 [text_groups.text]
-template = ["{拍摄日期}, {市}"]
+template = ["{拍摄日期}, {市}{自定义文本}"]
 
 [[text_groups.text.text_params]]
 align = "Center"
@@ -110,5 +110,5 @@ underline = false
 
 [[text_groups.text.text_params.spans]]
 bold = false
-end = 21
+end = 38
 start = 0

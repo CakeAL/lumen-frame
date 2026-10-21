@@ -406,9 +406,7 @@ impl AppView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_kit::{
-        ScrollDelta, TestAppContext, VisualTestContext, component::Root, point, test::TestWindowExt,
-    };
+    use gpui_kit::{TestAppContext, VisualTestContext, component::Root, test::TestWindowExt};
     use std::{cell::RefCell, rc::Rc};
     #[gpui_kit::test]
     fn custom_logo_page_imports_and_copies_template_fields(cx: &mut TestAppContext) {
@@ -436,11 +434,8 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(app.read_with(cx, |app, _| app.logos.assets.len()), 2);
         cx.update(|window, cx| {
-            window.scroll(
-                "photo-custom-text",
-                ScrollDelta::Pixels(point(px(0.), px(-4000.))),
-                cx,
-            );
+            window.within("inspector-tabs").click(1_usize, cx);
+            window.render_frame(cx);
             window.click("custom-logos-open", cx);
         });
         cx.run_until_parked();

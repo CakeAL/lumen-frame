@@ -667,26 +667,40 @@ impl AppView {
                 value.padding * 100.0
             ));
         }
+        let title = value
+            .text
+            .template
+            .iter()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| line.trim().chars().take(30).collect::<String>())
+            .unwrap_or_else(|| format!("空文字组 {}", ix + 1));
         let edit_view = view.clone();
-
         v_flex()
             .id(("text-group-row", id))
             .w_full()
-            .gap_2()
-            .p_3()
-            .border_1()
+            .gap_1()
+            .py_2()
+            .border_b_1()
             .border_color(cx.theme().border)
-            .rounded(cx.theme().radius)
             .child(
                 h_flex()
                     .w_full()
-                    .justify_between()
                     .gap_2()
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .child(format!("文字组 {}", ix + 1)),
+                        Button::new(("text-group-edit", id))
+                            .label(title)
+                            .ghost()
+                            .small()
+                            .justify_start()
+                            .flex_1()
+                            .min_w_0()
+                            .tooltip("编辑文字组…")
+                            .accessibility_label(format!("编辑文字组 {}", ix + 1))
+                            .on_click(move |_, window, cx| {
+                                edit_view.update(cx, |this, cx| {
+                                    this.open_text_group_editor(id, window, cx)
+                                })
+                            }),
                     )
                     .child(
                         Button::new(("text-group-remove", id))
@@ -700,17 +714,7 @@ impl AppView {
                             ),
                     ),
             )
-            .child(muted_text(summary, cx))
-            .child(
-                Button::new(("text-group-edit", id))
-                    .label("编辑…")
-                    .small()
-                    .w_full()
-                    .on_click(move |_, window, cx| {
-                        edit_view
-                            .update(cx, |this, cx| this.open_text_group_editor(id, window, cx));
-                    }),
-            )
+            .child(div().px_2().child(muted_text(summary, cx)))
             .into_any_element()
     }
 

@@ -251,47 +251,55 @@ impl NumberField {
         v_flex()
             .w_full()
             .gap_2()
+            .child(self.render_compact(label, disabled, cx))
+            .child(Slider::new(&self.slider).disabled(disabled).w_full())
+            .into_any_element()
+    }
+
+    pub(in crate::app) fn render_compact(
+        &self,
+        label: impl Into<SharedString>,
+        disabled: bool,
+        cx: &App,
+    ) -> AnyElement {
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap_2()
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(label_color(cx, disabled))
+                    .child(label.into()),
+            )
             .child(
                 h_flex()
-                    .w_full()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_sm()
-                            .text_color(label_color(cx, disabled))
-                            .child(label.into()),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_shrink_0()
-                            .gap_1()
-                            .items_center()
-                            .child(if self.slider_offset != 0.0 {
-                                NumberInput::new(&self.input)
-                                    .small()
-                                    .w_32()
-                                    .disabled(disabled)
-                                    .into_any_element()
-                            } else {
-                                Input::new(&self.input)
-                                    .small()
-                                    .w_20()
-                                    .disabled(disabled)
-                                    .into_any_element()
-                            })
-                            .when(!self.unit.is_empty(), |this| {
-                                this.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(self.unit),
-                                )
-                            }),
-                    ),
+                    .flex_shrink_0()
+                    .gap_1()
+                    .items_center()
+                    .child(if self.slider_offset != 0.0 {
+                        NumberInput::new(&self.input)
+                            .small()
+                            .w_32()
+                            .disabled(disabled)
+                            .into_any_element()
+                    } else {
+                        Input::new(&self.input)
+                            .small()
+                            .w_20()
+                            .disabled(disabled)
+                            .into_any_element()
+                    })
+                    .when(!self.unit.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(self.unit),
+                        )
+                    }),
             )
-            .child(Slider::new(&self.slider).disabled(disabled).w_full())
             .into_any_element()
     }
 }

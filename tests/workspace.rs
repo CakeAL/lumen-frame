@@ -16,8 +16,8 @@ use std::{cell::RefCell, rc::Rc};
 use gpui_kit::component::{Root, WindowExt as _};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
-    AppContext as _, Entity, ExternalPaths, FileDropEvent, InputEvent as _, ScrollDelta,
-    TestAppContext, VisualTestContext, point, px,
+    AppContext as _, Entity, ExternalPaths, FileDropEvent, InputEvent as _, TestAppContext,
+    VisualTestContext, point, px,
 };
 
 use lumen_frame_ui::{AppPage, AppView};
@@ -322,11 +322,7 @@ fn empty_photo_text_and_editor_lifetime_survive_switching(cx: &mut TestAppContex
     });
     cx.run_until_parked();
     cx.update(|window, cx| {
-        window.within("background-mode").scroll(
-            0_usize,
-            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
-            cx,
-        );
+        window.within("inspector-tabs").click(1_usize, cx);
         window.render_frame(cx);
         window.click(("text-group-edit", 0_u64), cx);
         window.render_frame(cx);
@@ -534,11 +530,7 @@ fn text_group_editor_opens_in_a_separate_window(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     cx.update(|window, cx| {
-        window.within("background-mode").scroll(
-            0_usize,
-            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
-            cx,
-        );
+        window.within("inspector-tabs").click(1_usize, cx);
         window.render_frame(cx);
         window.click(("text-group-edit", 0_u64), cx);
         window.render_frame(cx);
@@ -558,11 +550,7 @@ fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
 
     assert_eq!(view.read_with(cx, |view, _| view.text_group_count()), 1);
     cx.update(|window, cx| {
-        window.within("background-mode").scroll(
-            0_usize,
-            ScrollDelta::Pixels(point(px(0.), px(-2_000.))),
-            cx,
-        );
+        window.within("inspector-tabs").click(1_usize, cx);
         window.render_frame(cx);
         window.click("text-group-add", cx);
         window.render_frame(cx);
@@ -573,4 +561,126 @@ fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
         view.read_with(cx, |view, _| view.text_editor_window_count()),
         1
     );
+}
+
+/// 导航状态与照片配置分离；自定义文本和导出在两个参数页签中始终可见。
+#[gpui_kit::test]
+fn inspector_tabs_and_sections_keep_common_controls_visible(cx: &mut TestAppContext) {
+    use gpui_kit::component::{Theme, ThemeMode};
+    let (view, cx) = workspace(cx);
+    cx.run_until_parked();
+    let before = view.read_with(cx, |view, _| view.params().clone());
+    cx.update(|window, cx| {
+        assert!(window.try_find("background-grain").is_none());
+        window.click("inspector-canvas-toggle", cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.click("inspector-background-toggle", cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        assert!(window.try_find("background-grain").is_some());
+        window.press("enter", cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, _| assert!(window.try_find("background-grain").is_none()));
+    for (width, height, font, mode) in [
+        (1180., 680., 14., ThemeMode::Light),
+        (1440., 900., 18., ThemeMode::Dark),
+    ] {
+        cx.simulate_resize(gpui_kit::size(px(width), px(height)));
+        cx.update(|window, cx| {
+            Theme::change(mode, Some(window), cx);
+            Theme::global_mut(cx).font_size = px(font);
+            Theme::sync_base(cx);
+            window.refresh();
+        });
+        cx.run_until_parked();
+        for tab in [1_usize, 0] {
+            cx.update(|window, cx| {
+                window.within("inspector-tabs").click(tab, cx);
+                window.render_frame(cx);
+                let input = window.find("photo-custom-text").bounds();
+                let tabs = window.within("inspector-tabs").find(0_usize).bounds();
+                let export = window.find("export").bounds();
+                let current = window.find("export-current").bounds();
+                let folder = window.find("output-folder-pick").bounds();
+                assert!(input.bottom() <= tabs.top());
+                assert_eq!(export.top(), current.top());
+                assert!(export.top() >= tabs.bottom());
+                assert!(export.bottom() <= px(height));
+                assert!(export.right() <= px(width));
+                assert!(folder.right() < current.left());
+                assert_eq!(window.try_find("text-group-add").is_some(), tab == 1);
+            });
+        }
+    }
+    assert_eq!(view.read_with(cx, |view, _| view.params().clone()), before);
+}
+
+#[gpui_kit::test]
+fn inspector_disclosure_animates_and_respects_reduced_motion(cx: &mut TestAppContext) {
+    let (view, cx) = workspace(cx);
+    cx.update(|window, cx| {
+        cx.set_reduce_motion(false);
+        window.refresh();
+    });
+    cx.run_until_parked();
+    let before = view.read_with(cx, |view, _| view.params().clone());
+    cx.update(|window, cx| {
+        window.click("inspector-background-toggle", cx);
+        window.render_frame(cx);
+    });
+    cx.executor().advance_clock(Duration::from_millis(60));
+    let partial = cx.update(|window, cx| {
+        window.render_frame(cx);
+        window
+            .find(("inspector-panel", 2_usize))
+            .bounds()
+            .size
+            .height
+    });
+    assert!(partial > px(0.), "展开过程中应逐渐显示内容");
+    cx.update(|window, cx| {
+        window.click("inspector-background-toggle", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(("inspector-panel", 2_usize))
+                .bounds()
+                .size
+                .height,
+            partial,
+            "中途反向应从当前高度继续"
+        );
+    });
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("background-grain").is_none());
+        cx.set_reduce_motion(true);
+        window.refresh();
+        window.render_frame(cx);
+        window.click("inspector-background-toggle", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .find(("inspector-panel", 2_usize))
+                .bounds()
+                .size
+                .height
+                > partial
+        );
+        window.press("enter", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window
+                .find(("inspector-panel", 2_usize))
+                .bounds()
+                .size
+                .height,
+            px(0.),
+            "减少动态效果时应立即收起"
+        );
+    });
+    assert_eq!(view.read_with(cx, |view, _| view.params().clone()), before);
 }

@@ -11,7 +11,6 @@ use crate::backend::watermark::{BackgroundKind, PaletteTheme};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
-    group_box::GroupBox,
     h_flex,
     popover::Popover,
     select::Select,
@@ -74,9 +73,9 @@ impl Render for DraggedGradientColor {
 impl AppView {
     pub(in crate::app) fn render_background_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let kind = self.backend.params().background_kind();
-        GroupBox::new()
-            .id("background-section")
-            .title("背景")
+        v_flex()
+            .w_full()
+            .gap_3()
             .child(
                 TabBar::new("background-mode")
                     .segmented()
@@ -133,12 +132,12 @@ impl AppView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let enabled = self.backend.params().photo_border.enabled();
-        GroupBox::new()
-            .id("photo-border-section")
-            .title("边框")
+        v_flex()
+            .w_full()
+            .gap_3()
             .child(
                 Switch::new("photo-border-enabled")
-                    .label("启用边框")
+                    .label("照片描边")
                     .checked(enabled)
                     .on_change(cx.listener(|this, enabled: &bool, _, cx| {
                         this.backend.params_mut().photo_border.set_enabled(*enabled);
@@ -153,7 +152,7 @@ impl AppView {
                     .child(
                         self.controls
                             .photo_border_color
-                            .render("边框颜色", false, cx),
+                            .render("描边颜色", false, cx),
                     )
                     .child(self.render_photo_palette(PaletteTarget::Border, cx))
             })

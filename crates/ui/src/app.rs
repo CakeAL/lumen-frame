@@ -40,7 +40,9 @@ use crate::backend::{
 use super::image::{PreviewJob, export_colour_gainmap, export_gainmap, render_thumbnail};
 use behavior::update::UpdateState;
 use component::field::index_of;
-use component::inspector::{ASPECT_RATIOS, AspectRatioChoice, ParameterControls, preset_of};
+use component::inspector::{
+    ASPECT_RATIOS, AspectRatioChoice, InspectorState, ParameterControls, preset_of,
+};
 use component::preview::WatermarkPreview;
 use component::queue::is_supported_image;
 use component::text_section::TextGroupEditor;
@@ -105,8 +107,7 @@ pub struct AppView {
     next_text_line_id: u64,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
     font_names: Vec<SharedString>,
-    /// 边框宽度那组滑块是否展开。
-    border_width_open: bool,
+    inspector: InspectorState,
     /// 宽高比下拉当前的选择。
     aspect_choice: AspectRatioChoice,
 
@@ -257,7 +258,7 @@ impl AppView {
             next_text_group_id: 1,
             next_text_line_id,
             font_names,
-            border_width_open: false,
+            inspector: InspectorState::default(),
             aspect_choice,
             controls,
             background_state: Default::default(),

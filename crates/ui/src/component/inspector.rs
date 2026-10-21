@@ -6,12 +6,11 @@
 
 use gpui_kit::base::{
     Accordion as BaseAccordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger,
+    motion::{MotionReveal, Transition, transition},
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
-    accordion::Accordion,
     button::{Button, ButtonVariants as _},
-    group_box::GroupBox,
     h_flex,
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
@@ -25,13 +24,13 @@ use gpui_kit::prelude::*;
 use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, Entity, EntityId, Focusable as _, FontWeight, Hsla,
-    IntoElement, KeyDownEvent, Keystroke, Role, SharedString, Subscription, Window, black, div,
-    linear_color_stop, linear_gradient, relative, rgba, white,
+    IntoElement, KeyDownEvent, Keystroke, Role, ScrollHandle, SharedString, Subscription, Window,
+    black, div, linear_color_stop, linear_gradient, percentage, relative, rgba, white,
 };
 
 use crate::backend::watermark::{
-    BackgroundGradient, PaletteTheme, Placement, TextAlign, TextDirection, TextGroup,
-    WatermarkParams,
+    BackgroundGradient, BackgroundKind, PaletteTheme, Placement, TextAlign, TextDirection,
+    TextGroup, WatermarkParams,
 };
 
 use super::super::{AppView, ExportState, PresetScope};
@@ -105,6 +104,54 @@ fn preset_section_label(label: &'static str, cx: &Context<AppView>) -> impl Into
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().muted_foreground)
         .child(label)
+}
+
+/// 检查器仅持有导航、展开和滚动状态；参数仍由后端会话持有。
+pub(in crate::app) struct InspectorState {
+    tab: usize,
+    expanded: [bool; 3],
+    scroll: [ScrollHandle; 2],
+}
+
+#[derive(Clone, Copy)]
+enum InspectorSection {
+    Canvas,
+    Photo,
+    Background,
+}
+
+impl InspectorSection {
+    fn index(self) -> usize {
+        match self {
+            Self::Canvas => 0,
+            Self::Photo => 1,
+            Self::Background => 2,
+        }
+    }
+    fn id(self) -> &'static str {
+        match self {
+            Self::Canvas => "inspector-canvas-toggle",
+            Self::Photo => "inspector-photo-toggle",
+            Self::Background => "inspector-background-toggle",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::Canvas => "画布",
+            Self::Photo => "照片外观",
+            Self::Background => "背景",
+        }
+    }
+}
+
+impl Default for InspectorState {
+    fn default() -> Self {
+        Self {
+            tab: 0,
+            expanded: [true, false, false],
+            scroll: [ScrollHandle::new(), ScrollHandle::new()],
+        }
+    }
 }
 
 /// 模糊强度的上限。
@@ -568,7 +615,16 @@ impl AppView {
         }
     }
 
-    pub(in crate::app) fn render_inspector(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub(in crate::app) fn render_inspector(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = self.selected_photo();
+        let photo_name = selected
+            .and_then(|photo| photo.path().file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "新照片默认样式".to_owned());
         v_flex()
             .h_full()
             .w_80()
@@ -588,19 +644,28 @@ impl AppView {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(cx.theme().foreground)
                             .flex_1()
-                            .min_w_0()
-                            .child("水印参数"),
+                            .child("参数"),
+                    )
+                    .child(
+                        Button::new("preset-reset")
+                            .icon(IconName::Undo2)
+                            .ghost()
+                            .small()
+                            .tooltip("恢复默认参数…")
+                            .accessibility_label("恢复默认参数…")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_reset_params(window, cx)
+                            })),
                     )
                     .child(
                         Button::new("apply-settings-to-all")
                             .label("应用到全部")
                             .small()
                             .outline()
-                            .tooltip("应用当前设置到所有照片")
+                            .tooltip("将当前样式应用到所有照片，保留各照片的自定义文本")
                             .accessibility_label("应用当前设置到所有照片")
-                            .disabled(self.selected_photo_id().is_none())
+                            .disabled(selected.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.apply_current_settings_to_all(window, cx)
                             })),
@@ -608,18 +673,22 @@ impl AppView {
             )
             .child(
                 v_flex()
-                    .id("inspector-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .gap_6()
+                    .w_full()
+                    .flex_shrink_0()
+                    .gap_3()
                     .p_4()
-                    .overflow_y_scroll()
-                    .child(description(if self.selected_photo_id().is_some() {
-                        "参数与文字水印仅修改当前照片"
-                    } else {
-                        "当前配置用于后续导入的照片"
-                    }))
                     .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().truncate().child(photo_name))
+                            .child(description(if selected.is_some() {
+                                "修改仅作用于当前照片"
+                            } else {
+                                "当前样式用于后续导入的照片"
+                            })),
+                    )
+                    .child(field(
+                        "自定义文本",
                         h_flex()
                             .w_full()
                             .gap_2()
@@ -627,36 +696,234 @@ impl AppView {
                                 Input::new(&self.controls.custom_text)
                                     .id("photo-custom-text")
                                     .aria_label("当前图片的自定义文本")
-                                    .disabled(self.selected_photo_id().is_none())
+                                    .disabled(selected.is_none())
                                     .flex_1()
                                     .min_w_0(),
                             )
                             .child(
                                 Button::new("photo-custom-text-next")
-                                    .label("->")
+                                    .icon(IconName::ChevronRight)
                                     .size_8()
                                     .p_0()
                                     .tooltip("下一张照片")
                                     .accessibility_label("下一张照片")
                                     .disabled(
-                                        self.selected_photo_id().is_none()
+                                        selected.is_none()
                                             || self.photos().last().map(|photo| photo.id())
                                                 == self.selected_photo_id(),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.select_adjacent_photo(false, window, cx);
                                         this.controls.custom_text.update(cx, |input, cx| {
-                                            window.focus(&input.focus_handle(cx), cx);
+                                            window.focus(&input.focus_handle(cx), cx)
                                         });
                                     })),
                             ),
-                    )
-                    .child(self.render_canvas_section(cx))
-                    .child(self.render_background_section(cx))
-                    .child(self.render_photo_border_section(cx))
-                    .child(self.render_image_section(cx))
-                    .child(self.render_text_section(cx))
-                    .child(self.render_palette_card_section(cx)),
+                        cx,
+                    ))
+                    .child(
+                        TabBar::new("inspector-tabs")
+                            .segmented()
+                            .w_full()
+                            .child(Tab::new().label("画面").flex_1())
+                            .child(Tab::new().label("水印").flex_1())
+                            .selected_index(self.inspector.tab)
+                            .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                this.inspector.tab = *ix;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .id(if self.inspector.tab == 0 {
+                        "inspector-image-scroll"
+                    } else {
+                        "inspector-watermark-scroll"
+                    })
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.inspector.scroll[self.inspector.tab])
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_4()
+                            .px_4()
+                            .pb_4()
+                            .when(self.inspector.tab == 0, |this| {
+                                let params = self.backend.params();
+                                let ratio = params
+                                    .aspect_ratio
+                                    .map(|(w, h)| {
+                                        format!("{}:{}", format_number(w), format_number(h))
+                                    })
+                                    .unwrap_or_else(|| "不限比例".into());
+                                let canvas = format!(
+                                    "{ratio} · 留白 {:.1}/{:.1}/{:.1}/{:.1}%",
+                                    params.border_ratio.0 * 100.,
+                                    params.border_ratio.1 * 100.,
+                                    params.border_ratio.2 * 100.,
+                                    params.border_ratio.3 * 100.
+                                );
+                                let photo = format!(
+                                    "描边{} · 圆角 {:.1}% · 阴影{}",
+                                    if params.photo_border.enabled() {
+                                        "开启"
+                                    } else {
+                                        "关闭"
+                                    },
+                                    params.border_radius * 100.,
+                                    if params.shadow_size > 0. {
+                                        "开启"
+                                    } else {
+                                        "关闭"
+                                    }
+                                );
+                                let background = match params.background_kind() {
+                                    BackgroundKind::Photo => {
+                                        format!("照片模糊 {}", format_number(params.blur_sigma))
+                                    }
+                                    BackgroundKind::Solid => "纯色".into(),
+                                    BackgroundKind::Gradient => {
+                                        format!("渐变 · {} 色", params.gradient.colors().len())
+                                    }
+                                };
+                                let background = format!(
+                                    "{background} · 颗粒{}",
+                                    if params.background_grain {
+                                        "开启"
+                                    } else {
+                                        "关闭"
+                                    }
+                                );
+                                this.child(self.render_inspector_section(
+                                    InspectorSection::Canvas,
+                                    canvas,
+                                    self.render_canvas_section(cx).into_any_element(),
+                                    window,
+                                    cx,
+                                ))
+                                .child(self.render_inspector_section(
+                                    InspectorSection::Photo,
+                                    photo,
+                                    self.render_image_section(cx).into_any_element(),
+                                    window,
+                                    cx,
+                                ))
+                                .child(
+                                    self.render_inspector_section(
+                                        InspectorSection::Background,
+                                        background,
+                                        self.render_background_section(cx).into_any_element(),
+                                        window,
+                                        cx,
+                                    ),
+                                )
+                            })
+                            .when(self.inspector.tab == 1, |this| {
+                                this.child(self.render_text_section(cx))
+                                    .child(self.render_palette_card_section(cx))
+                            }),
+                    ),
+            )
+    }
+
+    fn render_inspector_section(
+        &self,
+        section: InspectorSection,
+        summary: String,
+        content: impl IntoElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ix = section.index();
+        let title = section.title();
+        // 共用进度让内容与箭头同步；由框架处理反向切换、减少动态效果和帧调度。
+        let progress = transition(
+            (section.id(), "disclosure"),
+            if self.inspector.expanded[ix] {
+                1_f32
+            } else {
+                0_f32
+            },
+            Transition::new(cx.theme().motion_tokens().duration_normal),
+            window,
+            cx,
+        );
+        BaseAccordion::new(("inspector-section", ix))
+            .w_full()
+            .flex_shrink_0()
+            .child(
+                AccordionItem::new()
+                    .open(self.inspector.expanded[ix])
+                    .header(AccordionHeader::new(
+                        AccordionTrigger::new(section.id())
+                            .aria_label(title)
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .w_full()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary)
+                            .text_color(cx.theme().secondary_foreground)
+                            .focusable()
+                            .tab_index(0)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .hover(|this| this.bg(cx.theme().secondary_hover))
+                            .focus_visible(|this| this.border_color(cx.theme().ring))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(title),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .truncate()
+                                            .child(summary),
+                                    ),
+                            )
+                            .child(
+                                Icon::new(IconName::ChevronRight)
+                                    .xsmall()
+                                    .rotate(percentage(progress * 0.25)),
+                            )
+                            .on_change({
+                                let listener = cx.listener(move |this, open: &bool, _, cx| {
+                                    this.inspector.expanded[ix] = *open;
+                                    cx.notify();
+                                });
+                                move |open, _, window, cx| listener(&open, window, cx)
+                            }),
+                    ))
+                    .panel(
+                        AccordionPanel::new()
+                            .id(("inspector-panel", ix))
+                            // 收起动画结束才卸载；减少动态效果时保留测量以便立即展开。
+                            .keep_mounted(progress > 0. || cx.reduce_motion())
+                            .child(MotionReveal::new(
+                                ("inspector-reveal", ix),
+                                progress,
+                                v_flex()
+                                    .w_full()
+                                    .gap_3()
+                                    .pt_2()
+                                    .child(content)
+                                    .into_any_element(),
+                            )),
+                    ),
             )
     }
 
@@ -899,30 +1166,6 @@ impl AppView {
                             .iter()
                             .filter(|name| !self.builtin_preset_names.contains(*name))
                             .map(|name| self.render_preset_card(name.clone(), false, cx)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px_4()
-                    .py_3()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .gap_3()
-                            .child(
-                                Button::new("preset-reset")
-                                    .icon(IconName::Undo2)
-                                    .label("恢复默认参数")
-                                    .ghost()
-                                    .w_full()
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.confirm_reset_params(window, cx)
-                                    })),
-                            )
-                            .child(self.render_output_controls(cx)),
                     ),
             )
             .into_any_element()
@@ -1188,41 +1431,9 @@ impl AppView {
     fn render_canvas_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
         let equal = self.backend.params().border_equal;
-
-        // 四个边框滑块收进一个可折叠区：不调边框的时候没必要占四行。
-        let border_items = Accordion::new("border-width")
-            .multiple(false)
-            .bordered(false)
-            // 组件默认铺满父级高度，在自动高度的分组里显式交回去。
-            .h_auto()
-            .item(|item| {
-                item.title(muted_text(
-                    format!(
-                        "上 {:.1}% · 下 {:.1}% · 左 {:.1}% · 右 {:.1}%",
-                        self.backend.params().border_ratio.0 * 100.0,
-                        self.backend.params().border_ratio.1 * 100.0,
-                        self.backend.params().border_ratio.2 * 100.0,
-                        self.backend.params().border_ratio.3 * 100.0,
-                    ),
-                    cx,
-                ))
-                .open(self.border_width_open)
-                .child(controls.border_top.render("上边框", false, cx))
-                .child(controls.border_bottom.render("下边框", equal, cx))
-                .child(controls.border_left.render("左边框", equal, cx))
-                .child(controls.border_right.render("右边框", equal, cx))
-            })
-            .on_toggle_click(cx.listener(|this, open: &[usize], _, cx| {
-                let is_open = !open.is_empty();
-                if this.border_width_open != is_open {
-                    this.border_width_open = is_open;
-                    cx.notify();
-                }
-            }));
-
-        GroupBox::new()
-            .id("canvas-section")
-            .title("画布与边框")
+        v_flex()
+            .w_full()
+            .gap_3()
             .child(
                 Switch::new("border-equal")
                     .checked(equal)
@@ -1233,42 +1444,32 @@ impl AppView {
                         cx.notify();
                     })),
             )
-            .child(
-                v_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .child("边框宽度"),
-                    )
-                    .child(border_items),
-            )
-            .child(
-                field("宽高比", Select::new(&controls.aspect_ratio).w_full(), cx)
-                    .when(self.aspect_choice == AspectRatioChoice::Free, |this| {
-                        this.description("不限制：画布尺寸只跟照片和边框有关。")
-                    }),
-            )
+            .when(equal, |this| {
+                this.child(controls.border_top.render("四边留白", false, cx))
+            })
+            .when(!equal, |this| {
+                this.child(controls.border_top.render("上留白", false, cx))
+                    .child(controls.border_bottom.render("下留白", false, cx))
+                    .child(controls.border_left.render("左留白", false, cx))
+                    .child(controls.border_right.render("右留白", false, cx))
+            })
+            .child(field(
+                "宽高比",
+                Select::new(&controls.aspect_ratio).w_full(),
+                cx,
+            ))
             .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
                 this.child(
                     h_flex()
                         .w_full()
                         .gap_2()
-                        .items_center()
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .child(Input::new(&controls.aspect_width)),
                         )
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(":"),
-                        )
+                        .child(div().text_sm().child(":"))
                         .child(
                             div()
                                 .flex_1()
@@ -1278,7 +1479,7 @@ impl AppView {
                 )
             })
             .child(field(
-                "图片位置",
+                "照片位置",
                 TabBar::new("photo-position")
                     .segmented()
                     .w_full()
@@ -1290,115 +1491,53 @@ impl AppView {
                     .selected_index(
                         POSITIONS
                             .iter()
-                            .position(|(_, position)| *position == self.backend.params().position)
+                            .position(|(_, value)| *value == self.backend.params().position)
                             .unwrap_or(0),
                     )
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.backend.params_mut().position = POSITIONS[*index].1;
+                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                        this.backend.params_mut().position = POSITIONS[*ix].1;
                         this.refresh_preview(cx);
                         cx.notify();
                     })),
                 cx,
             ))
     }
-
-    // MARK: 背景
-
-    // MARK: 图片细节
 
     fn render_image_section(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.controls;
-
-        GroupBox::new()
-            .id("image-section")
-            .title("图片细节")
-            .child(controls.border_radius.render("圆角", false, cx))
-            .child(controls.shadow_size.render("阴影大小", false, cx))
-            .child(controls.shadow_density.render("阴影浓度", false, cx))
-            .child(field(
-                "阴影颜色",
-                TabBar::new("shadow-color")
-                    .segmented()
-                    .w_full()
-                    .children([
-                        Tab::new().label("黑色").flex_1(),
-                        Tab::new().label("白色").flex_1(),
-                    ])
-                    .selected_index(usize::from(self.backend.params().shadow_color == [255; 3]))
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.backend.params_mut().shadow_color =
-                            if *index == 1 { [255; 3] } else { [0; 3] };
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-                cx,
-            ))
-    }
-
-    fn render_output_controls(&self, cx: &Context<Self>) -> impl IntoElement {
-        let controls = &self.controls;
-
         v_flex()
             .w_full()
-            .gap_2()
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Input::new(&controls.output_folder)),
-                    )
-                    .child(
-                        Button::new("output-folder-pick")
-                            .icon(IconName::FolderOpen)
-                            .outline()
-                            .small()
-                            .tooltip("选择输出文件夹")
-                            .accessibility_label("选择输出文件夹")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.pick_output_folder(window, cx)
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .id("jpeg-quality")
-                    .map(|this| {
-                        #[cfg(test)]
-                        let this = this.test_support();
-                        this
-                    })
-                    .child(controls.quality.render("JPEG 质量", false, cx)),
-            )
-            .child(
-                Button::new("rotate-watermark-photo")
-                    .icon(IconName::RotateCw)
-                    .label(format!(
-                        "导出时顺时针旋转方向 · 当前 {}°",
-                        self.backend.params().rotation.degrees()
-                    ))
-                    .outline()
-                    .small()
-                    .w_full()
-                    .tooltip("统一旋转全部导出照片，预览同步显示旋转结果")
-                    .disabled(self.selected_photo().is_none())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.backend.params_mut().rotation = this.backend.params().rotation.next();
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-            )
-            .child(self.render_export_footer(cx))
+            .gap_3()
+            .child(controls.border_radius.render("圆角", false, cx))
+            .child(self.render_photo_border_section(cx))
+            .child(controls.shadow_size.render("阴影大小", false, cx))
+            .when(self.backend.params().shadow_size > 0., |this| {
+                this.child(
+                    controls
+                        .shadow_density
+                        .render_compact("阴影浓度", false, cx),
+                )
+                .child(field(
+                    "阴影颜色",
+                    TabBar::new("shadow-color")
+                        .segmented()
+                        .w_full()
+                        .child(Tab::new().label("黑色").flex_1())
+                        .child(Tab::new().label("白色").flex_1())
+                        .selected_index(usize::from(self.backend.params().shadow_color == [255; 3]))
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.backend.params_mut().shadow_color =
+                                if *ix == 1 { [255; 3] } else { [0; 3] };
+                            this.refresh_preview(cx);
+                            cx.notify();
+                        })),
+                    cx,
+                ))
+            })
     }
 
-    /// 当前照片与全部照片是同一提交动作的两种范围，批量导出保留 primary 强调。
-    fn render_export_footer(&self, cx: &Context<Self>) -> impl IntoElement {
-        let total = self.photos().len();
-        let unavailable = self.backend.params().output_folder.is_none()
-            || matches!(self.export, ExportState::Running { .. });
+    /// 导出是整个工作区的操作，固定在三栏下方，不随预设或参数滚动。
+    pub(in crate::app) fn render_export_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let status = match &self.export {
             ExportState::Running { completed, total } => format!("正在导出 {completed}/{total}"),
             ExportState::Finished {
@@ -1410,46 +1549,112 @@ impl AppView {
             }
             ExportState::Idle => String::new(),
         };
-
         v_flex()
             .w_full()
+            .flex_shrink_0()
             .gap_2()
+            .px_4()
+            .py_3()
+            .border_t_1()
+            .border_color(cx.theme().border)
             .child(
                 h_flex()
                     .w_full()
-                    .gap_2()
+                    .gap_4()
                     .child(
-                        Button::new("export-current")
-                            .icon(gpui_kit::assets::IconName::Download)
-                            .label("导出当前")
-                            .outline()
+                        h_flex()
                             .flex_1()
                             .min_w_0()
-                            .disabled(unavailable || self.selected_photo_id().is_none())
-                            .tooltip("仅导出当前选中的照片")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.export_current(window, cx)),
+                            .gap_2()
+                            .child(div().text_sm().flex_shrink_0().child("导出到"))
+                            .child(
+                                Input::new(&self.controls.output_folder)
+                                    .aria_label("输出文件夹")
+                                    .small()
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                Button::new("output-folder-pick")
+                                    .icon(IconName::FolderOpen)
+                                    .outline()
+                                    .small()
+                                    .tooltip("选择输出文件夹")
+                                    .accessibility_label("选择输出文件夹")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.pick_output_folder(window, cx)
+                                    })),
                             ),
                     )
                     .child(
-                        Button::new("export")
-                            .icon(IconName::FolderOpen)
-                            .label("导出全部")
-                            .primary()
-                            .flex_1()
-                            .min_w_0()
-                            .disabled(unavailable || total == 0 || self.photo_import.pending > 0)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.export_all(window, cx)),
-                            ),
-                    ),
+                        div()
+                            .id("jpeg-quality")
+                            .w_48()
+                            .map(|this| {
+                                #[cfg(test)]
+                                let this = this.test_support();
+                                this
+                            })
+                            .child(self.controls.quality.render_compact("JPEG 质量", false, cx)),
+                    )
+                    .child(
+                        Button::new("rotate-watermark-photo")
+                            .icon(IconName::RotateCw)
+                            .label(format!(
+                                "旋转 {}°",
+                                self.backend.params().rotation.degrees()
+                            ))
+                            .outline()
+                            .small()
+                            .tooltip("顺时针旋转全部导出照片，预览同步更新")
+                            .disabled(self.selected_photo().is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.backend.params_mut().rotation =
+                                    this.backend.params().rotation.next();
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().w_64().child(self.render_export_footer(cx))),
             )
             .when(!status.is_empty(), |this| {
                 this.child(muted_text(status, cx))
             })
-            .child(description(match &self.backend.params().output_folder {
-                Some(folder) => format!("导出到 {}", folder.display()),
-                None => "先填写输出文件夹".to_string(),
-            }))
+            .when(self.backend.params().output_folder.is_none(), |this| {
+                this.child(description("先填写输出文件夹"))
+            })
+    }
+
+    /// 当前照片与全部照片是同一提交动作的两种范围，批量导出保留 primary 强调。
+    fn render_export_footer(&self, cx: &Context<Self>) -> impl IntoElement {
+        let total = self.photos().len();
+        let unavailable = self.backend.params().output_folder.is_none()
+            || matches!(self.export, ExportState::Running { .. });
+        h_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                Button::new("export-current")
+                    .icon(gpui_kit::assets::IconName::Download)
+                    .label("导出当前")
+                    .outline()
+                    .small()
+                    .flex_1()
+                    .min_w_0()
+                    .disabled(unavailable || self.selected_photo_id().is_none())
+                    .tooltip("仅导出当前选中的照片")
+                    .on_click(cx.listener(|this, _, window, cx| this.export_current(window, cx))),
+            )
+            .child(
+                Button::new("export")
+                    .icon(IconName::FolderOpen)
+                    .label("导出全部")
+                    .primary()
+                    .small()
+                    .flex_1()
+                    .min_w_0()
+                    .disabled(unavailable || total == 0 || self.photo_import.pending > 0)
+                    .on_click(cx.listener(|this, _, window, cx| this.export_all(window, cx))),
+            )
     }
 }

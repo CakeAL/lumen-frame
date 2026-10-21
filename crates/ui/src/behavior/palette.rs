@@ -587,6 +587,14 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
+            window.click("inspector-canvas-toggle", cx);
+            window.render_frame(cx);
+            window.click("inspector-background-toggle", cx);
+            window.render_frame(cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.update(|window, cx| {
+            window.render_frame(cx);
             window.within("background-mode").click(2_usize, cx);
             window.render_frame(cx);
             window.within("background-mode").scroll(
