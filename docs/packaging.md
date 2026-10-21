@@ -152,9 +152,14 @@ vcpkg 默认清理 port 的构建环境变量；`VCPKG_KEEP_ENV_VARS` 让本地 
 .\script\bundle-windows.ps1 -VipsDir $env:VIPS_DEV_ROOT -Variant web -CreateZip
 ```
 
-产物是 `dist\lumen-frame\` 和 `dist\Lumen-Frame-<版本>-Windows-x86_64.zip`。
+产物是 `dist\lumen-frame\` 和 `dist\Lumen-Frame-<版本>-x86_64-pc-windows-msvc.zip`。
 ZIP 用于 Release 和应用内更新，解压后 exe 与 DLL 并排放着，
 Windows 加载器优先搜 exe 所在目录，所以不需要任何改写或重签名。
+
+Windows ZIP 文件名必须包含 `x86_64-pc-windows-msvc`，已安装旧版的更新器靠它选择资源。
+新版更新器也兼容历史的 `Windows-x86_64.zip` 命名。若要让现有旧版客户端恢复更新，
+需在最新正式 Release 中为原 Windows ZIP 增加上述 target 命名的同内容附件；
+仅修改新版客户端代码不能修复已安装旧版的资源匹配规则。
 
 脚本会扫描 exe、随附 DLL 和 vips 格式插件的导入表（`dumpbin /dependents` 或 `objdump -p`），
 确认每个非系统 DLL 都在输出目录里，缺一个就报错退出；找不到检查工具时也会停止。
@@ -184,10 +189,14 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
 再分别用 macOS Apple Silicon、macOS Intel 与 Windows x86-64 runner 打包。
 三个构建都成功后，工作流将两个 DMG、两个 macOS 更新 ZIP 和一个 Windows ZIP
 上传至同一个 **GitHub Release 草稿**，草稿正文取自该版本的 Changelog。
-重跑时只更新已有草稿；若该版本已经正式发布，工作流会拒绝覆盖。
+普通重跑只更新已有草稿；若该版本已经正式发布，工作流会拒绝覆盖。
+确需重发同版本时，强制更新对应版本标签会显式允许替换该 Release 的附件和正文，
+并先将该 Release 转为草稿；独立的 `publish_rebuild` 作业核对标签仍指向本次提交、
+草稿和五个安装/更新附件完整后再发布。已有的历史 Windows ZIP 链接也会同步替换为同一份新包。
 
 工作流需要仓库允许 GitHub Actions 创建 Release（`contents: write`）；
-它不会自动把草稿发布。发布前仍须检查产物，macOS 正式分发还需 Developer ID 签名与公证。
+普通版本标签不会自动发布草稿，同版本标签强制更新则按上述重发流程自动发布。
+macOS 正式分发还需 Developer ID 签名与公证。
 
 ---
 

@@ -189,7 +189,8 @@ if ($CreateZip) {
     if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
         throw '无法从 Cargo.toml 读取应用版本'
     }
-    $archive = Join-Path $distRoot ("Lumen-Frame-{0}-Windows-x86_64.zip" -f $Matches[1])
+    # 已安装旧版的 self_update 按 Rust target 匹配资源，文件名必须包含完整 target。
+    $archive = Join-Path $distRoot ("Lumen-Frame-{0}-x86_64-pc-windows-msvc.zip" -f $Matches[1])
     if (Test-Path -LiteralPath $archive) {
         Remove-Item -LiteralPath $archive -Force
     }

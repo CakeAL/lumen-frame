@@ -100,7 +100,7 @@ Lumen Frame 是一款添加边框水印的工具。
 | --- | --- | --- |
 | macOS Apple Silicon | `Lumen-Frame-<版本>-macOS-arm64.dmg` | 打开 DMG，将应用拖入“应用程序” |
 | macOS Intel | `Lumen-Frame-<版本>-macOS-x86_64.dmg` | 打开 DMG，将应用拖入“应用程序” |
-| Windows x86-64 | `Lumen-Frame-<版本>-Windows-x86_64.zip` | 解压整个文件夹后运行 `lumen-frame.exe`；不要只复制 exe |
+| Windows x86-64 | `Lumen-Frame-<版本>-x86_64-pc-windows-msvc.zip` | 解压整个文件夹后运行 `lumen-frame.exe`；不要只复制 exe |
 | Linux | 无 | 自行从源代码构建 |
 
 macOS 安装包目前采用临时签名，首次打开如被系统拦截，可在 Finder 中右键应用并选择“打开”。Windows 安装包使用精简版 libvips，支持 AVIF，不接受 HEIC 和相机 RAW；macOS 使用 Homebrew 的完整 libvips，相关格式仍建议用实际照片验证。

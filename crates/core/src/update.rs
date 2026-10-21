@@ -79,6 +79,9 @@ fn updater(for_install: bool) -> Result<github::Update> {
         .show_download_progress(false)
         .check_install_path_writable(true);
 
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    builder.asset_matcher(windows_release_asset);
+
     // 查询 Releases 不需要知道安装位置。只有真正安装时才启用完整 .app 替换；否则
     // `cargo run` 位于 target/debug，没有 `.app` 上级目录，构建更新器就会提前失败。
     #[cfg(target_os = "macos")]
@@ -91,6 +94,24 @@ fn updater(for_install: bool) -> Result<github::Update> {
     let _ = for_install;
 
     builder.build().context("更新器配置无效")
+}
+
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn windows_release_asset(
+    assets: &[self_update::update::ReleaseAsset],
+) -> Option<self_update::update::ReleaseAsset> {
+    // 新包使用 Rust target，兼容已安装旧版的默认匹配器；同时允许新版读取历史文件名。
+    // 限定产品名、架构和 ZIP 后缀，避免选中其他平台或校验文件。
+    ["-x86_64-pc-windows-msvc.zip", "-Windows-x86_64.zip"]
+        .into_iter()
+        .find_map(|suffix| {
+            assets
+                .iter()
+                .find(|asset| {
+                    asset.name().starts_with("Lumen-Frame-") && asset.name().ends_with(suffix)
+                })
+                .cloned()
+        })
 }
 
 #[cfg(target_os = "macos")]
@@ -147,5 +168,67 @@ mod tests {
     #[test]
     fn checking_does_not_require_an_app_bundle() {
         updater(false).expect("checking should work from cargo test/target/debug");
+    }
+
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    mod windows {
+        use super::*;
+        use self_update::update::{Release, ReleaseAsset};
+
+        fn release(names: &[&str]) -> Release {
+            Release::builder()
+                .version("1.2.0")
+                .assets(
+                    names
+                        .iter()
+                        .map(|name| ReleaseAsset::new(*name, "https://example.com/asset")),
+                )
+                .build()
+                .unwrap()
+        }
+
+        fn selected_asset(release: &Release) -> Option<ReleaseAsset> {
+            windows_release_asset(release.assets())
+        }
+
+        #[test]
+        fn historical_windows_release_can_be_installed() {
+            let release = release(&[
+                "Lumen-Frame-1.2.0-macOS-x86_64.dmg",
+                "Lumen-Frame-1.2.0-x86_64-apple-darwin.zip",
+                "Lumen-Frame-1.2.0-Windows-x86_64.zip",
+            ]);
+            assert_eq!(
+                selected_asset(&release).unwrap().name(),
+                "Lumen-Frame-1.2.0-Windows-x86_64.zip"
+            );
+        }
+
+        #[test]
+        fn target_named_zip_is_preferred_and_works_with_old_clients() {
+            let name = "Lumen-Frame-1.2.0-x86_64-pc-windows-msvc.zip";
+            let release = release(&["Lumen-Frame-1.2.0-Windows-x86_64.zip", name]);
+            assert_eq!(selected_asset(&release).unwrap().name(), name);
+            // 旧客户端没有自定义匹配器，发布文件名也必须让它们能选中。
+            assert_eq!(
+                release
+                    .asset_for("x86_64-pc-windows-msvc", None)
+                    .unwrap()
+                    .name(),
+                name
+            );
+        }
+
+        #[test]
+        fn unrelated_or_non_installable_assets_are_rejected() {
+            let release = release(&[
+                "Lumen-Frame-1.2.0-x86_64-apple-darwin.zip",
+                "Lumen-Frame-1.2.0-aarch64-pc-windows-msvc.zip",
+                "Lumen-Frame-1.2.0-x86_64-pc-windows-gnu.zip",
+                "Lumen-Frame-1.2.0-x86_64-pc-windows-msvc.zip.sha256",
+                "Other-App-1.2.0-x86_64-pc-windows-msvc.zip",
+            ]);
+            assert!(selected_asset(&release).is_none());
+        }
     }
 }

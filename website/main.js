@@ -2,7 +2,7 @@ const releaseUrl = "https://github.com/CakeAL/lumen-frame/releases/latest";
 const patterns = {
   "mac-arm": /^Lumen-Frame-.+-macOS-arm64\.dmg$/i,
   "mac-intel": /^Lumen-Frame-.+-macOS-x86_64\.dmg$/i,
-  windows: /^Lumen-Frame-.+-Windows-x86_64\.zip$/i,
+  windows: /^Lumen-Frame-.+-(?:x86_64-pc-windows-msvc|Windows-x86_64)\.zip$/i,
 };
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const menuToggle = document.querySelector(".menu-toggle");

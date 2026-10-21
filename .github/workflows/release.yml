@@ -139,7 +139,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: bundle-windows-x86_64
-          path: dist/Lumen-Frame-${{ needs.metadata.outputs.version }}-Windows-x86_64.zip
+          path: dist/Lumen-Frame-${{ needs.metadata.outputs.version }}-x86_64-pc-windows-msvc.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -153,6 +153,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      # Force-updating a version tag explicitly opts into rebuilding the same published version.
+      REPLACE_PUBLISHED_RELEASE: ${{ github.event_name == 'push' && github.event.forced }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -176,11 +178,44 @@ jobs:
           test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 5
           if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' >/dev/null 2>&1; then
             is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
-            test "$is_draft" = true || { echo "Refusing to replace an already published Release" >&2; exit 1; }
+            if [[ "$is_draft" != true && "$REPLACE_PUBLISHED_RELEASE" != true ]]; then
+              echo "Refusing to replace a published Release without an explicit version tag force-update" >&2
+              exit 1
+            fi
+            # Keep an existing historical Windows download URL on the same rebuilt payload.
+            legacy_windows="Lumen-Frame-${RELEASE_VERSION}-Windows-x86_64.zip"
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq "$legacy_windows"; then
+              cp "release-assets/Lumen-Frame-${RELEASE_VERSION}-x86_64-pc-windows-msvc.zip" "release-assets/$legacy_windows"
+            fi
+            gh release edit "$RELEASE_TAG" --draft --target "$GITHUB_SHA" --notes-file "$RELEASE_NOTES"
             gh release upload "$RELEASE_TAG" release-assets/* --clobber
-            gh release edit "$RELEASE_TAG" --draft --notes-file "$RELEASE_NOTES"
           else
             gh release create "$RELEASE_TAG" release-assets/* \
               --draft --title "Lumen Frame $RELEASE_VERSION" \
               --target "$GITHUB_SHA" --notes-file "$RELEASE_NOTES"
           fi
+
+  publish_rebuild:
+    if: github.ref_type == 'tag' && github.event_name == 'push' && github.event.forced
+    needs: [metadata, draft]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify and publish rebuilt draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$GITHUB_SHA"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
+          jq -e '.draft == true' "$RUNNER_TEMP/release.json"
+          for suffix in macOS-arm64.dmg macOS-x86_64.dmg aarch64-apple-darwin.zip x86_64-apple-darwin.zip x86_64-pc-windows-msvc.zip; do
+            jq -e --arg name "Lumen-Frame-$RELEASE_VERSION-$suffix" \
+              'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' "$RUNNER_TEMP/release.json"
+          done
+          gh release edit "$RELEASE_TAG" --draft=false --latest
