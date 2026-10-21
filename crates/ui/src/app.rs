@@ -339,7 +339,7 @@ impl AppView {
 
     /// 当前参数，供预览与预设读取。
     pub fn params(&self) -> &WatermarkParams {
-        &self.backend.params()
+        self.backend.params()
     }
 
     pub(super) fn selected_photo(&self) -> Option<&QueuedPhoto> {
@@ -378,7 +378,7 @@ impl AppView {
     }
 
     fn current_watermark(&self, cx: &App) -> WatermarkPreset {
-        preset_of(&self.backend.params(), &self.build_text_groups(cx))
+        preset_of(self.backend.params(), &self.build_text_groups(cx))
     }
 
     /// 导出读取每张照片的配置；本机环境设置与全局旋转方向始终使用当前值。
@@ -1067,7 +1067,7 @@ impl AppView {
             return;
         }
 
-        let preset = preset_of(&self.backend.params(), &self.build_text_groups(cx));
+        let preset = preset_of(self.backend.params(), &self.build_text_groups(cx));
         match presets::save(&name, &preset) {
             Ok(path) => {
                 self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());

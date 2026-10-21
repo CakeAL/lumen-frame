@@ -899,7 +899,7 @@ mod tests {
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../test_images/ultra_hdr.jpg"
                 )),
-                &app.backend.params(),
+                app.backend.params(),
             )
             .unwrap();
             assert_ne!(first.palette_card.colors(), second.palette_card.colors());

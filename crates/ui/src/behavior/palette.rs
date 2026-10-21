@@ -46,10 +46,9 @@ impl AppView {
         if let (Some(rank), Some(PaletteStatus::Ready(swatches))) = (
             self.backend.params().photo_border.palette_rank(),
             self.selected_palette(),
-        ) {
-            if let Some(swatch) = swatches.get(rank.min(swatches.len().saturating_sub(1))) {
-                return swatch.rgb();
-            }
+        ) && let Some(swatch) = swatches.get(rank.min(swatches.len().saturating_sub(1)))
+        {
+            return swatch.rgb();
         }
         self.backend.params().photo_border.color()
     }
@@ -90,7 +89,7 @@ impl AppView {
     pub(in crate::app) fn gradient_display_colors(&self) -> Vec<[u8; 3]> {
         match self.selected_palette() {
             Some(PaletteStatus::Ready(swatches)) => {
-                photo_palette::gradient_colors(&self.backend.params(), swatches)
+                photo_palette::gradient_colors(self.backend.params(), swatches)
             }
             _ => self.backend.params().gradient.colors().to_vec(),
         }

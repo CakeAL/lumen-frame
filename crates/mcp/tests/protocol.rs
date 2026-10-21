@@ -82,6 +82,17 @@ async fn tools_follow_core_schemas_and_report_conflicts_over_the_wire() {
         .await
         .unwrap();
     assert_eq!(invalid.is_error, Some(true));
+    // 命令内部的大配置使用 Box，不应改变 MCP 接受的 JSON 结构。
+    let mut watermark = owner.lock().unwrap().current().clone();
+    watermark.params.shadow_size = 0.025;
+    let result = call(
+        &client,
+        "set_watermark",
+        json!({"watermark": watermark, "all_photos": false}),
+    )
+    .await;
+    assert_ne!(result.is_error, Some(true));
+    assert_eq!(owner.lock().unwrap().params().shadow_size, 0.025);
     client.cancel().await.unwrap();
     serving.await.unwrap();
 }

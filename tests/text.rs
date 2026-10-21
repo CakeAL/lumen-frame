@@ -538,14 +538,18 @@ fn rich_text_renders_multiple_fonts_and_colors_in_one_line() {
     let pixels = lumen_frame_core::media::image_write_to_memory(&rich).unwrap();
     assert!(
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] > 240 && p[1] < 10 && p[2] < 10 && p[3] > 128)
             .count()
             > 100
     );
     assert!(
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[2] > 240 && p[1] < 10 && p[0] < 10 && p[3] > 128)
             .count()
             > 100
@@ -639,19 +643,25 @@ fn rich_dynamic_fields_keep_their_style_when_photo_values_change() {
         let pixels = lumen_frame_core::media::image_write_to_memory(&image).unwrap();
         red_counts.push(
             pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|p| p[0] > 240 && p[2] < 10 && p[3] > 128)
                 .count(),
         );
         let first_blue = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, p)| p[2] > 240 && p[0] < 10 && p[3] > 128)
             .map(|(i, _)| i % image.width() as usize)
             .min()
             .unwrap();
         let last_red = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .enumerate()
             .filter(|(_, p)| p[0] > 240 && p[2] < 10 && p[3] > 128)
             .map(|(i, _)| i % image.width() as usize)

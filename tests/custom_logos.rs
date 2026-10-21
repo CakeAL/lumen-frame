@@ -34,8 +34,8 @@ fn imported_custom_logos_keep_numbering_and_survive_source_removal_and_presets()
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(&source, SVG).unwrap();
     let support = root.join("support");
-    let first = logos::import_in(&support, &[source.clone()]).unwrap();
-    let second = logos::import_in(&support, &[source.clone()]).unwrap();
+    let first = logos::import_in(&support, std::slice::from_ref(&source)).unwrap();
+    let second = logos::import_in(&support, std::slice::from_ref(&source)).unwrap();
     assert_eq!(first[0].token(), "{自定义logo1}");
     assert_eq!(second[1].token(), "{自定义logo2}");
     std::fs::remove_file(source).unwrap();
@@ -94,10 +94,12 @@ fn transparent_png_and_svg_render_in_logo_only_groups_and_size_scales() {
         // 大小针对可见内容；素材和字体行框的上下空白都不能撑高这一行。
         assert_eq!(small.height(), 80);
         assert!((small.width() as i32 - 160).abs() <= 2);
-        assert!(pixels.chunks_exact(4).any(|p| p[3] == 0));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|p| p[3] == 0));
         assert!(
             pixels
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|p| p[3] > 0 && p[0] > 240 && p[1] > 180 && p[2] < 20)
         );
         group.text.text_params[0].size *= 2.0;
@@ -109,8 +111,8 @@ fn transparent_png_and_svg_render_in_logo_only_groups_and_size_scales() {
         assert_eq!(big.height(), 160);
         if is_png {
             // 缩放插值允许边缘有少量振铃，但不能把半透明素材变成不透明。
-            assert!(pixels.chunks_exact(4).any(|p| p[3] == 128));
-            assert!(!pixels.chunks_exact(4).any(|p| p[3] > 160));
+            assert!(pixels.as_chunks::<4>().0.iter().any(|p| p[3] == 128));
+            assert!(!pixels.as_chunks::<4>().0.iter().any(|p| p[3] > 160));
         }
     }
 }
@@ -145,7 +147,9 @@ fn logo_height_changes_without_resizing_the_separator_or_adding_outer_line_spaci
             .chunks_exact(image.width() as usize * 4)
             .enumerate()
             .filter(|(_, row)| {
-                row.chunks_exact(4)
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
                     .any(|p| p[3] != 0 && p[0] > 240 && p[1] > 180 && p[2] < 20)
             })
             .map(|(y, _)| y)
@@ -158,7 +162,7 @@ fn logo_height_changes_without_resizing_the_separator_or_adding_outer_line_spaci
     let separator_size = |image: &vips::VipsImage<'static>| {
         let pixels = image_write_to_memory(image).unwrap();
         let mut bounds = (i32::MAX, i32::MAX, 0, 0);
-        for (ix, p) in pixels.chunks_exact(4).enumerate() {
+        for (ix, p) in pixels.as_chunks::<4>().0.iter().enumerate() {
             if p[3] != 0 && p[0] == 255 && p[1] == 255 && p[2] == 255 {
                 let (x, y) = (
                     ix as i32 % image.width() as i32,

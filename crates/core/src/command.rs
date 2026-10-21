@@ -45,7 +45,7 @@ pub enum Command {
         photo_id: Option<PhotoId>,
     },
     SetWatermark {
-        watermark: WatermarkPreset,
+        watermark: Box<WatermarkPreset>,
         all_photos: bool,
     },
     PatchParams {
@@ -315,6 +315,7 @@ impl Session {
                 watermark,
                 all_photos,
             } => {
+                let watermark = *watermark;
                 validate_watermark(&watermark)?;
                 if all_photos {
                     self.apply_to_all(watermark.clone());
@@ -661,7 +662,7 @@ impl Session {
             } => {
                 for time in [start_seconds, end_seconds, cover_seconds] {
                     ensure!(
-                        time.is_finite() && time >= 0.0 && time <= 86400.0,
+                        time.is_finite() && (0.0..=86400.0).contains(&time),
                         "视频时间必须在 0 至 86400 秒之间"
                     );
                 }

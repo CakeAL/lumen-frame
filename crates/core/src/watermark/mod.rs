@@ -317,6 +317,45 @@ impl TextParams {
     }
 }
 
+impl Default for Text {
+    fn default() -> Self {
+        Self {
+            template: vec![
+                "{Logo} {型号}".to_owned(),
+                "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
+            ],
+            text_params: vec![
+                TextParams {
+                    size: 0.03,
+                    bold: true,
+                    ..Default::default()
+                },
+                TextParams {
+                    size: 0.022,
+                    ..Default::default()
+                },
+            ],
+        }
+    }
+}
+
+impl Default for TextGroup {
+    fn default() -> Self {
+        Self {
+            text: Text::default(),
+            position: Placement::Bottom,
+            direction: TextDirection::Horizontal,
+            align: TextAlign::Center,
+            padding: 0.0,
+            photo_placement: None,
+            border: TextBorder::default(),
+            background: None,
+            time_format: DEFAULT_TIME_FORMAT.to_owned(),
+            attachment: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_FONT, Placement, Rotation, TextAlign, TextParams};
@@ -383,44 +422,5 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(explicit.resolved_font("Menlo"), "Times New Roman");
-    }
-}
-
-impl Default for Text {
-    fn default() -> Self {
-        Self {
-            template: vec![
-                "{Logo} {型号}".to_owned(),
-                "{拍摄日期} {等效焦距}mm f/{光圈} {快门}s ISO{ISO}".to_owned(),
-            ],
-            text_params: vec![
-                TextParams {
-                    size: 0.03,
-                    bold: true,
-                    ..Default::default()
-                },
-                TextParams {
-                    size: 0.022,
-                    ..Default::default()
-                },
-            ],
-        }
-    }
-}
-
-impl Default for TextGroup {
-    fn default() -> Self {
-        Self {
-            text: Text::default(),
-            position: Placement::Bottom,
-            direction: TextDirection::Horizontal,
-            align: TextAlign::Center,
-            padding: 0.0,
-            photo_placement: None,
-            border: TextBorder::default(),
-            background: None,
-            time_format: DEFAULT_TIME_FORMAT.to_owned(),
-            attachment: None,
-        }
     }
 }
