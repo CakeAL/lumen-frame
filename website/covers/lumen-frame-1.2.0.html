@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Lumen Frame 1.2.0 · 版本更新封面</title>
+  <style>
+    :root {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #17201f;
+      background: #e4e9e6;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; display: grid; place-content: center; gap: 18px; }
+    .preview { position: relative; width: min(100vw, 1600px); aspect-ratio: 16 / 9; overflow: hidden; }
+    .cover {
+      position: absolute; width: 1920px; height: 1080px; overflow: hidden;
+      isolation: isolate; transform-origin: top left;
+      background:
+        radial-gradient(ellipse at 84% 9%, #d5f3e7 0, transparent 36%),
+        radial-gradient(ellipse at 4% 94%, #d1ece0 0, transparent 36%),
+        linear-gradient(120deg, #fafbf8 4%, #f5f7f3 55%, #edf3ed 100%);
+    }
+    .cover::before {
+      content: ""; position: absolute; z-index: -1; inset: -350px; opacity: .47;
+      background: linear-gradient(121deg, transparent 31%, #b7c6bd30 34%, transparent 39%,
+        transparent 49%, #ffffffd9 53%, transparent 60%, #b1c0b730 66%, transparent 71%);
+      filter: blur(27px); transform: rotate(-6deg);
+    }
+    .halo { position: absolute; z-index: -1; top: 156px; left: 1040px; width: 960px; height: 780px; border-radius: 50%; background: #b6ddc77a; filter: blur(80px); }
+    /* The 1440px text-safe region is centered in the 1920px canvas. */
+    .copy { position: absolute; z-index: 3; top: 115px; left: 288px; width: 730px; }
+    .brand { display: flex; align-items: center; gap: 20px; }
+    .brand img { display: block; width: 88px; height: 88px; }
+    .brand-name { font-size: 70px; font-weight: 700; letter-spacing: -2.8px; }
+    .headline { margin: 12px 0 0; font-size: 111px; line-height: 1.2; font-weight: 850; letter-spacing: -5px; color: #14201d; white-space: nowrap; }
+    .layout-promise { margin: 54px 0 0; color: #435e51; font-size: 45px; line-height: 1.45; font-weight: 550; letter-spacing: -1.5px; white-space: nowrap; }
+    .layout-promise strong { color: #20876b; font-weight: 750; }
+    .release { display: flex; align-items: baseline; gap: 22px; margin: 22px 0 0; }
+    .version { font-size: 64px; font-weight: 760; letter-spacing: -3px; line-height: 1.1; color: #209f80; font-variant-numeric: lining-nums tabular-nums; }
+    .release-label { color: #4b6257; font-size: 35px; font-weight: 600; letter-spacing: -1px; }
+    .features { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 24px; margin: 47px 0 0; padding: 0; list-style: none; }
+    .feature { display: flex; align-items: flex-start; gap: 15px; min-width: 0; }
+    .feature-icon { flex: none; display: grid; place-items: center; width: 46px; height: 46px; margin-top: 2px; color: #248b70; }
+    .feature-icon svg { display: block; width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+    .feature h2 { margin: 0; font-size: 31px; font-weight: 650; line-height: 1.35; letter-spacing: -.8px; white-space: nowrap; }
+    .feature--accent h2 { color: #20876b; }
+    .feature p { margin: 6px 0 0; color: #6c7a73; font-size: 19px; font-weight: 450; line-height: 1.5; white-space: nowrap; }
+    .product { position: absolute; z-index: 1; top: 134px; left: 1070px; width: 1250px; margin: 0; transform: rotate(-6deg); transform-origin: 45% 50%; }
+    .product::before { content: ""; position: absolute; inset: 40px 45px -26px 20px; border-radius: 32px; background: #667c6b38; filter: blur(35px); }
+    .product img { position: relative; display: block; width: 100%; height: auto; border: 2px solid #ffffffd9; border-radius: 17px; box-shadow: 0 25px 65px #20392c25, 0 4px 8px #20392c12; }
+    .palette { position: absolute; z-index: 2; top: 755px; left: 1215px; width: 424px; padding: 21px 24px 24px; border: 1px solid #ffffffed; border-radius: 19px; background: #fffffff2; box-shadow: 0 18px 45px #284d3320; transform: rotate(3deg); }
+    .palette-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; color: #607568; font-size: 19px; font-weight: 500; }
+    .palette-label span:last-child { font-size: 13px; letter-spacing: 2px; }
+    .swatches { display: flex; gap: 9px; }
+    .swatches span { flex: 1; height: 45px; border-radius: 5px; background: var(--color); }
+    .safe-area { display: none; position: absolute; z-index: 10; inset: 0 240px; border-inline: 2px dashed #db4b84; background: #ec79a105; pointer-events: none; }
+    .safe-area::before { content: "中央 4:3 · 主要文字安全区"; position: absolute; top: 18px; left: 20px; padding: 6px 12px; background: #fff; color: #bb326b; font-size: 19px; }
+    .show-safe .safe-area { display: block; }
+    .tools { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-inline: 20px; color: #526059; font-size: 13px; }
+    .tools label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+    .tools input { accent-color: #209f80; }
+    .tools a { color: inherit; text-decoration: none; }
+    .tools a:hover { text-decoration: underline; }
+    .export body { min-height: 0; display: block; background: white; }
+    .export .preview { width: 1920px; height: 1080px; }
+    .export .tools { display: none; }
+    @media (max-width: 640px) { .tools { font-size: 11px; gap: 12px; padding-inline: 12px; } .source-link { display: none; } }
+    @media print { @page { size: 1920px 1080px; margin: 0; } body { display: block; } .preview { width: 1920px; height: 1080px; } .tools { display: none; } .cover { transform: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="preview" id="preview">
+    <main class="cover" id="cover" aria-label="Lumen Frame 1.2.0 版本更新视频封面">
+      <div class="halo" aria-hidden="true"></div>
+      <section class="copy">
+        <div class="brand"><img src="../../assets/app-icon/LumenFrame.iconset/icon_128x128@2x.png" width="88" height="88" alt="Lumen Frame 图标"><span class="brand-name">Lumen Frame</span></div>
+        <p class="layout-promise">一款<strong>自由排布文字位置</strong>的</p>
+        <h1 class="headline">边框水印工具</h1>
+        <p class="release"><span class="version">1.2.0</span><span class="release-label">版本更新</span></p>
+        <!-- Content is summarized from the 1.2.0 section of CHANGELOG.md. -->
+        <ul class="features">
+          <li class="feature feature--accent"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M12 7l4-4 4 4M12 25l4 4 4-4M7 12l-4 4 4 4m18-8 4 4-4 4"/></svg></span><div><h2>自由排版</h2><p>照片内外 · 自定位置</p></div></li>
+          <li class="feature"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="4" y="7" width="24" height="19" rx="4"/><path d="M12 7v19m8-19v19"/></svg></span><div><h2>渐变与色卡</h2><p>多色渐变 · 颗粒质感</p></div></li>
+          <li class="feature"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M5 9V5h22v4M16 5v22m-5 0h10m1-8h6m-3-3v6"/></svg></span><div><h2>富文本编辑</h2><p>字体、颜色按选区设置</p></div></li>
+          <li class="feature"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m19 5 8 8M17 7l8 8-12 12H5v-8Z"/><path d="m5 27 7-7"/></svg></span><div><h2>照片取色</h2><p>背景、描边自动配色</p></div></li>
+          <li class="feature"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="4" y="4" width="24" height="24" rx="5"/><rect x="10" y="10" width="12" height="12" rx="2"/></svg></span><div><h2>边框与底色</h2><p>照片描边 · 文字加框</p></div></li>
+          <li class="feature"><span class="feature-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m12 9-7 7 7 7m8-14 7 7-7 7m-3-18-2 22"/></svg></span><div><h2>MCP 接入</h2><p>连接 AI Agent 调整水印</p></div></li>
+        </ul>
+      </section>
+      <figure class="product"><img src="../../pics/main_page.jpg" width="3072" height="1990" alt="Lumen Frame 1.2.0 实际界面，展示照片取色、渐变背景与色卡水印"></figure>
+      <aside class="palette" aria-label="照片代表色示意"><div class="palette-label"><span>从照片取色</span><span>PHOTO COLORS</span></div><div class="swatches" aria-hidden="true"><span style="--color:#8e1e36"></span><span style="--color:#a15a1f"></span><span style="--color:#b49b32"></span><span style="--color:#628126"></span><span style="--color:#477481"></span><span style="--color:#183d68"></span></div></aside>
+      <div class="safe-area" aria-hidden="true"></div>
+    </main>
+  </div>
+  <nav class="tools" aria-label="封面预览工具"><span>1920 × 1080 · 16:9</span><label><input type="checkbox" id="safe-toggle">显示 4:3 文字安全区</label><a class="source-link" href="../../CHANGELOG.md">更新内容来源：CHANGELOG.md ↗</a></nav>
+  <script>
+    const preview = document.getElementById('preview');
+    const cover = document.getElementById('cover');
+    const safeToggle = document.getElementById('safe-toggle');
+    const params = new URLSearchParams(location.search);
+    if (params.has('export')) document.documentElement.classList.add('export');
+    function fit() { cover.style.transform = `scale(${preview.clientWidth / 1920})`; }
+    safeToggle.checked = params.has('safe');
+    function setSafeArea() { cover.classList.toggle('show-safe', safeToggle.checked); }
+    safeToggle.addEventListener('change', setSafeArea);
+    new ResizeObserver(fit).observe(preview);
+    setSafeArea();
+    fit();
+  </script>
+</body>
+</html>
