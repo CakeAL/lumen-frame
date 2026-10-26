@@ -10,8 +10,8 @@ use lumen_frame_core::{
         WatermarkPreset, builtin, delete_in, directory, list_in, load_in, save_in,
     },
     watermark::{
-        Placement, Text, TextAlign, TextDirection, TextGroup, TextParams, TextSpan, TextStyle,
-        WatermarkParams,
+        Placement, ShadowDirection, Text, TextAlign, TextDirection, TextGroup, TextParams,
+        TextSpan, TextStyle, WatermarkParams,
     },
 };
 
@@ -33,8 +33,9 @@ fn colourful_preset() -> WatermarkPreset {
             border_radius: 0.035,
             shadow_size: 0.07,
             shadow_color: [255; 3],
-            shadow_offset_x: -0.025,
-            shadow_offset_y: 0.04,
+            shadow_direction: ShadowDirection::Down,
+            shadow_offset: 0.015,
+            shadow_scale: 0.96,
             blur_sigma: 88.0,
             background_grain: true,
             grain_strength: 0.35,
@@ -148,13 +149,11 @@ fn preset_round_trips_through_a_file() {
     assert_eq!(loaded.params.background, original.params.background);
     assert_eq!(loaded.params.shadow_color, original.params.shadow_color);
     assert_eq!(
-        loaded.params.shadow_offset_x,
-        original.params.shadow_offset_x
+        loaded.params.shadow_direction,
+        original.params.shadow_direction
     );
-    assert_eq!(
-        loaded.params.shadow_offset_y,
-        original.params.shadow_offset_y
-    );
+    assert_eq!(loaded.params.shadow_offset, original.params.shadow_offset);
+    assert_eq!(loaded.params.shadow_scale, original.params.shadow_scale);
     assert_eq!(loaded.params.photo_border, original.params.photo_border);
     assert_eq!(loaded.params.palette_card, original.params.palette_card);
     assert_eq!(loaded.params.quality, WatermarkParams::default().quality);
@@ -202,8 +201,9 @@ fn gradient_presets_roundtrip_and_old_backgrounds_keep_their_mode() {
         toml::from_str("solid_background = true\nbackground = [18,52,86]").unwrap();
     assert_eq!(old.background_kind(), BackgroundKind::Solid);
     assert_eq!(old.shadow_color, [0; 3]);
-    assert_eq!(old.shadow_offset_x, 0.0);
-    assert_eq!(old.shadow_offset_y, 0.0);
+    assert_eq!(old.shadow_direction, ShadowDirection::Center);
+    assert_eq!(old.shadow_offset, 0.015);
+    assert_eq!(old.shadow_scale, 1.0);
     assert!(!old.palette_card.enabled());
     assert!(!old.background_grain);
     assert_eq!(old.grain_strength, 0.2);

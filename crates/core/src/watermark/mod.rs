@@ -82,6 +82,39 @@ impl Placement {
     }
 }
 
+/// 阴影偏移方向；距离独立保存，居中时不应用偏移。
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowDirection {
+    #[default]
+    Center,
+    UpLeft,
+    Up,
+    UpRight,
+    Left,
+    Right,
+    DownLeft,
+    Down,
+    DownRight,
+}
+
+impl ShadowDirection {
+    pub(crate) fn unit_vector(self) -> (f64, f64) {
+        use std::f64::consts::FRAC_1_SQRT_2 as D;
+        match self {
+            Self::Center => (0.0, 0.0),
+            Self::UpLeft => (-D, -D),
+            Self::Up => (0.0, -1.0),
+            Self::UpRight => (D, -D),
+            Self::Left => (-1.0, 0.0),
+            Self::Right => (1.0, 0.0),
+            Self::DownLeft => (-D, D),
+            Self::Down => (0.0, 1.0),
+            Self::DownRight => (D, D),
+        }
+    }
+}
+
 /// 水印生成参数。
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -113,13 +146,15 @@ pub struct WatermarkParams {
     /// 照片外侧的彩色边框，与画布留白分别设置。
     pub photo_border: PhotoBorder,
     pub palette_card: PaletteCard,
+    /// 阴影模糊范围，按照片高度计算；保留原字段名以兼容旧预设。
     pub shadow_size: f64,
     pub shadow_density: f64,
     pub shadow_color: [u8; 3],
-    /// 阴影水平偏移，按照片高度计算；负值向左，范围 -1–1。
-    pub shadow_offset_x: f64,
-    /// 阴影垂直偏移，按照片高度计算；负值向上，范围 -1–1。
-    pub shadow_offset_y: f64,
+    /// 阴影轮廓相对照片的缩放比例，范围 0.5–1.2；不改变模糊程度。
+    pub shadow_scale: f64,
+    pub shadow_direction: ShadowDirection,
+    /// 按照片高度计算的偏移距离，范围 -0.1–0.1；负值沿所选方向反向偏移。
+    pub shadow_offset: f64,
     pub solid_background: bool,
     /// 单独保留旧纯色开关，旧预设无需迁移；渐变启用时优先使用渐变。
     pub gradient_background: bool,
@@ -156,8 +191,9 @@ impl Default for WatermarkParams {
             shadow_size: 0.06,
             shadow_density: 1.2,
             shadow_color: [0; 3],
-            shadow_offset_x: 0.0,
-            shadow_offset_y: 0.0,
+            shadow_scale: 1.0,
+            shadow_direction: ShadowDirection::Center,
+            shadow_offset: 0.015,
             solid_background: false,
             gradient_background: false,
             gradient: BackgroundGradient::default(),

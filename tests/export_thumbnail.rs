@@ -8,7 +8,7 @@ use lumen_frame_core::{
     media::{ensure_vips, load_base_image},
     photo::Photo,
     rotation::Rotation,
-    watermark::WatermarkParams,
+    watermark::{ShadowDirection, WatermarkParams},
 };
 
 fn thumbnail_bytes(image: &vips::VipsImage<'_>) -> Vec<u8> {
@@ -58,8 +58,9 @@ fn check_export_thumbnail(source: &str, hdr: bool, rotation: Rotation) {
         border_radius: 0.015,
         shadow_size: 0.105,
         shadow_density: 2.0,
-        shadow_offset_x: -0.04,
-        shadow_offset_y: 0.06,
+        shadow_direction: ShadowDirection::Down,
+        shadow_offset: 0.015,
+        shadow_scale: 0.96,
         rotation,
         ..Default::default()
     };

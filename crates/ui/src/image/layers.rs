@@ -98,7 +98,7 @@ mod tests {
     use super::*;
     use crate::backend::{
         media::ExifInfo,
-        watermark::{Placement, TextAlign, TextDirection, WatermarkParams},
+        watermark::{Placement, ShadowDirection, TextAlign, TextDirection, WatermarkParams},
     };
 
     fn job() -> PreviewJob {
@@ -141,15 +141,21 @@ mod tests {
         let mut cache = PreviewLayerCache::default();
         let centered = cache.render(&job).unwrap();
         let photo_height = cache.backend.source_height().unwrap();
-        for (x, y) in [
-            (-0.04, -0.07),
-            (0.0, -0.03),
-            (0.06, 0.04),
-            (0.0, 0.0),
-            (-1.0, 1.0),
+        for (direction, amount, x, y) in [
+            (
+                ShadowDirection::UpLeft,
+                0.1,
+                -0.1 / 2.0_f64.sqrt(),
+                -0.1 / 2.0_f64.sqrt(),
+            ),
+            (ShadowDirection::Up, 0.015, 0.0, -0.015),
+            (ShadowDirection::Down, -0.1, 0.0, -0.1),
+            (ShadowDirection::Right, 0.1, 0.1, 0.0),
+            (ShadowDirection::Center, 0.1, 0.0, 0.0),
+            (ShadowDirection::DownRight, 0.0, 0.0, 0.0),
         ] {
-            job.params.shadow_offset_x = x;
-            job.params.shadow_offset_y = y;
+            job.params.shadow_direction = direction;
+            job.params.shadow_offset = amount;
             let shifted = cache.render(&job).unwrap();
             assert_eq!(shifted.size, centered.size);
             assert_eq!(shifted.photo_region(), centered.photo_region());
@@ -184,8 +190,8 @@ mod tests {
             assert!(error <= 2, "阴影偏移的分层预览与完整合成像素误差 {error}");
         }
         job.params.rotation = Rotation::Clockwise90;
-        job.params.shadow_offset_x = 0.04;
-        job.params.shadow_offset_y = -0.06;
+        job.params.shadow_direction = ShadowDirection::DownLeft;
+        job.params.shadow_offset = 0.015;
         let rotated = cache.render(&job).unwrap();
         let full = super::super::render_preview(&job).unwrap();
         assert_eq!(rotated.size, full.size(0));
@@ -299,6 +305,8 @@ mod tests {
         job.params.solid_background = true;
         job.params.background = [24; 3];
         job.params.shadow_color = [255; 3];
+        job.params.shadow_scale = 0.96;
+        job.params.shadow_direction = ShadowDirection::Down;
         job.params.border_radius = 0.08;
         job.params.photo_border.set_enabled(true);
         job.params.photo_border.set_width(0.05);
@@ -503,9 +511,15 @@ mod tests {
         for ix in 1..first.layers.len() {
             assert!(same(&first, &blurred, ix));
         }
+        job.params.shadow_scale = 0.96;
+        let resized = cache.render(&job).unwrap();
+        assert!(!same(&blurred, &resized, 1));
+        for ix in [0, 2, 3, 4] {
+            assert!(same(&blurred, &resized, ix));
+        }
         job.params.shadow_density += 0.5;
         let shadowed = cache.render(&job).unwrap();
-        assert!(!same(&blurred, &shadowed, 1));
+        assert!(!same(&resized, &shadowed, 1));
         for ix in [0, 2, 3, 4] {
             assert!(same(&blurred, &shadowed, ix));
         }

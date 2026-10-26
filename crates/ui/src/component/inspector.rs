@@ -29,8 +29,8 @@ use gpui_kit::{
 };
 
 use crate::backend::watermark::{
-    BackgroundGradient, BackgroundKind, PaletteTheme, Placement, TextAlign, TextDirection,
-    TextGroup, WatermarkParams,
+    BackgroundGradient, BackgroundKind, PaletteTheme, Placement, ShadowDirection, TextAlign,
+    TextDirection, TextGroup, WatermarkParams,
 };
 
 use super::super::{AppView, ExportState, PresetScope};
@@ -231,8 +231,8 @@ pub(in crate::app) struct ParameterControls {
     pub photo_border_color: ColorField,
     pub shadow_size: NumberField,
     pub shadow_density: NumberField,
-    pub shadow_offset_x: NumberField,
-    pub shadow_offset_y: NumberField,
+    pub shadow_offset: NumberField,
+    pub shadow_scale: NumberField,
     pub blur_sigma: NumberField,
     pub grain_strength: NumberField,
     pub quality: NumberField,
@@ -353,10 +353,10 @@ impl ParameterControls {
             window,
             cx,
         );
-        let shadow_offset_x = NumberField::new(
-            params.shadow_offset_x,
-            -100.0,
-            100.0,
+        let shadow_offset = NumberField::new(
+            params.shadow_offset,
+            -10.0,
+            10.0,
             0.1,
             1,
             100.0,
@@ -364,10 +364,10 @@ impl ParameterControls {
             window,
             cx,
         );
-        let shadow_offset_y = NumberField::new(
-            params.shadow_offset_y,
-            -100.0,
-            100.0,
+        let shadow_scale = NumberField::new(
+            params.shadow_scale,
+            50.0,
+            120.0,
             0.1,
             1,
             100.0,
@@ -488,11 +488,11 @@ impl ParameterControls {
         subscriptions.extend(shadow_density.subscribe(window, cx, |this, value| {
             this.backend.params_mut().shadow_density = value;
         }));
-        subscriptions.extend(shadow_offset_x.subscribe(window, cx, |this, value| {
-            this.backend.params_mut().shadow_offset_x = value;
+        subscriptions.extend(shadow_offset.subscribe(window, cx, |this, value| {
+            this.backend.params_mut().shadow_offset = value;
         }));
-        subscriptions.extend(shadow_offset_y.subscribe(window, cx, |this, value| {
-            this.backend.params_mut().shadow_offset_y = value;
+        subscriptions.extend(shadow_scale.subscribe(window, cx, |this, value| {
+            this.backend.params_mut().shadow_scale = value;
         }));
         subscriptions.extend(blur_sigma.subscribe(window, cx, |this, value| {
             this.backend.params_mut().blur_sigma = value;
@@ -591,8 +591,8 @@ impl ParameterControls {
                 photo_border_color,
                 shadow_size,
                 shadow_density,
-                shadow_offset_x,
-                shadow_offset_y,
+                shadow_offset,
+                shadow_scale,
                 blur_sigma,
                 grain_strength,
                 quality,
@@ -1542,9 +1542,14 @@ impl AppView {
             .gap_3()
             .child(controls.border_radius.render("圆角", false, cx))
             .child(self.render_photo_border_section(cx))
-            .child(controls.shadow_size.render("阴影大小", false, cx))
+            .child(controls.shadow_size.render("阴影模糊", false, cx))
             .when(self.backend.params().shadow_size > 0., |this| {
-                this.child(
+                this.child(div().id("shadow-scale").child(controls.shadow_scale.render(
+                    "阴影大小",
+                    false,
+                    cx,
+                )))
+                .child(
                     div()
                         .id("shadow-density")
                         .child(controls.shadow_density.render("阴影浓度", false, cx)),
@@ -1569,96 +1574,54 @@ impl AppView {
             })
     }
 
-    fn set_shadow_direction(
-        &mut self,
-        x: i32,
-        y: i32,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let params = self.backend.params_mut();
-        let amount = params
-            .shadow_offset_x
-            .abs()
-            .max(params.shadow_offset_y.abs());
-        // 从居中选择方向时给出可见的起始偏移；之后切换方向保留已有幅度。
-        let amount = if amount > 0.0 { amount } else { 0.03 };
-        params.shadow_offset_x = f64::from(x) * amount;
-        params.shadow_offset_y = f64::from(y) * amount;
-        self.controls
-            .shadow_offset_x
-            .sync(params.shadow_offset_x, window, cx);
-        self.controls
-            .shadow_offset_y
-            .sync(params.shadow_offset_y, window, cx);
-        self.refresh_preview(cx);
-        cx.notify();
-    }
-
     fn render_shadow_offset(&self, cx: &Context<Self>) -> impl IntoElement {
-        const DIRECTIONS: &[(&str, &str, i32, i32)] = &[
-            ("shadow-up-left", "左上", -1, -1),
-            ("shadow-up", "上", 0, -1),
-            ("shadow-up-right", "右上", 1, -1),
-            ("shadow-left", "左", -1, 0),
-            ("shadow-center", "居中", 0, 0),
-            ("shadow-right", "右", 1, 0),
-            ("shadow-down-left", "左下", -1, 1),
-            ("shadow-down", "下", 0, 1),
-            ("shadow-down-right", "右下", 1, 1),
+        const DIRECTIONS: &[(&str, &str, ShadowDirection)] = &[
+            ("shadow-up-left", "左上", ShadowDirection::UpLeft),
+            ("shadow-up", "上", ShadowDirection::Up),
+            ("shadow-up-right", "右上", ShadowDirection::UpRight),
+            ("shadow-left", "左", ShadowDirection::Left),
+            ("shadow-center", "居中", ShadowDirection::Center),
+            ("shadow-right", "右", ShadowDirection::Right),
+            ("shadow-down-left", "左下", ShadowDirection::DownLeft),
+            ("shadow-down", "下", ShadowDirection::Down),
+            ("shadow-down-right", "右下", ShadowDirection::DownRight),
         ];
         let params = self.backend.params();
-        let sign = |value: f64| {
-            if value == 0.0 {
-                0
-            } else if value < 0.0 {
-                -1
-            } else {
-                1
-            }
-        };
         v_flex()
             .w_full()
             .gap_3()
             .child(field(
-                "阴影偏移",
+                "偏移方向",
                 v_flex()
                     .w_full()
                     .gap_1()
                     .children(DIRECTIONS.chunks(3).map(|row| {
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .children(row.iter().map(|&(id, label, x, y)| {
+                        h_flex().w_full().gap_1().children(row.iter().map(
+                            |&(id, label, direction)| {
                                 Button::new(id)
                                     .label(label)
                                     .small()
                                     .flex_1()
                                     .outline()
-                                    .selected(
-                                        sign(params.shadow_offset_x) == x
-                                            && sign(params.shadow_offset_y) == y,
-                                    )
+                                    .selected(params.shadow_direction == direction)
                                     .accessibility_label(format!("阴影偏移：{label}"))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.set_shadow_direction(x, y, window, cx);
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.backend.params_mut().shadow_direction = direction;
+                                        this.refresh_preview(cx);
+                                        cx.notify();
                                     }))
-                            }))
+                            },
+                        ))
                     })),
                 cx,
             ))
             .child(
                 div()
-                    .id("shadow-offset-x")
-                    .child(self.controls.shadow_offset_x.render("水平偏移", false, cx)),
-            )
-            .child(
-                div()
-                    .id("shadow-offset-y")
-                    .child(self.controls.shadow_offset_y.render("垂直偏移", false, cx)),
+                    .id("shadow-offset")
+                    .child(self.controls.shadow_offset.render("偏移量", false, cx)),
             )
             .child(description(
-                "按照片高度计算；水平负值向左，垂直负值向上。超出画布的阴影会被裁切。",
+                "按照片高度计算，负值反向偏移；居中时不偏移。阴影大小低于 100% 可收拢轮廓。",
             ))
     }
 
@@ -1831,52 +1794,52 @@ mod tests {
         app.read_with(cx, |app, _| {
             assert!((app.backend.params().shadow_density - 2.0).abs() < 0.06)
         });
-        for id in ["shadow-offset-x", "shadow-offset-y"] {
-            cx.update(|window, cx| {
-                let bounds = window.within(id).find("slider-bar-container").bounds();
-                window.within(id).click_at(
-                    "slider-bar-container",
-                    gpui_kit::point(bounds.size.width * 0.25, bounds.size.height / 2.0),
-                    cx,
-                );
-            });
-            cx.run_until_parked();
-        }
-        app.read_with(cx, |app, _| {
-            assert!((app.backend.params().shadow_offset_x + 0.5).abs() < 0.01);
-            assert!((app.backend.params().shadow_offset_y + 0.5).abs() < 0.01);
+        app.read_with(cx, |app, cx| {
+            assert_eq!(
+                app.backend.params().shadow_direction,
+                ShadowDirection::Center
+            );
+            assert_eq!(app.backend.params().shadow_offset, 0.015);
+            assert!((app.controls.shadow_offset.value(cx) - 0.015).abs() < 1e-6);
         });
-        cx.update(|window, cx| window.click("shadow-center", cx));
+        cx.update(|window, cx| {
+            let bounds = window
+                .within("shadow-offset")
+                .find("slider-bar-container")
+                .bounds();
+            window.within("shadow-offset").click_at(
+                "slider-bar-container",
+                gpui_kit::point(bounds.size.width * 0.25, bounds.size.height / 2.0),
+                cx,
+            );
+        });
         cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!((app.backend.params().shadow_offset + 0.05).abs() < 0.001)
+        });
         for (id, expected) in [
-            ("shadow-up-left", (-0.03, -0.03)),
-            ("shadow-up", (0.0, -0.03)),
-            ("shadow-up-right", (0.03, -0.03)),
-            ("shadow-right", (0.03, 0.0)),
-            ("shadow-down-right", (0.03, 0.03)),
-            ("shadow-down", (0.0, 0.03)),
-            ("shadow-down-left", (-0.03, 0.03)),
-            ("shadow-left", (-0.03, 0.0)),
-            ("shadow-center", (0.0, 0.0)),
+            ("shadow-up-left", ShadowDirection::UpLeft),
+            ("shadow-up", ShadowDirection::Up),
+            ("shadow-up-right", ShadowDirection::UpRight),
+            ("shadow-right", ShadowDirection::Right),
+            ("shadow-down-right", ShadowDirection::DownRight),
+            ("shadow-down", ShadowDirection::Down),
+            ("shadow-down-left", ShadowDirection::DownLeft),
+            ("shadow-left", ShadowDirection::Left),
+            ("shadow-center", ShadowDirection::Center),
         ] {
             cx.update(|window, cx| window.click(id, cx));
             cx.run_until_parked();
             app.read_with(cx, |app, cx| {
-                assert_eq!(
-                    (
-                        app.backend.params().shadow_offset_x,
-                        app.backend.params().shadow_offset_y
-                    ),
-                    expected
-                );
-                assert!((app.controls.shadow_offset_x.value(cx) - expected.0).abs() < 1e-6);
-                assert!((app.controls.shadow_offset_y.value(cx) - expected.1).abs() < 1e-6);
+                assert_eq!(app.backend.params().shadow_direction, expected);
+                assert!((app.backend.params().shadow_offset + 0.05).abs() < 0.001);
+                assert!((app.controls.shadow_offset.value(cx) + 0.05).abs() < 0.001);
             });
         }
-        // 载入预设/切换照片使用同一同步入口，下一次选方向应保留自定义幅度。
+        // 方向切换不改距离；预设/照片切换同步单一距离和轮廓缩放。
         app.update_in(cx, |app, window, cx| {
-            app.backend.params_mut().shadow_offset_x = 0.125;
-            app.backend.params_mut().shadow_offset_y = -0.08;
+            app.backend.params_mut().shadow_offset = 0.065;
+            app.backend.params_mut().shadow_scale = 0.96;
             app.sync_controls(window, cx);
             cx.notify();
         });
@@ -1885,14 +1848,27 @@ mod tests {
         cx.run_until_parked();
         app.read_with(cx, |app, cx| {
             assert_eq!(
-                (
-                    app.backend.params().shadow_offset_x,
-                    app.backend.params().shadow_offset_y
-                ),
-                (-0.125, 0.125)
+                app.backend.params().shadow_direction,
+                ShadowDirection::DownLeft
             );
-            assert!((app.controls.shadow_offset_x.value(cx) + 0.125).abs() < 1e-6);
-            assert!((app.controls.shadow_offset_y.value(cx) - 0.125).abs() < 1e-6);
+            assert_eq!(app.backend.params().shadow_offset, 0.065);
+            assert!((app.controls.shadow_offset.value(cx) - 0.065).abs() < 1e-6);
+            assert!((app.controls.shadow_scale.value(cx) - 0.96).abs() < 1e-6);
+        });
+        cx.update(|window, cx| {
+            let bounds = window
+                .within("shadow-scale")
+                .find("slider-bar-container")
+                .bounds();
+            window.within("shadow-scale").click_at(
+                "slider-bar-container",
+                gpui_kit::point(bounds.size.width * 0.5, bounds.size.height / 2.0),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!((app.backend.params().shadow_scale - 0.85).abs() < 0.002)
         });
     }
 }

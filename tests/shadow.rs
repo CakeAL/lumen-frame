@@ -2,7 +2,7 @@
 use lumen_frame_core::{
     media::load_base_image,
     render::{canvas, image as render_image},
-    watermark::WatermarkParams,
+    watermark::{ShadowDirection, WatermarkParams},
 };
 
 struct FixtureFile(std::path::PathBuf);
@@ -46,17 +46,69 @@ fn colored_shadow(
         shadow_color: color,
         ..Default::default()
     };
+    render_shadow(width, height, alpha, &params)
+}
+
+fn render_shadow(width: u32, height: u32, alpha: u8, params: &WatermarkParams) -> image::RgbaImage {
     let (img, _fixture) = photo(width, height, alpha);
     let img = render_image::add_round_corner(img, params.border_radius).unwrap();
-    let canvas =
-        canvas::new_canvas(width as i32 + 160, height as i32 + 160, &img, &params).unwrap();
-    let rendered = canvas::add_shadow(canvas, &img, &params, 80, 80).unwrap();
+    let canvas = canvas::new_canvas(width as i32 + 160, height as i32 + 160, &img, params).unwrap();
+    let rendered = canvas::add_shadow(canvas, &img, params, 80, 80).unwrap();
     image::RgbaImage::from_raw(
         width + 160,
         height + 160,
         rendered.write_to_memory().unwrap(),
     )
     .unwrap()
+}
+
+#[test]
+fn smaller_downward_shadow_is_tucked_under_the_photo() {
+    let normal = shadow(240, 180, 255, 0.06, 1.2);
+    let params = WatermarkParams {
+        solid_background: true,
+        background: [255; 3],
+        border_radius: 0.015,
+        shadow_scale: 0.96,
+        shadow_direction: ShadowDirection::Down,
+        // 使用默认 1.5% 偏移。
+        ..Default::default()
+    };
+    let tucked = render_shadow(240, 180, 255, &params);
+    assert_eq!(tucked.dimensions(), normal.dimensions());
+    assert!(
+        tucked.get_pixel(79, 170)[0] > normal.get_pixel(79, 170)[0],
+        "缩小后侧边投影应收拢"
+    );
+    assert!(
+        tucked.get_pixel(200, 79)[0] > tucked.get_pixel(200, 260)[0],
+        "上边应收进照片，主要在下边露出柔和投影"
+    );
+    assert!(tucked.get_pixel(200, 260)[0] < 250, "底部仍须保留可见投影");
+    assert_eq!(
+        tucked.get_pixel(200, 170),
+        normal.get_pixel(200, 170),
+        "轮廓缩放不改变浓度"
+    );
+    assert!(
+        render_shadow(240, 180, 0, &params)
+            .pixels()
+            .all(|p| p.0 == [255; 4]),
+        "透明照片不能因缩放产生实体阴影"
+    );
+    let reversed = render_shadow(
+        240,
+        180,
+        255,
+        &WatermarkParams {
+            shadow_offset: -0.015,
+            ..params
+        },
+    );
+    assert!(
+        reversed.get_pixel(200, 79)[0] < reversed.get_pixel(200, 260)[0],
+        "负值应反向偏移"
+    );
 }
 
 #[test]

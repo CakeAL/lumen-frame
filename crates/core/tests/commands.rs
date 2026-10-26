@@ -84,7 +84,7 @@ fn json_operations_preserve_per_photo_content_and_global_environment() {
         &mut session,
         json!({"method":"patch_params","params":{"changes":{
             "shadow_color":[255,255,255], "palette_card":{"enabled":true},
-            "shadow_offset_x":-0.025, "shadow_offset_y":0.04,
+            "shadow_direction":"Down", "shadow_offset":0.015, "shadow_scale":0.96,
             "rotation":"Clockwise90"
         }}}),
     );
@@ -100,8 +100,12 @@ fn json_operations_preserve_per_photo_content_and_global_environment() {
     assert_eq!(session.params().quality, 82);
     assert_eq!(session.params().rotation, Rotation::Clockwise90);
     assert_eq!(session.params().shadow_color, [255; 3]);
-    assert_eq!(session.params().shadow_offset_x, -0.025);
-    assert_eq!(session.params().shadow_offset_y, 0.04);
+    assert_eq!(
+        session.params().shadow_direction,
+        lumen_frame_core::watermark::ShadowDirection::Down
+    );
+    assert_eq!(session.params().shadow_offset, 0.015);
+    assert_eq!(session.params().shadow_scale, 0.96);
     assert_eq!(
         session.watermark_for(first).unwrap().params.custom_text,
         "第一张"
@@ -126,8 +130,11 @@ fn invalid_changes_and_stale_requests_leave_state_unchanged() {
     let before = session.current().clone();
     for changes in [
         json!({"shadow_density":4.1}),
-        json!({"shadow_offset_x":-1.01}),
-        json!({"shadow_offset_y":1.01}),
+        json!({"shadow_offset":-0.101}),
+        json!({"shadow_offset":0.101}),
+        json!({"shadow_scale":0.49}),
+        json!({"shadow_scale":1.21}),
+        json!({"shadow_direction":"unknown"}),
         json!({"palette_card":{"unknown":true}}),
     ] {
         assert!(

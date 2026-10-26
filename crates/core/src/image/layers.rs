@@ -110,6 +110,7 @@ struct BackgroundKey {
 struct ShadowKey {
     radius: f64,
     size: f64,
+    scale: f64,
     density: f64,
     color: [u8; 3],
     border: i32,
@@ -561,6 +562,7 @@ impl LayerRenderer for CachedRenderer<'_> {
         let key = ShadowKey {
             radius: p.border_radius,
             size: p.shadow_size,
+            scale: p.shadow_scale,
             density: p.shadow_density,
             color: p.shadow_color,
             border: p.photo_border.pixels(self.dimensions.1),

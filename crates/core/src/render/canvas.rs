@@ -181,10 +181,9 @@ pub fn add_shadow(
 
 /// 统一使用原照片高度换算偏移，避免外边框或预览缩放改变偏移比例。
 pub(crate) fn shadow_offset(photo_height: i32, params: &WatermarkParams) -> (i32, i32) {
-    (
-        (f64::from(photo_height) * params.shadow_offset_x).round() as i32,
-        (f64::from(photo_height) * params.shadow_offset_y).round() as i32,
-    )
+    let (x, y) = params.shadow_direction.unit_vector();
+    let distance = f64::from(photo_height) * params.shadow_offset;
+    ((distance * x).round() as i32, (distance * y).round() as i32)
 }
 
 /// 独立的透明阴影图层，坐标相对于照片；预览可缓存它，不必重新做高斯模糊。
@@ -220,6 +219,23 @@ pub(crate) fn shadow_layer(
     }
     let (img_w, img_h) = (img.width() as i32, img.height() as i32);
     let shadow_sigma = img_h as f64 * params.shadow_size / 3.0;
+    let mask = super::image::alpha_mask(img)?;
+    // 只缩放透明轮廓，保留源图的透明区域；模糊仍按原照片高度计算。
+    let mask = if params.shadow_scale != 1.0 {
+        image_op(|out| unsafe {
+            vips_sys::vips_resize(
+                mask.as_ptr(),
+                out,
+                params.shadow_scale,
+                c"kernel".as_ptr(),
+                vips_sys::VipsKernel::VIPS_KERNEL_LINEAR,
+                std::ptr::null::<i8>(),
+            )
+        })?
+    } else {
+        mask
+    };
+    let (mask_w, mask_h) = (mask.width() as i32, mask.height() as i32);
     // min_ampl=0.001 的核延伸到约 3.72σ。预留 4σ 加插值余量，避免模糊边界复制
     // 非零像素。画布大小仍由用户边框决定，投影只在最终合成时被画布裁切。
     let minimum_margin = (shadow_sigma * 4.0).ceil() as i32 + 2;
@@ -233,11 +249,10 @@ pub(crate) fn shadow_layer(
         }
         margin
     };
-    let margin_x = aligned_margin(img_w);
-    let margin_y = aligned_margin(img_h);
-    let shadow_w = img_w + margin_x * 2;
-    let shadow_h = img_h + margin_y * 2;
-    let mask = super::image::alpha_mask(img)?;
+    let margin_x = aligned_margin(mask_w);
+    let margin_y = aligned_margin(mask_h);
+    let shadow_w = mask_w + margin_x * 2;
+    let shadow_h = mask_h + margin_y * 2;
     let mask = image_op(|out| unsafe {
         vips_sys::vips_embed(
             mask.as_ptr(),
@@ -366,7 +381,11 @@ pub(crate) fn shadow_layer(
         )
     })?;
     let shadow = rgba_srgb(&shadow, shadow_w, shadow_h)?;
-    Ok(Some((shadow, -margin_x, -margin_y)))
+    Ok(Some((
+        shadow,
+        (img_w - mask_w) / 2 - margin_x,
+        (img_h - mask_h) / 2 - margin_y,
+    )))
 }
 
 fn rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {

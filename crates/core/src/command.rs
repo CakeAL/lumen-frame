@@ -816,14 +816,16 @@ pub(crate) fn validate_watermark(w: &WatermarkPreset) -> Result<()> {
     );
     ensure!(
         p.shadow_size.is_finite() && (0.0..=1.0).contains(&p.shadow_size),
-        "阴影大小无效"
+        "阴影模糊参数无效"
     );
-    for value in [p.shadow_offset_x, p.shadow_offset_y] {
-        ensure!(
-            value.is_finite() && (-1.0..=1.0).contains(&value),
-            "阴影偏移必须在 -100% 至 100% 之间"
-        );
-    }
+    ensure!(
+        p.shadow_offset.is_finite() && (-0.1..=0.1).contains(&p.shadow_offset),
+        "阴影偏移量必须在 -10% 至 10% 之间"
+    );
+    ensure!(
+        p.shadow_scale.is_finite() && (0.5..=1.2).contains(&p.shadow_scale),
+        "阴影大小必须在照片尺寸的 50% 至 120% 之间"
+    );
     ensure!(
         p.border_radius.is_finite() && (0.0..=0.5).contains(&p.border_radius),
         "照片圆角无效"
