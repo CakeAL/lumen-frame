@@ -95,6 +95,9 @@ impl Photo {
     ) -> Result<VipsImage> {
         ensure_vips();
 
+        let resolved_exif = crate::geocoding::resolve_exif(exif, &params.geocoding, text_groups)?;
+        let exif = resolved_exif.as_ref();
+
         // 如果原图是 Ultra HDR，先取出 gain map（后面要重新生成只覆盖照片区域的版本）。
         let original_gainmap = gain_map::get_gainmap(&img);
         // gain map 的分辨率比例（1 表示与 base 同尺寸，2 表示一半尺寸……）

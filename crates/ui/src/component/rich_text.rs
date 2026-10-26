@@ -625,11 +625,18 @@ impl AppView {
         let Some(exif) = exif else {
             return warning("选中的照片没有 EXIF 信息，这一行不会渲染。", cx);
         };
+        let template = line.template.read(cx).value().to_string();
+        let geocoding = &self.backend.params().geocoding;
+        let resolved_exif = if geocoding.uses_fields(&template) {
+            crate::backend::geocoding::cached_exif(exif, geocoding)
+        } else {
+            exif.clone()
+        };
         let mut params = line.to_params(cx);
         let (text, spans) = render_styled_template_preview(
-            &line.template.read(cx).value(),
+            &template,
             &params,
-            exif,
+            &resolved_exif,
             time_format,
             &self.backend.params().custom_text,
         );

@@ -34,6 +34,7 @@ use crate::image::PREVIEW_DEFAULT_MAX_EDGE;
 
 use super::super::component::field::{ColorField, NumberField, description, field};
 use super::super::{AppView, UpdateState};
+mod geocoding;
 
 /// 界面缩放的档位。基础字号是整界面 rem 的锚点，改它会同时带动字号、间距和控件尺寸。
 const INTERFACE_SCALES: &[(&str, f32)] = &[("紧凑", 14.0), ("标准", 16.0), ("宽松", 18.0)];
@@ -70,6 +71,7 @@ pub(in crate::app) struct SettingsControls {
     pub default_font: Entity<NameSelect>,
     pub preview_background: ColorField,
     pub preview_max_edge: NumberField,
+    pub geocoding: geocoding::GeocodingControls,
     sponsor_open: bool,
     rednote_open: bool,
     bilibili_open: bool,
@@ -144,6 +146,7 @@ impl SettingsControls {
                 default_font,
                 preview_background,
                 preview_max_edge,
+                geocoding: geocoding::GeocodingControls::new(&settings.geocoding, window, cx),
                 sponsor_open: false,
                 rednote_open: false,
                 bilibili_open: false,
@@ -572,7 +575,8 @@ impl AppView {
                                         )
                                         .description("缩放会同时改变字号、间距与控件尺寸。"),
                                     ),
-                            ),
+                            )
+                            .child(self.render_geocoding_settings(cx)),
                     )
                     .child(
                         v_flex()

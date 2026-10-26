@@ -68,6 +68,8 @@ pub struct ExifInfo {
     pub lens_make: Option<String>,
     pub lens_model: Option<String>,
     pub gps_info: Option<GPSInfo>,
+    /// 渲染入口派生的地址字段，不写入照片的 EXIF。
+    pub address_fields: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl ExifInfo {
@@ -119,6 +121,7 @@ impl ExifInfo {
             lens_make: get(ExifTag::LensMake).and_then(to_string),
             lens_model: get(ExifTag::LensModel).and_then(to_string),
             gps_info: exif.gps_info().cloned(),
+            address_fields: None,
         }
     }
 }

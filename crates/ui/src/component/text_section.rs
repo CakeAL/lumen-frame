@@ -1409,12 +1409,13 @@ impl AppView {
             .child(line.border.render_line(id, view, cx))
     }
 
-    pub(super) fn render_template_field_menu(
+    pub(in crate::app) fn render_template_field_menu(
         &self,
         input: Entity<TextareaState>,
         view: Entity<AppView>,
         line_id: u64,
     ) -> impl IntoElement {
+        let address_fields = self.backend.params().geocoding.tokens();
         let logo_fields = self
             .logos
             .assets
@@ -1435,6 +1436,18 @@ impl AppView {
                         this.insert_template_field(&input, value, window, cx)
                     });
                 }))
+            });
+            let menu = address_fields.iter().fold(menu, |menu, value| {
+                let input = input.clone();
+                let view = view.clone();
+                let value = value.clone();
+                menu.item(
+                    PopupMenuItem::new(value.clone()).on_click(move |_, window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.insert_template_field(&input, &value, window, cx)
+                        });
+                    }),
+                )
             });
             logo_fields.iter().fold(menu, |menu, (label, value)| {
                 let input = input.clone();

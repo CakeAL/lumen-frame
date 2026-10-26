@@ -601,6 +601,7 @@ impl Session {
                 serde_json::to_value(super::settings::load_at(self.storage().settings()?))?
             }
             SaveSettings { settings } => {
+                settings.geocoding.validate()?;
                 ensure!(
                     (1..=100).contains(&settings.jpeg_quality),
                     "JPEG 质量必须在 1 至 100 之间"
@@ -610,6 +611,7 @@ impl Session {
                 params.output_folder = settings.output_folder;
                 params.quality = settings.jpeg_quality;
                 params.default_font = settings.default_font;
+                params.geocoding = settings.geocoding;
                 json!(true)
             }
             ListLogos => logos_output(super::logos::library_in(self.storage().logos()?)?),

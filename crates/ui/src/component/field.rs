@@ -533,7 +533,7 @@ pub(super) fn muted_text(text: impl Into<SharedString>, cx: &App) -> AnyElement 
 }
 
 /// 提示当前值有问题时用的说明文字。
-pub(super) fn warning(text: impl Into<SharedString>, cx: &App) -> AnyElement {
+pub(in crate::app) fn warning(text: impl Into<SharedString>, cx: &App) -> AnyElement {
     h_flex()
         .w_full()
         .gap_1()

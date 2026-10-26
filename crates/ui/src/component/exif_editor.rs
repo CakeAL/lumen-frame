@@ -217,6 +217,7 @@ impl ExifEditor {
         };
 
         Ok(ExifInfo {
+            address_fields: None,
             created_time,
             make: optional_text(&value(&self.inputs.make, cx)),
             model: optional_text(&value(&self.inputs.model, cx)),

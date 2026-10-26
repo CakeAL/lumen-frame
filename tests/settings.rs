@@ -166,3 +166,66 @@ fn map_preferences_round_trip_and_old_settings_keep_defaults() {
     assert_eq!(load_at(&path).map, MapSettings::default());
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+fn geocoding_preferences_round_trip_without_entering_presets() {
+    use lumen_frame_core::{
+        Session, StoragePaths,
+        geocoding::{AddressField, GeocodingProvider, GeocodingSettings},
+        persistence::presets::WatermarkPreset,
+        watermark::WatermarkParams,
+    };
+    let path = scratch_file("geocoding");
+    let config = GeocodingSettings {
+        provider: GeocodingProvider::Amap,
+        api_key: "saved-test-key".into(),
+        fields: vec![AddressField {
+            id: 42,
+            paths: "pois.0.name,addressComponent.township".into(),
+        }],
+    };
+    let settings = AppSettings {
+        geocoding: config.clone(),
+        ..Default::default()
+    };
+    save_at(&path, &settings).unwrap();
+    assert_eq!(load_at(&path).geocoding, config);
+    let old: AppSettings = toml::from_str("appearance = 'System'").unwrap();
+    assert_eq!(old.geocoding, GeocodingSettings::default());
+    let session =
+        Session::from_storage(StoragePaths::in_directory(path.parent().unwrap())).unwrap();
+    assert_eq!(session.params().geocoding, config);
+    let mut preset = WatermarkPreset {
+        params: WatermarkParams {
+            geocoding: config.clone(),
+            ..Default::default()
+        },
+        text_groups: vec![],
+    };
+    let document = toml::to_string(&preset).unwrap();
+    assert!(!document.contains("saved-test-key"));
+    assert!(!document.contains("geocoding"));
+    let mut session = session;
+    preset.params.geocoding = GeocodingSettings::default();
+    session.replace_current(preset);
+    assert_eq!(session.params().geocoding, config);
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_images");
+    let added = session.add_photos(vec![
+        fixtures.join("DSC_4587.jpg"),
+        fixtures.join("ultra_hdr.jpg"),
+    ]);
+    let jobs = session.export_jobs(lumen_frame_core::export::ExportScope::AllPhotos);
+    session.params_mut().geocoding.provider = GeocodingProvider::Builtin;
+    session.params_mut().geocoding.api_key.clear();
+    session.select(added[1].0);
+    assert_eq!(
+        session.params().geocoding.provider,
+        GeocodingProvider::Builtin
+    );
+    assert!(session.params().geocoding.api_key.is_empty());
+    assert!(
+        jobs.iter()
+            .all(|job| job.watermark.params.geocoding == config)
+    );
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}

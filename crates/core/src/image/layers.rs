@@ -160,6 +160,11 @@ impl PreviewLayerCache {
         ensure_vips();
         let resolved_job = PreviewJob {
             params: crate::photo_palette::resolve(&job.path, &job.params)?,
+            exif: crate::geocoding::resolve_exif(
+                job.exif.as_ref(),
+                &job.params.geocoding,
+                &job.text_groups,
+            )?,
             ..job.clone()
         };
         let job = &resolved_job;

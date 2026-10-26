@@ -81,6 +81,13 @@ crates/
 排版管线，图层的渲染仍使用 `crates/core/src/render/` 的同一实现。导出继续完整合成并重建 Ultra HDR gain map。
 
 后端缓存仅保留当前照片的已求值 `Arc<RasterImage>`，不跨线程传递 libvips 句柄。前端按像素对象身份复用 `Arc<RenderImage>`，保持未变图层的纹理身份。
+逆地理编码由 `crates/core/src/features/geocoding.rs` 提供。`AppSettings::geocoding` 保存本机解析方式、
+高德 Web 服务 Key 和字段组；`WatermarkParams::geocoding` 只携带冻结快照，不序列化到预设。
+会话在照片恢复、预设应用和导出取值时统一保留本机配置。完整合成和分层预览在后台派生
+`ExifInfo::address_fields`，模板解析与富文本结果共用该字典；派生值不进入源照片或队列真值。
+高德按 Key 和转换后的 GCJ-02 坐标缓存完整响应，界面只通过非阻塞缓存读取显示结果。
+字段路径、默认示例和使用说明见 [逆地理编码与地址模板](geocoding.md)。
+
 水印文字通过 `crates/core/src/render/fonts.rs` 复用 GPUI 的平台字体后端。应用在主线程创建平台后，
 把同一个 `PlatformTextSystem` 交给 `render::init_font_backend`；后台预览和导出只持有
 可共享的字体接口，不创建窗口或平台对象。独立调用照片渲染的宿主也须先在主线程初始化。

@@ -126,6 +126,9 @@ pub struct WatermarkParams {
     /// 本机默认字体，由应用设置提供，不写入预设。
     #[serde(skip, default = "default_font")]
     pub default_font: String,
+    /// 本机逆地理编码配置的冻结快照，不进入预设。
+    #[serde(skip)]
+    pub geocoding: crate::geocoding::GeocodingSettings,
     /// 当前照片的自定义文本，随照片快照保存，不属于可复用预设。
     #[serde(skip)]
     pub custom_text: String,
@@ -177,6 +180,7 @@ impl Default for WatermarkParams {
         Self {
             output_folder: dirs::picture_dir().map(|path| path.join("watermark")),
             default_font: default_font(),
+            geocoding: Default::default(),
             custom_text: String::new(),
             custom_logos: BTreeMap::new(),
             border_ratio: (0.05, 0.05, 0.05, 0.05),

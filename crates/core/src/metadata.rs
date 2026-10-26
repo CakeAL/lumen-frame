@@ -146,6 +146,7 @@ impl ExifData {
         let data: Self = serde_json::from_value(value)?;
         let parse = || -> Result<ExifInfo, String> {
             Ok(ExifInfo {
+                address_fields: None,
                 created_time: if changes.contains_key("created_time") {
                     parse_created_time(&data.created_time)?
                 } else {

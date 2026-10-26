@@ -47,6 +47,8 @@ pub struct AppSettings {
     pub preset_order: Vec<String>,
     /// 地图源是本机偏好，不随水印预设或照片配置切换。
     pub map: MapSettings,
+    /// 逆地理编码方式、密钥与自定义字段，仅保存到本机。
+    pub geocoding: crate::geocoding::GeocodingSettings,
 }
 
 pub const DEFAULT_PREVIEW_BACKGROUND: [u8; 3] = [0x9a, 0xa7, 0xb1];
@@ -75,6 +77,7 @@ impl Default for AppSettings {
             builtin_presets_collapsed: false,
             preset_order: Vec::new(),
             map: MapSettings::default(),
+            geocoding: Default::default(),
         }
     }
 }

@@ -12,6 +12,7 @@ pub use command::{Command, CommandOutput, ErrorCode, OperationError, Reply, Requ
 mod session;
 pub use session::Session;
 // 持久化和独立工作流通过同一后端命名空间公开，UI 不再承载这些实现。
+pub use crate::features::geocoding;
 pub use crate::features::{colour_gainmap, geolocation, motion_photo, photo_palette};
 pub use crate::persistence::{logos, presets, settings};
 

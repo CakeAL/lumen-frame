@@ -388,6 +388,7 @@ impl AppView {
         self.preview_max_edge = settings::preview_max_edge_from_settings(saved.preview_max_edge);
         self.preview_background = saved.preview_background;
         self.map_settings = saved.map.clone();
+        self.sync_geocoding_controls(window, cx);
         self.builtin_presets_collapsed = saved.builtin_presets_collapsed;
         self.preset_order = saved.preset_order.clone();
         let (light, dark) = {

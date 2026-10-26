@@ -1,11 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex, OnceLock},
-};
+use std::sync::{Arc, LazyLock};
 
 use nom_exif::ExifDateTime;
 use regex::Regex;
-use reverse_geocoder_cn::{Address, ReverseGeocoder};
 use vips::{Error as VipsError, Result, VipsAngle, VipsBandFormat, VipsInterpretation};
 
 use crate::{
@@ -1129,6 +1125,11 @@ fn cleanup_template(s: &str) -> String {
 }
 
 fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Option<String> {
+    if let Some(fields) = &exif.address_fields
+        && let Some(value) = fields.get(key)
+    {
+        return Some(value.clone());
+    }
     match key {
         "拍摄日期" => exif
             .created_time
@@ -1154,14 +1155,13 @@ fn resolve_exif_key_name(key: &str, exif: &ExifInfo, time_format: &str) -> Optio
             .as_ref()
             .and_then(|gps| gps.altitude_meters())
             .map(format_gps_number),
-        "省" | "市" | "区" => {
-            administrative_address(exif.gps_info.as_ref()).map(|address| match key {
+        "省" | "市" | "区" => crate::geocoding::administrative_address(exif.gps_info.as_ref())
+            .map(|address| match key {
                 "省" => address.province.name.clone(),
                 "市" => address.city.name.clone(),
                 "区" => address.county.name.clone(),
                 _ => unreachable!("已在外层匹配行政区字段"),
-            })
-        }
+            }),
         // Logo 由 render_text 的行内图像处理，这里不替换成文本
         "Logo" => None,
         _ => None,
@@ -1210,34 +1210,6 @@ fn format_gps_number(value: f64) -> String {
             .trim_end_matches('.')
             .to_owned()
     }
-}
-
-/// 进程级缓存：同一张（或多张拥有相同 GPS 的）照片在模板中先后使用 `{省}`、`{市}`、
-/// `{区}` 时只进行一次逆地理查询。数据源由 crate 内嵌，整个过程不会访问网络。
-fn administrative_address(gps: Option<&nom_exif::GPSInfo>) -> Option<Address> {
-    let gps = gps?;
-    let latitude = gps.latitude_decimal()?;
-    let longitude = gps.longitude_decimal()?;
-    let key = (latitude.to_bits(), longitude.to_bits());
-
-    type AddressCache = Mutex<HashMap<(u64, u64), Option<Address>>>;
-    static GEOCODER: OnceLock<Option<ReverseGeocoder>> = OnceLock::new();
-    static CACHE: OnceLock<AddressCache> = OnceLock::new();
-
-    let mut cache = CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(address) = cache.get(&key) {
-        return address.clone();
-    }
-
-    let address = GEOCODER
-        .get_or_init(|| ReverseGeocoder::embedded().ok())
-        .as_ref()
-        .and_then(|geocoder| geocoder.reverse_geocode(latitude, longitude));
-    cache.insert(key, address.clone());
-    address
 }
 
 /// 时间格式的默认值。

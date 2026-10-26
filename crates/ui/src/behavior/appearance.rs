@@ -96,6 +96,7 @@ impl AppView {
             builtin_presets_collapsed: self.builtin_presets_collapsed,
             preset_order: self.preset_order.clone(),
             map: self.map_settings.clone(),
+            geocoding: self.backend.params().geocoding.clone(),
         };
         let Some(path) = self.settings_path.as_deref() else {
             self.settings_feedback = Some("找不到系统的配置目录，偏好未能保存。".into());

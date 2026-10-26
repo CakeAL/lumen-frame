@@ -39,6 +39,7 @@ impl Session {
         let settings = crate::settings::load_at(storage.settings()?);
         let mut session = Self::default().with_storage(storage);
         session.current.params.quality = settings.jpeg_quality.clamp(1, 100);
+        session.current.params.geocoding = settings.geocoding;
         if let Some(folder) = settings.output_folder {
             session.current.params.output_folder = Some(folder);
         }
@@ -122,6 +123,7 @@ impl Session {
         let params = &mut watermark.params;
         params.output_folder = self.params().output_folder.clone();
         params.default_font = self.params().default_font.clone();
+        params.geocoding = self.params().geocoding.clone();
         params.custom_logos = self.params().custom_logos.clone();
         params.rotation = self.params().rotation;
         params.quality = self.params().quality;

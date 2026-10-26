@@ -183,6 +183,7 @@ impl AppView {
         crate::window_effects::install(settings.window_effects, cx);
         let mut params = WatermarkParams {
             quality: settings.jpeg_quality.clamp(1, 100),
+            geocoding: settings.geocoding.clone(),
             ..Default::default()
         };
         if let Some(folder) = settings.output_folder.clone() {
@@ -235,6 +236,7 @@ impl AppView {
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
         subscriptions.extend(settings_subscriptions);
+        subscriptions.push(cx.observe(&preview, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
             if this.appearance == AppearanceMode::System {
                 Theme::sync_system_appearance(Some(window), cx);
