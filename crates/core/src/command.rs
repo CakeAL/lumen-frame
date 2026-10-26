@@ -818,6 +818,12 @@ pub(crate) fn validate_watermark(w: &WatermarkPreset) -> Result<()> {
         p.shadow_size.is_finite() && (0.0..=1.0).contains(&p.shadow_size),
         "阴影大小无效"
     );
+    for value in [p.shadow_offset_x, p.shadow_offset_y] {
+        ensure!(
+            value.is_finite() && (-1.0..=1.0).contains(&value),
+            "阴影偏移必须在 -100% 至 100% 之间"
+        );
+    }
     ensure!(
         p.border_radius.is_finite() && (0.0..=0.5).contains(&p.border_radius),
         "照片圆角无效"

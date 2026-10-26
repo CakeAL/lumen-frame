@@ -127,6 +127,81 @@ mod tests {
     }
 
     #[test]
+    fn shadow_offset_moves_only_shadow_and_matches_full_composition() {
+        let mut job = job();
+        job.path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test_images/ultra_hdr.jpg"
+        )
+        .into();
+        job.text_groups.clear();
+        job.params.border_ratio = (0.3, 0.3, 0.3, 0.3);
+        job.params.photo_border.set_enabled(true);
+        job.params.photo_border.set_width(0.05);
+        let mut cache = PreviewLayerCache::default();
+        let centered = cache.render(&job).unwrap();
+        let photo_height = cache.backend.source_height().unwrap();
+        for (x, y) in [
+            (-0.04, -0.07),
+            (0.0, -0.03),
+            (0.06, 0.04),
+            (0.0, 0.0),
+            (-1.0, 1.0),
+        ] {
+            job.params.shadow_offset_x = x;
+            job.params.shadow_offset_y = y;
+            let shifted = cache.render(&job).unwrap();
+            assert_eq!(shifted.size, centered.size);
+            assert_eq!(shifted.photo_region(), centered.photo_region());
+            for ix in 0..centered.layers.len() {
+                assert!(same(&centered, &shifted, ix), "偏移不应重建任何像素图层");
+                let offset = if ix == 1 {
+                    (
+                        (f64::from(photo_height) * x).round() as i32,
+                        (f64::from(photo_height) * y).round() as i32,
+                    )
+                } else {
+                    (0, 0)
+                };
+                assert_eq!(
+                    (shifted.layers[ix].x, shifted.layers[ix].y),
+                    (
+                        centered.layers[ix].x + offset.0,
+                        centered.layers[ix].y + offset.1
+                    )
+                );
+            }
+            let full = super::super::render_preview(&job).unwrap();
+            let error = shifted
+                .image()
+                .as_bytes(0)
+                .unwrap()
+                .iter()
+                .zip(full.as_bytes(0).unwrap())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap();
+            assert!(error <= 2, "阴影偏移的分层预览与完整合成像素误差 {error}");
+        }
+        job.params.rotation = Rotation::Clockwise90;
+        job.params.shadow_offset_x = 0.04;
+        job.params.shadow_offset_y = -0.06;
+        let rotated = cache.render(&job).unwrap();
+        let full = super::super::render_preview(&job).unwrap();
+        assert_eq!(rotated.size, full.size(0));
+        let error = rotated
+            .image()
+            .as_bytes(0)
+            .unwrap()
+            .iter()
+            .zip(full.as_bytes(0).unwrap())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert!(error <= 2, "最终旋转必须同时作用于偏移后的阴影：{error}");
+    }
+
+    #[test]
     fn palette_card_shares_text_band_and_reuses_content_when_attached() {
         let mut job = job();
         job.path = concat!(

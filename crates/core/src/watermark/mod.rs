@@ -116,6 +116,10 @@ pub struct WatermarkParams {
     pub shadow_size: f64,
     pub shadow_density: f64,
     pub shadow_color: [u8; 3],
+    /// 阴影水平偏移，按照片高度计算；负值向左，范围 -1–1。
+    pub shadow_offset_x: f64,
+    /// 阴影垂直偏移，按照片高度计算；负值向上，范围 -1–1。
+    pub shadow_offset_y: f64,
     pub solid_background: bool,
     /// 单独保留旧纯色开关，旧预设无需迁移；渐变启用时优先使用渐变。
     pub gradient_background: bool,
@@ -152,6 +156,8 @@ impl Default for WatermarkParams {
             shadow_size: 0.06,
             shadow_density: 1.2,
             shadow_color: [0; 3],
+            shadow_offset_x: 0.0,
+            shadow_offset_y: 0.0,
             solid_background: false,
             gradient_background: false,
             gradient: BackgroundGradient::default(),

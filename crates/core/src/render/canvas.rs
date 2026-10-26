@@ -163,6 +163,7 @@ pub fn add_shadow(
     let Some((shadow, x, y)) = shadow_layer(img, params)? else {
         return Ok(canvas);
     };
+    let (offset_x, offset_y) = shadow_offset(img.height() as i32, params);
     image_op(|out| unsafe {
         vips_sys::vips_composite2(
             canvas.as_ptr(),
@@ -170,15 +171,24 @@ pub fn add_shadow(
             out,
             VipsBlendMode::VIPS_BLEND_MODE_OVER,
             c"x".as_ptr(),
-            img_x + x,
+            img_x + x + offset_x,
             c"y".as_ptr(),
-            img_y + y,
+            img_y + y + offset_y,
             std::ptr::null::<i8>(),
         )
     })
 }
 
+/// 统一使用原照片高度换算偏移，避免外边框或预览缩放改变偏移比例。
+pub(crate) fn shadow_offset(photo_height: i32, params: &WatermarkParams) -> (i32, i32) {
+    (
+        (f64::from(photo_height) * params.shadow_offset_x).round() as i32,
+        (f64::from(photo_height) * params.shadow_offset_y).round() as i32,
+    )
+}
+
 /// 独立的透明阴影图层，坐标相对于照片；预览可缓存它，不必重新做高斯模糊。
+/// 偏移由共享排版层应用，调整偏移时继续复用这份居中的像素。
 pub(crate) fn photo_shadow_layer(
     photo: &VipsImage,
     params: &WatermarkParams,

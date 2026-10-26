@@ -58,6 +58,8 @@ fn check_export_thumbnail(source: &str, hdr: bool, rotation: Rotation) {
         border_radius: 0.015,
         shadow_size: 0.105,
         shadow_density: 2.0,
+        shadow_offset_x: -0.04,
+        shadow_offset_y: 0.06,
         rotation,
         ..Default::default()
     };

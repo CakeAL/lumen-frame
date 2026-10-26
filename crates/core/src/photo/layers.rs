@@ -230,8 +230,9 @@ pub(crate) fn prepare<R: LayerRenderer>(
     }];
     let photo = renderer.photo()?;
     if let Some(mut shadow) = renderer.shadow()? {
-        shadow.x += img_x;
-        shadow.y += img_y;
+        let (offset_x, offset_y) = canvas::shadow_offset(img_h, params);
+        shadow.x += img_x + offset_x;
+        shadow.y += img_y + offset_y;
         layers.push(shadow);
     }
     if let Some(mut border) = renderer.border()? {

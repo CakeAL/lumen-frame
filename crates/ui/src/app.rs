@@ -1215,6 +1215,12 @@ impl AppView {
         controls
             .shadow_density
             .sync(params.shadow_density, window, cx);
+        controls
+            .shadow_offset_x
+            .sync(params.shadow_offset_x, window, cx);
+        controls
+            .shadow_offset_y
+            .sync(params.shadow_offset_y, window, cx);
         controls.blur_sigma.sync(params.blur_sigma, window, cx);
         controls
             .grain_strength
