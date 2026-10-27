@@ -7,8 +7,9 @@
 //! 落到主题和窗口外观上，因此不存在第二份副本会与之不同步。
 
 use gpui_kit::TestSupportExt as _;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, IndexPath, Theme, ThemeMode,
+    ActiveTheme as _, Disableable as _, IndexPath, Theme, ThemeMode,
     button::{Button, ButtonVariants as _},
     collapsible::Collapsible,
     form::Field,
@@ -19,13 +20,14 @@ use gpui_kit::component::{
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
+    sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, FontWeight, ObjectFit, SharedString, Subscription, Window,
-    div, img, px, relative,
+    AnyElement, App, Context, Entity, FocusHandle, FontWeight, KeyDownEvent, ObjectFit,
+    ScrollHandle, SharedString, Subscription, Window, div, img, px, rems,
 };
 
 use crate::backend::settings::{AppSettings, AppearanceMode};
@@ -64,8 +66,44 @@ pub(in crate::app) fn apply_interface_scale(scale: f32, window: &mut Window, cx:
 /// 设置页中可搜索的名称下拉。
 type NameSelect = SelectState<SearchableVec<SharedString>>;
 
+/// 分类与导航焦点只属于设置页，不进入业务配置或预设。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsCategory {
+    General,
+    Appearance,
+    Geocoding,
+    About,
+}
+impl SettingsCategory {
+    const ALL: [Self; 4] = [
+        Self::General,
+        Self::Appearance,
+        Self::Geocoding,
+        Self::About,
+    ];
+    fn title(self) -> &'static str {
+        match self {
+            Self::General => "常规",
+            Self::Appearance => "外观",
+            Self::Geocoding => "逆地理编码",
+            Self::About => "关于",
+        }
+    }
+    fn icon(self) -> IconName {
+        match self {
+            Self::General => IconName::Settings,
+            Self::Appearance => IconName::Sun,
+            Self::Geocoding => IconName::MapPin,
+            Self::About => IconName::Info,
+        }
+    }
+}
+
 /// 设置页上的控件状态。
 pub(in crate::app) struct SettingsControls {
+    category: SettingsCategory,
+    navigation_focus: FocusHandle,
+    scroll: [ScrollHandle; 4],
     pub light_theme: Entity<NameSelect>,
     pub dark_theme: Entity<NameSelect>,
     pub default_font: Entity<NameSelect>,
@@ -141,6 +179,9 @@ impl SettingsControls {
 
         (
             Self {
+                category: SettingsCategory::General,
+                navigation_focus: cx.focus_handle(),
+                scroll: std::array::from_fn(|_| ScrollHandle::new()),
                 light_theme,
                 dark_theme,
                 default_font,
@@ -348,12 +389,254 @@ impl AppView {
     }
 
     pub(in crate::app) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
+        let category = self.settings.category;
+        let content = match category {
+            SettingsCategory::General => self.render_general_settings(cx).into_any_element(),
+            SettingsCategory::Appearance => self.render_appearance_settings(cx).into_any_element(),
+            SettingsCategory::Geocoding => self.render_geocoding_settings(cx).into_any_element(),
+            SettingsCategory::About => self.render_about_settings(cx).into_any_element(),
+        };
+
+        h_flex()
+            .items_stretch()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(
+                div()
+                    .id("settings-navigation")
+                    .test_support()
+                    .track_focus(&self.settings.navigation_focus)
+                    .tab_index(0)
+                    .role(gpui_kit::Role::Tree)
+                    .aria_label("设置分类，使用上下方向键切换")
+                    .h_full()
+                    .flex_shrink_0()
+                    .border_r_1()
+                    .border_color(cx.theme().sidebar_border)
+                    .focus_visible(|this| this.border_color(cx.theme().ring))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        let current = this.settings.category as usize;
+                        let next = match event.keystroke.key.as_str() {
+                            "up" => current.saturating_sub(1),
+                            "down" => (current + 1).min(SettingsCategory::ALL.len() - 1),
+                            "home" => 0,
+                            "end" => SettingsCategory::ALL.len() - 1,
+                            _ => return,
+                        };
+                        this.settings.category = SettingsCategory::ALL[next];
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
+                    .child(
+                        Sidebar::new("settings-sidebar")
+                            .collapsible(false)
+                            .w(rems(13.))
+                            .min_w(rems(12.))
+                            .max_w(rems(15.))
+                            .border_r_0()
+                            .header(
+                                div()
+                                    .px_2()
+                                    .py_3()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("设置"),
+                            )
+                            .child(SidebarMenu::new().children(SettingsCategory::ALL.map(
+                                |item| {
+                                    SidebarMenuItem::new(item.title())
+                                        .icon(item.icon())
+                                        .active(item == category)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.settings.category = item;
+                                            this.settings.navigation_focus.focus(window, cx);
+                                            cx.notify();
+                                        }))
+                                },
+                            ))),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .id("settings-preferences")
+                    .test_support()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.settings.scroll[category as usize])
+                    .vertical_scrollbar(&self.settings.scroll[category as usize])
+                    .child(
+                        v_flex().w_full().items_center().px_6().py_8().child(
+                            v_flex()
+                                .id("settings-content")
+                                .test_support()
+                                .w_full()
+                                .max_w(rems(44.))
+                                .min_w_0()
+                                .gap_6()
+                                .child(
+                                    div()
+                                        .text_xl()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(category.title()),
+                                )
+                                .child(content)
+                                .when_some(
+                                    self.settings_feedback
+                                        .clone()
+                                        .filter(|_| category != SettingsCategory::Geocoding),
+                                    |this, feedback| this.child(description(feedback)),
+                                ),
+                        ),
+                    ),
+            )
+    }
+
+    fn render_general_settings(&self, cx: &Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("settings-general-page")
+            .w_full()
+            .gap_6()
+            .child(
+                GroupBox::new()
+                    .id("settings-preview")
+                    .title("预览")
+                    .child(
+                        Field::new()
+                            .w_full()
+                            .flex_initial()
+                            .child(self.settings.preview_max_edge.render(
+                                "预览底图长边上限",
+                                false,
+                                cx,
+                            ))
+                            .description(
+                                "该值会影响预览渲染速度；数值越小越快，且不影响导出图片。",
+                            ),
+                    )
+                    .child(
+                        Field::new()
+                            .w_full()
+                            .flex_initial()
+                            .child(self.settings.preview_background.render(
+                                "照片展示背景",
+                                false,
+                                cx,
+                            ))
+                            .description("只影响照片展示区域，不影响预览生成结果或导出。"),
+                    ),
+            )
+            .child(
+                GroupBox::new()
+                    .id("settings-watermark-text")
+                    .title("水印文字")
+                    .child(
+                        field(
+                            "默认字体",
+                            Select::new(&self.settings.default_font).w_full(),
+                            cx,
+                        )
+                        .description(
+                            "未单独指定字体的文字行会使用此字体；预览立即更新，后续导出也会使用。",
+                        ),
+                    ),
+            )
+    }
+
+    fn render_appearance_settings(&self, cx: &Context<Self>) -> impl IntoElement {
         let appearance_index = APPEARANCES
             .iter()
             .position(|(_, mode)| *mode == self.appearance);
         let scale_index = INTERFACE_SCALES
             .iter()
             .position(|(_, size)| (size - self.interface_scale).abs() < 0.5);
+        v_flex()
+            .w_full()
+            .gap_6()
+            .child(
+                GroupBox::new()
+                    .id("settings-appearance")
+                    .title("主题与窗口")
+                    .child(
+                        Field::new()
+                            .w_full()
+                            .flex_initial()
+                            .child(
+                                Switch::new("settings-window-effects")
+                                    .label("窗口毛玻璃")
+                                    .checked(self.window_effects)
+                                    .disabled(!crate::window_effects::supported())
+                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                        this.set_window_effects(*checked, cx)
+                                    })),
+                            )
+                            .description(if crate::window_effects::supported() {
+                                "使用系统窗口背景效果：macOS 毛玻璃、Windows 11 Mica；即时生效。"
+                            } else {
+                                "当前平台暂不支持窗口背景效果。"
+                            }),
+                    )
+                    .child(
+                        field(
+                            "主题模式",
+                            RadioGroup::horizontal("settings-mode")
+                                .children(
+                                    APPEARANCES
+                                        .iter()
+                                        .map(|(label, _)| *label)
+                                        .collect::<Vec<_>>(),
+                                )
+                                .selected_index(appearance_index)
+                                .on_click(cx.listener(|this, index: &usize, window, cx| {
+                                    if let Some((_, mode)) = APPEARANCES.get(*index) {
+                                        this.set_appearance_mode(*mode, window, cx);
+                                    }
+                                })),
+                            cx,
+                        )
+                        .description("跟随系统时会随操作系统的浅色/深色自动切换。"),
+                    )
+                    .child(
+                        Field::new()
+                            .w_full()
+                            .flex_initial()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_4()
+                                    .child(self.render_theme_slot(ThemeMode::Light, cx))
+                                    .child(self.render_theme_slot(ThemeMode::Dark, cx)),
+                            )
+                            .description("浅色与深色各选一套配色；切换明暗时用对应的那一套。"),
+                    ),
+            )
+            .child(
+                GroupBox::new().title("界面尺寸").child(
+                    field(
+                        "界面缩放",
+                        RadioGroup::horizontal("settings-scale")
+                            .children(
+                                INTERFACE_SCALES
+                                    .iter()
+                                    .map(|(label, _)| *label)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .selected_index(scale_index)
+                            .on_click(cx.listener(|this, index: &usize, window, cx| {
+                                if let Some((_, scale)) = INTERFACE_SCALES.get(*index) {
+                                    this.set_interface_scale(*scale, window, cx);
+                                }
+                            })),
+                        cx,
+                    )
+                    .description("缩放会同时改变字号、间距与控件尺寸。"),
+                ),
+            )
+    }
+
+    fn render_about_settings(&self, cx: &Context<Self>) -> impl IntoElement {
         let (update_label, update_status, update_disabled): (SharedString, SharedString, bool) =
             match &self.update_state {
                 UpdateState::Idle => ("检查更新".into(), "默认每 7 天自动检查一次".into(), false),
@@ -378,305 +661,30 @@ impl AppView {
                 ),
                 UpdateState::Failed { message } => ("重试".into(), message.clone(), false),
             };
-
-        v_flex()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .child(
-                h_flex()
-                    .w_full()
-                    .flex_shrink_0()
-                    .px_4()
-                    .h_12()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(cx.theme().foreground)
-                            .child("设置"),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .items_stretch()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        v_flex()
-                            .id("settings-preferences")
-                            .debug_selector(|| "settings-preferences".into())
-                            .test_support()
-                            .flex_basis(relative(0.7))
-                            .flex_grow_0()
-                            .flex_shrink_0()
-                            .min_w_0()
-                            .overflow_y_scroll()
-                            .gap_6()
-                            .p_6()
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-preview")
-                                    .title("预览")
-                                    .child(
-                                        Field::new()
-                                            .w_full()
-                                            .flex_initial()
-                                            .child(self.settings.preview_max_edge.render(
-                                                "预览底图长边上限",
-                                                false,
-                                                cx,
-                                            ))
-                                            .description("该值会影响预览渲染速度；数值越小越快，且不影响导出图片。"),
-                                    )
-                                    .child(
-                                        Field::new()
-                                            .w_full()
-                                            .flex_initial()
-                                            .child(self.settings.preview_background.render(
-                                                "照片展示背景",
-                                                false,
-                                                cx,
-                                            ))
-                                            .description("只影响照片展示区域，不影响预览生成结果或导出。"),
-                                    ),
-                            )
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-watermark-text")
-                                    .title("水印文字")
-                                    .child(
-                                        field(
-                                            "默认字体",
-                                            Select::new(&self.settings.default_font).w_full(),
-                                            cx,
-                                        )
-                                        .description("未单独指定字体的文字行会使用此字体；预览立即更新，后续导出也会使用。"),
-                                    ),
-                            )
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-appearance")
-                                    .title("外观")
-                                    .child(
-                                        v_flex()
-                                            .w_full()
-                                            .gap_2()
-                                            .child(
-                                                Field::new()
-                                                    .w_full()
-                                                    .flex_initial()
-                                                    .child(
-                                                        Switch::new("settings-window-effects")
-                                                            .label("窗口毛玻璃")
-                                                            .checked(self.window_effects)
-                                                            .disabled(!crate::window_effects::supported())
-                                                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                                                this.set_window_effects(*checked, cx);
-                                                            })),
-                                                    )
-                                                    .description(if crate::window_effects::supported() {
-                                                        "使用系统窗口背景效果：macOS 毛玻璃、Windows 11 Mica；即时生效。"
-                                                    } else {
-                                                        "当前平台暂不支持窗口背景效果。"
-                                                    }),
-                                            )
-                                            .child(
-                                                field(
-                                                    "主题",
-                                                    RadioGroup::horizontal("settings-mode")
-                                                        .children(
-                                                            APPEARANCES
-                                                                .iter()
-                                                                .map(|(label, _)| *label)
-                                                                .collect::<Vec<_>>(),
-                                                        )
-                                                        .selected_index(appearance_index)
-                                                        .on_click(cx.listener(
-                                                            |this, index: &usize, window, cx| {
-                                                                let Some((_, mode)) =
-                                                                    APPEARANCES.get(*index)
-                                                                else {
-                                                                    return;
-                                                                };
-                                                                this.set_appearance_mode(
-                                                                    *mode, window, cx,
-                                                                );
-                                                            },
-                                                        )),
-                                                    cx,
-                                                )
-                                                .description("跟随系统时会随操作系统的浅色/深色自动切换。"),
-                                            )
-                                            .child(
-                                                Field::new()
-                                                    .w_full()
-                                                    .flex_initial()
-                                                    .child(
-                                                        h_flex()
-                                                            .child(self.render_theme_slot(ThemeMode::Light, cx))
-                                                            .gap_2()
-                                                            .child(self.render_theme_slot(ThemeMode::Dark, cx)),
-                                                    )
-                                                    .description("浅色与深色各选一套配色；切换明暗时用对应的那一套。"),
-                                            )
-                                            .child(
-                                                Field::new()
-                                                    .w_full()
-                                                    .flex_initial()
-                                                    .pt_2()
-                                                    .child(
-                                                        Button::new("settings-reset")
-                                                            .label("恢复默认设置")
-                                                            .ghost()
-                                                            .w_full()
-                                                            .on_click(cx.listener(
-                                                                |this, _, window, cx| {
-                                                                    this.reset_appearance_defaults(
-                                                                        window, cx,
-                                                                    )
-                                                                },
-                                                            )),
-                                                    )
-                                                    .description("恢复为跟随系统、默认配色、开启窗口毛玻璃、标准缩放、默认预览分辨率与默认字体；不影响预设。"),
-                                            )
-                                            .when_some(
-                                                self.settings_feedback.clone(),
-                                                |this, feedback| {
-                                                    this.child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(cx.theme().danger)
-                                                            .child(feedback),
-                                                    )
-                                                },
-                                            ),
-                                    )
-                                    .child(
-                                        field(
-                                            "界面缩放",
-                                            RadioGroup::horizontal("settings-scale")
-                                                .children(
-                                                    INTERFACE_SCALES
-                                                        .iter()
-                                                        .map(|(label, _)| *label)
-                                                        .collect::<Vec<_>>(),
-                                                )
-                                                .selected_index(scale_index)
-                                                .on_click(cx.listener(
-                                                    |this, index: &usize, window, cx| {
-                                                        let (_, size) = INTERFACE_SCALES[*index];
-                                                        this.set_interface_scale(size, window, cx);
-                                                    },
-                                                )),
-                                            cx,
-                                        )
-                                        .description("缩放会同时改变字号、间距与控件尺寸。"),
-                                    ),
-                            )
-                            .child(self.render_geocoding_settings(cx)),
-                    )
-                    .child(
-                        v_flex()
-                            .id("settings-about-panel")
-                            .debug_selector(|| "settings-about-panel".into())
-                            .flex_basis(relative(0.3))
-                            .flex_grow_0()
-                            .flex_shrink_0()
-                            .min_w_0()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .gap_6()
-                            .border_l_1()
-                            .border_color(cx.theme().border)
-                            .p_6()
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-about")
-                                    .w_full()
-                                    .title("关于")
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(cx.theme().foreground)
-                                            .child(format!(
-                                                "Lumen Frame v{}",
-                                                env!("CARGO_PKG_VERSION")
-                                            )),
-                                    )
-                                    .child(
-                                        description("基于 libvips 为照片加上边框、阴影与 EXIF 文字水印。"),
-                                    )
-                                    .child(
-                                        Field::new()
-                                            .w_full()
-                                            .flex_initial()
-                                            .pt_2()
-                                            .child(
-                                                Button::new("settings-check-update")
-                                                    .label(update_label)
-                                                    .w_full()
-                                                    .disabled(update_disabled)
-                                                    .on_click(cx.listener(
-                                                        |this, _, window, cx| {
-                                                            this.check_for_updates(window, cx)
-                                                        },
-                                                    )),
-                                            )
-                                            .description(update_status),
-                                    ),
-                            )
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-wishing-well")
-                                    .w_full()
-                                    .title("许愿池")
-                                    .child(
-                                        description("许愿新功能 / 反馈 Bug"),
-                                    )
-                                    .child(
-                                        Button::new("settings-open-issues")
-                                            .label("前往 GitHub Issues")
-                                            .icon(IconName::ExternalLink)
-                                            .outline()
-                                            .w_full()
-                                            .on_click(|_, _, cx| cx.open_url(ISSUES_URL)),
-                                    ),
-                            )
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-sponsor-group")
-                                    .w_full()
-                                    .title("赞助")
-                                    .child(self.render_qr_disclosure(
-                                        AboutDisclosure::Sponsor,
-                                        "WeChat",
-                                        None,
-                                        cx,
-                                    )),
-                            )
-                            .child(
-                                GroupBox::new()
-                                    .id("settings-social-platforms")
-                                    .w_full()
-                                    .title("关注我的社交平台")
-                                    .child(self.render_qr_disclosure(
-                                        AboutDisclosure::Rednote,
-                                        "小红书",
-                                        Some(REDNOTE_URL),
-                                        cx,
-                                    ))
-                                    .child(self.render_qr_disclosure(
-                                        AboutDisclosure::Bilibili,
-                                        "Bilibili",
-                                        Some(BILIBILI_URL),
-                                        cx,
-                                    )),
-                            )
-                    ),
-            )
+        v_flex().id("settings-about-panel").w_full().gap_6()
+            .child(GroupBox::new().id("settings-about").title("Lumen Frame")
+                .child(div().text_sm().child(format!("版本 {}", env!("CARGO_PKG_VERSION"))))
+                .child(description("为照片加上边框、阴影与 EXIF 文字水印。"))
+                .child(Field::new().w_full().flex_initial()
+                    .child(Button::new("settings-check-update").label(update_label)
+                        .disabled(update_disabled)
+                        .on_click(cx.listener(|this, _, window, cx| this.check_for_updates(window, cx))))
+                    .description(update_status)))
+            .child(GroupBox::new().id("settings-wishing-well").title("许愿池")
+                .child(description("许愿新功能 / 反馈 Bug"))
+                .child(Button::new("settings-open-issues").label("前往 GitHub Issues")
+                    .icon(IconName::ExternalLink).outline()
+                    .on_click(|_, _, cx| cx.open_url(ISSUES_URL))))
+            .child(GroupBox::new().id("settings-sponsor-group").title("赞助")
+                .child(self.render_qr_disclosure(AboutDisclosure::Sponsor, "WeChat", None, cx)))
+            .child(GroupBox::new().id("settings-social-platforms").title("关注我的社交平台")
+                .child(self.render_qr_disclosure(AboutDisclosure::Rednote, "小红书", Some(REDNOTE_URL), cx))
+                .child(self.render_qr_disclosure(AboutDisclosure::Bilibili, "Bilibili", Some(BILIBILI_URL), cx)))
+            .child(GroupBox::new().id("settings-defaults").title("默认设置")
+                .child(Field::new().w_full().flex_initial()
+                    .child(Button::new("settings-reset").label("恢复默认设置").outline()
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_appearance_defaults(window, cx))))
+                    .description("恢复主题、窗口毛玻璃、界面缩放、预览与默认字体；保留逆地理编码配置和水印预设。")))
     }
 }
 
@@ -712,13 +720,7 @@ mod tests {
         let view = owner.borrow().clone().unwrap();
         assert!(view.read_with(cx, |view, _| view.window_effects));
         if crate::window_effects::supported() {
-            cx.update(|window, cx| {
-                window.scroll(
-                    "settings-preferences",
-                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-400.))),
-                    cx,
-                );
-            });
+            cx.update(|window, cx| window.click("0-1", cx));
             cx.run_until_parked();
             cx.update(|window, cx| window.click("settings-window-effects", cx));
             cx.run_until_parked();
@@ -733,6 +735,88 @@ mod tests {
         assert!(view.read_with(cx, |view, _| view.window_effects));
         assert!(crate::backend::settings::load_at(&path).window_effects);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[gpui_kit::test]
+    fn settings_categories_center_content_and_preserve_drafts(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (root, cx) = cx.add_window_view(|window, cx| {
+            let view = cx.new(|cx| {
+                let mut view = AppView::new_with_settings_path(None, window, cx);
+                view.page = super::super::super::AppPage::Settings;
+                view
+            });
+            Root::new(view, window, cx)
+        });
+        let app = root.read_with(cx, |root, _| {
+            root.view().clone().downcast::<AppView>().ok().unwrap()
+        });
+        // 内容区在最小窗口与宽窗口、不同界面缩放下均居中限宽。
+        for (width, font_size, mode) in [
+            (1180., 16., ThemeMode::Light),
+            (1800., 18., ThemeMode::Dark),
+            (1180., 14., ThemeMode::Light),
+        ] {
+            cx.simulate_resize(gpui_kit::size(px(width), px(800.)));
+            app.update_in(cx, |_, window, cx| {
+                Theme::change(mode, Some(window), cx);
+                apply_interface_scale(font_size, window, cx);
+                cx.notify();
+            });
+            cx.run_until_parked();
+            cx.update(|window, _| {
+                let pane = window.find("settings-preferences").bounds();
+                let content = window.find("settings-content").bounds();
+                let navigation = window.find("settings-navigation").bounds();
+                assert!((pane.center().x - content.center().x).abs() <= px(1.));
+                assert!(content.size.width <= px(44. * font_size + 1.));
+                assert!(content.origin.x > navigation.right());
+                assert!(window.try_find("settings-reset").is_none());
+                assert!(window.try_find("geocoding-key").is_none());
+            });
+        }
+        cx.update(|window, cx| {
+            window.click("0-1", cx);
+            window.press("down", cx);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(app.settings.category == SettingsCategory::Geocoding)
+        });
+        cx.update(|window, cx| {
+            assert!(window.try_find("geocoding-save").is_none());
+            window.click(("geocoding-path", 2_u64), cx);
+            window.press("cmd-a", cx);
+            window.input(".", cx);
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.click("0-0", cx);
+            window.press("end", cx);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(app.settings.category == SettingsCategory::About)
+        });
+        cx.update(|window, cx| {
+            window.scroll(
+                "settings-preferences",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-1000.))),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert!(window.find("settings-reset").visible());
+            assert!(window.find("0-0").visible(), "右侧滚动不应带走分类导航");
+            window.click("0-2", cx);
+        });
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert_eq!(window.find(("geocoding-path", 2_u64)).value(), Some("."))
+        });
     }
 
     struct FontSelectHarness {

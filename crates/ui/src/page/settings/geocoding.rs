@@ -1,4 +1,4 @@
-//! 逆地理编码设置表单；输入为草稿，保存后才更新本机环境并请求预览。
+//! 逆地理编码设置：有效输入自动应用；未完成的字段留在草稿中。
 use crate::app::{
     AppView,
     component::field::{description, field, warning},
@@ -6,17 +6,18 @@ use crate::app::{
 use crate::backend::geocoding::{
     AddressField, DOCUMENTATION_URL, GeocodingProvider, GeocodingSettings, example_response,
 };
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Sizable as _,
     button::{Button, ButtonVariants as _},
-    group_box::GroupBox,
+    group_box::{GroupBox, GroupBoxVariants as _},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     link::Link,
     radio::RadioGroup,
     v_flex,
 };
-use gpui_kit::{App, Context, Entity, IntoElement, Subscription, Window, div, prelude::*};
+use gpui_kit::{App, Context, Entity, IntoElement, Subscription, Task, Window, div, prelude::*};
 
 struct FieldDraft {
     id: u64,
@@ -29,7 +30,7 @@ pub(in crate::app) struct GeocodingControls {
     fields: Vec<FieldDraft>,
     next_id: u64,
     feedback: Option<(String, bool)>,
-    submitted: Option<GeocodingSettings>,
+    save_task: Option<Task<()>>,
     _observe: Subscription,
 }
 impl GeocodingControls {
@@ -53,7 +54,11 @@ impl GeocodingControls {
             .saturating_add(1);
         Self {
             provider: settings.provider,
-            _observe: cx.observe(&key, |_, _, cx| cx.notify()),
+            _observe: cx.subscribe(&key, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_geocoding_save(cx);
+                }
+            }),
             key,
             fields: settings
                 .fields
@@ -62,7 +67,7 @@ impl GeocodingControls {
                 .collect(),
             next_id,
             feedback: None,
-            submitted: None,
+            save_task: None,
         }
     }
     fn field(id: u64, value: &str, window: &mut Window, cx: &mut Context<AppView>) -> FieldDraft {
@@ -73,7 +78,11 @@ impl GeocodingControls {
         });
         FieldDraft {
             id,
-            _observe: cx.observe(&input, |_, _, cx| cx.notify()),
+            _observe: cx.subscribe(&input, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.schedule_geocoding_save(cx);
+                }
+            }),
             input,
         }
     }
@@ -103,75 +112,92 @@ impl AppView {
         controls.next_id = controls.next_id.max(next_id);
         self.settings.geocoding = controls;
     }
-    fn save_geocoding_settings(&mut self, cx: &mut Context<Self>) {
+    fn schedule_geocoding_save(&mut self, cx: &mut Context<Self>) {
+        self.settings.geocoding.feedback = None;
+        // 等待一小段连续输入结束，避免编辑 Key 时为每个字符请求一次地址。
+        self.settings.geocoding.save_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(350))
+                .await;
+            let _ = this.update(cx, |this, cx| this.apply_geocoding_settings(cx));
+        }));
+        cx.notify();
+    }
+
+    fn apply_geocoding_settings(&mut self, cx: &mut Context<Self>) {
         let settings = self.settings.geocoding.value(cx);
-        self.settings.geocoding.submitted = Some(settings.clone());
         if let Err(error) = settings.validate() {
             self.settings.geocoding.feedback = Some((error.to_string(), true));
-            self.settings_feedback = Some(error.to_string().into());
             cx.notify();
             return;
         }
-        self.backend.params_mut().geocoding = settings;
-        self.persist_settings();
-        self.settings.geocoding.feedback = Some(match &self.settings_feedback {
-            Some(message) => (message.to_string(), true),
-            None => ("逆地理编码设置已保存。".into(), false),
-        });
-        if self.settings_feedback.is_none() {
-            self.settings_feedback = Some("逆地理编码设置已保存。".into());
+        self.settings.geocoding.feedback = None;
+        if self.backend.params().geocoding != settings {
+            self.backend.params_mut().geocoding = settings;
+            self.persist_settings();
+            self.settings.geocoding.feedback = self
+                .settings_feedback
+                .as_ref()
+                .map(|message| (message.to_string(), true));
+            self.refresh_preview(cx);
         }
-        self.refresh_preview(cx);
         cx.notify();
     }
+
     pub(in crate::app) fn render_geocoding_settings(&self, cx: &Context<Self>) -> impl IntoElement {
         let controls = &self.settings.geocoding;
-        let draft = controls.value(cx);
         let sample = example_response();
-        GroupBox::new().id("settings-geocoding").title("逆地理编码")
-            .child(field("解析方式", RadioGroup::horizontal("geocoding-provider")
-                .children(vec!["内置解析（中国省市区）", "高德（详细地址）"])
-                .selected_index(Some(usize::from(controls.provider == GeocodingProvider::Amap)))
-                .on_change(cx.listener(|this, ix: &usize, _, cx| {
-                    this.settings.geocoding.feedback = None;
-                    this.settings.geocoding.provider = if *ix == 0 { GeocodingProvider::Builtin } else { GeocodingProvider::Amap }; cx.notify();
-                })), cx))
-            .child(field("高德 Web 服务 API Key", Input::new(&controls.key).id("geocoding-key").aria_label("高德 Web 服务 API Key").w_full(), cx))
-            .child(description("内置解析离线提供中国省市区。高德会接收照片 GPS 坐标和 Key，提供更详细的地址；Key 仅保存在本机设置，不写入照片或水印预设。"))
-            .child(h_flex().w_full().justify_between().gap_3()
-                .child(div().text_sm().child("地址字段"))
-                .child(Link::new("amap-geocoding-docs").href(DOCUMENTATION_URL).child("高德字段文档")))
-            .child(description("省略 regeocode 前缀；英文逗号按顺序拼接字段，点号分隔层级，数字从 0 开始选择数组项。模板名根据路径自动生成。"))
-            .child(v_flex().w_full().gap_4().children(controls.fields.iter().map(|draft| {
-                let id = draft.id;
-                let value = AddressField { id, paths: draft.input.read(cx).value().to_string() };
-                let preview = match value.token().and_then(|token| Ok((token, value.render(&sample)?))) {
-                    Ok((token, rendered)) => v_flex().gap_1()
-                        .child(div().text_sm().child(format!("插入模板：{token}")))
-                        .child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("示例结果：{}", if rendered.is_empty() { "（示例数据中无此字段）" } else { &rendered })))
-                        .into_any_element(),
-                    Err(error) => warning(error.to_string(), cx),
-                };
-                v_flex().id(("geocoding-field", id)).w_full().gap_2()
-                    .child(h_flex().w_full().gap_2()
-                        .child(Input::new(&draft.input).id(("geocoding-path", id)).aria_label("地址字段路径").flex_1().min_w_0())
-                        .child(Button::new(("geocoding-remove", id)).label("删除").small().ghost().on_click(cx.listener(move |this, _, _, cx| {
-                            this.settings.geocoding.fields.retain(|field| field.id != id); this.settings.geocoding.feedback = None; cx.notify();
+        v_flex().id("settings-geocoding").w_full().min_w_0().gap_6()
+            .child(GroupBox::new().title("解析服务")
+                .child(field("解析方式", RadioGroup::vertical("geocoding-provider")
+                    .children(vec!["内置解析（中国省市区）", "高德（详细地址）"])
+                    .selected_index(Some(usize::from(controls.provider == GeocodingProvider::Amap)))
+                    .on_change(cx.listener(|this, ix: &usize, _, cx| {
+                        this.settings.geocoding.provider = if *ix == 0 { GeocodingProvider::Builtin } else { GeocodingProvider::Amap };
+                        this.apply_geocoding_settings(cx);
+                    })), cx))
+                .child(field("高德 Web 服务 API Key", Input::new(&controls.key).id("geocoding-key").aria_label("高德 Web 服务 API Key").w_full(), cx))
+                .child(description("内置解析离线提供中国省市区。高德会接收照片 GPS 坐标和 Key，提供更详细的地址；Key 仅保存在本机设置，不写入照片或水印预设。")))
+            .child(v_flex().w_full().min_w_0().gap_4()
+                .child(h_flex().w_full().justify_between().gap_3()
+                    .child(div().text_sm().child("地址字段"))
+                    .child(Button::new("geocoding-add").icon(IconName::Plus).ghost().small()
+                        .accessibility_label("添加地址字段").tooltip("添加地址字段")
+                        .disabled(controls.fields.len() >= 64)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            let controls = &mut this.settings.geocoding;
+                            if controls.fields.len() >= 64 { return; }
+                            let id = controls.next_id; controls.next_id = controls.next_id.saturating_add(1);
+                            controls.fields.push(GeocodingControls::field(id, "", window, cx));
+                            this.apply_geocoding_settings(cx);
                         }))))
-                    .child(preview)
-            })))
-            .child(description("以上为示例数据，不是当前照片的地址。内置解析仅填充省市区，高德可读取文档中的其他字段。修改后请保存，水印编辑器的“插入字段”菜单会同步更新。"))
-            .when_some(controls.feedback.as_ref().filter(|_| controls.submitted.as_ref() == Some(&draft)), |this, (message, is_error)| {
-                this.child(if *is_error { warning(message.clone(), cx) } else { description(message.clone()) })
-            })
-            .child(h_flex().w_full().gap_2()
-                .child(Button::new("geocoding-add").label("添加字段").on_click(cx.listener(|this, _, window, cx| {
-                    let controls = &mut this.settings.geocoding;
-                    if controls.fields.len() >= 64 { return; }
-                    let id = controls.next_id; controls.next_id = controls.next_id.saturating_add(1);
-                    controls.fields.push(GeocodingControls::field(id, "", window, cx)); controls.feedback = None; cx.notify();
-                })))
-                .child(Button::new("geocoding-save").label("保存解析设置").on_click(cx.listener(|this, _, _, cx| this.save_geocoding_settings(cx)))))
+                .child(description("省略 regeocode 前缀；英文逗号按顺序拼接字段，点号分隔层级，数字从 0 开始选择数组项。模板名根据路径自动生成。"))
+                .child(Link::new("amap-geocoding-docs").href(DOCUMENTATION_URL).child("高德字段文档"))
+                .children(controls.fields.iter().enumerate().map(|(index, draft)| {
+                    let id = draft.id;
+                    let value = AddressField { id, paths: draft.input.read(cx).value().to_string() };
+                    let preview = match value.token().and_then(|token| Ok((token, value.render(&sample)?))) {
+                        Ok((token, rendered)) => v_flex().w_full().gap_1()
+                            .child(div().text_sm().child(format!("插入模板：{token}")))
+                            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("示例结果：{}", if rendered.is_empty() { "（示例数据中无此字段）" } else { &rendered })))
+                            .into_any_element(),
+                        Err(error) => warning(error.to_string(), cx),
+                    };
+                    GroupBox::new().id(("geocoding-field", id)).outline().w_full().min_w_0()
+                        .child(h_flex().w_full().items_start().gap_3()
+                            .child(v_flex().flex_1().min_w_0().gap_3()
+                                .child(div().text_sm().font_weight(gpui_kit::FontWeight::MEDIUM).child(format!("字段 {}", index + 1)))
+                                .child(Input::new(&draft.input).id(("geocoding-path", id)).aria_label(format!("地址字段 {} 路径", index + 1)).w_full())
+                                .child(preview))
+                            .child(Button::new(("geocoding-remove", id)).icon(IconName::Trash).ghost().small()
+                                .accessibility_label(format!("删除地址字段 {}", index + 1)).tooltip("删除字段")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.settings.geocoding.fields.retain(|field| field.id != id);
+                                    this.apply_geocoding_settings(cx);
+                                }))))
+                }))
+                .child(description("以上为示例数据，不是当前照片的地址。内置解析仅填充省市区，高德可读取文档中的其他字段。有效修改会自动保存，并同步到水印编辑器的“插入字段”菜单。")))
+            .when_some(controls.feedback.as_ref(), |this, (message, _)| this.child(warning(message.clone(), cx)))
     }
 }
 
@@ -237,10 +263,15 @@ mod tests {
         let app = slot.borrow().clone().unwrap();
         cx.simulate_resize(size(px(1000.), px(1600.)));
         cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
         cx.update(|window, cx| {
             window.within("geocoding-provider").click(1_usize, cx);
-            window.click("geocoding-save", cx);
         });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
         cx.run_until_parked();
         app.read_with(cx, |app, _| {
             assert_eq!(
@@ -255,14 +286,19 @@ mod tests {
             window.click("geocoding-add", cx);
         });
         cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
         let id = app.read_with(cx, |app, _| {
             app.settings.geocoding.fields.last().unwrap().id
         });
         cx.update(|window, cx| {
             window.click(("geocoding-path", id), cx);
             window.input("pois.0.name", cx);
-            window.click("geocoding-save", cx);
         });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
         cx.run_until_parked();
         app.read_with(cx, |app, _| {
             assert!(
@@ -274,11 +310,13 @@ mod tests {
             window.click(("geocoding-path", id), cx);
             window.press("cmd-a", cx);
             window.input("addressComponent.streetNumber.number", cx);
-            window.click("geocoding-save", cx);
         });
         cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
         let expected = app.read_with(cx, |app, _| {
-            assert!(!app.settings.geocoding.feedback.as_ref().unwrap().1);
+            assert!(app.settings.geocoding.feedback.is_none());
             assert_eq!(
                 app.backend.params().geocoding.provider,
                 GeocodingProvider::Amap
@@ -306,6 +344,9 @@ mod tests {
             window.press("enter", cx);
         });
         cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.run_until_parked();
         app.read_with(cx, |app, cx| {
             assert!(
                 app.text_groups[0].lines[0]
@@ -317,8 +358,10 @@ mod tests {
         });
         cx.update(|window, cx| {
             window.click(("geocoding-remove", id), cx);
-            window.click("geocoding-save", cx);
         });
+        cx.run_until_parked();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(400));
         cx.run_until_parked();
         assert_eq!(
             crate::backend::settings::load_at(&path)
