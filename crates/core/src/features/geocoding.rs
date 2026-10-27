@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const DOCUMENTATION_URL: &str = "https://lbs.amap.com/api/webservice/guide/api/georegeo";
+pub const DOCUMENTATION_URL: &str = "https://lbs.amap.com/api/webservice/guide/api/georegeo#s6";
 const ENDPOINT: &str = "https://restapi.amap.com/v3/geocode/regeo";
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

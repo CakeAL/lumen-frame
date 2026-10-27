@@ -9,7 +9,7 @@
 这些选项不写入水印预设；切换照片、载入预设和恢复水印默认值不会覆盖本机配置。
 导出开始时冻结配置，已开始的导出不受随后修改影响。
 
-字段含义及可用路径见[高德地理／逆地理编码文档](https://lbs.amap.com/api/webservice/guide/api/georegeo)。
+字段含义及可用路径见[高德地理／逆地理编码文档](https://lbs.amap.com/api/webservice/guide/api/georegeo#s6)。
 设置页也提供该链接。
 
 ## 配置字段
