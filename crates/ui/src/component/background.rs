@@ -5,7 +5,7 @@ use super::{
         AppView,
         behavior::palette::{GradientStopControl, PaletteStatus},
     },
-    field::{description, field, rgb_to_hsla, warning},
+    field::{description, field, parameter_card, rgb_to_hsla, warning},
 };
 use crate::backend::watermark::{BackgroundKind, PaletteTheme};
 use gpui_kit::component::{
@@ -75,56 +75,69 @@ impl AppView {
         let kind = self.backend.params().background_kind();
         v_flex()
             .w_full()
+            .min_w_0()
             .gap_3()
-            .child(
-                TabBar::new("background-mode")
-                    .segmented()
+            .child(parameter_card(
+                "inspector-background-style-card",
+                v_flex()
                     .w_full()
-                    .children([
-                        Tab::new().label("照片模糊").flex_1(),
-                        Tab::new().label("纯色").flex_1(),
-                        Tab::new().label("渐变").flex_1(),
-                    ])
-                    .selected_index(match kind {
-                        BackgroundKind::Photo => 0,
-                        BackgroundKind::Solid => 1,
-                        BackgroundKind::Gradient => 2,
+                    .gap_3()
+                    .child(
+                        TabBar::new("background-mode")
+                            .segmented()
+                            .w_full()
+                            .children([
+                                Tab::new().label("照片模糊").flex_1(),
+                                Tab::new().label("纯色").flex_1(),
+                                Tab::new().label("渐变").flex_1(),
+                            ])
+                            .selected_index(match kind {
+                                BackgroundKind::Photo => 0,
+                                BackgroundKind::Solid => 1,
+                                BackgroundKind::Gradient => 2,
+                            })
+                            .on_click(cx.listener(|this, index: &usize, _, cx| {
+                                this.backend.params_mut().set_background_kind(match index {
+                                    1 => BackgroundKind::Solid,
+                                    2 => BackgroundKind::Gradient,
+                                    _ => BackgroundKind::Photo,
+                                });
+                                this.schedule_palette_for_selected(cx);
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .when(kind == BackgroundKind::Photo, |this| {
+                        this.child(self.controls.blur_sigma.render("模糊强度", false, cx))
                     })
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.backend.params_mut().set_background_kind(match index {
-                            1 => BackgroundKind::Solid,
-                            2 => BackgroundKind::Gradient,
-                            _ => BackgroundKind::Photo,
-                        });
-                        this.schedule_palette_for_selected(cx);
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-            )
-            .when(kind == BackgroundKind::Photo, |this| {
-                this.child(self.controls.blur_sigma.render("模糊强度", false, cx))
-            })
-            .when(kind == BackgroundKind::Solid, |this| {
-                this.child(self.controls.background.render("背景颜色", false, cx))
-                    .child(self.render_photo_palette(PaletteTarget::Background, cx))
-            })
-            .when(kind == BackgroundKind::Gradient, |this| {
-                this.child(self.render_gradient_controls(cx))
-            })
-            .child(
-                Switch::new("background-grain")
-                    .label("颗粒噪声")
-                    .checked(self.backend.params().background_grain)
-                    .on_change(cx.listener(|this, enabled: &bool, _, cx| {
-                        this.backend.params_mut().background_grain = *enabled;
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-            )
-            .when(self.backend.params().background_grain, |this| {
-                this.child(self.controls.grain_strength.render("颗粒强度", false, cx))
-                    .child(description("仅作用于背景，照片与文字保持清晰。"))
-            })
+                    .when(kind == BackgroundKind::Solid, |this| {
+                        this.child(self.controls.background.render("背景颜色", false, cx))
+                            .child(self.render_photo_palette(PaletteTarget::Background, cx))
+                    })
+                    .when(kind == BackgroundKind::Gradient, |this| {
+                        this.child(self.render_gradient_controls(cx))
+                    }),
+            ))
+            .child(parameter_card(
+                "inspector-background-grain-card",
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        Switch::new("background-grain")
+                            .label("颗粒噪声")
+                            .checked(self.backend.params().background_grain)
+                            .on_change(cx.listener(|this, enabled: &bool, _, cx| {
+                                this.backend.params_mut().background_grain = *enabled;
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .when(self.backend.params().background_grain, |this| {
+                        this.child(self.controls.grain_strength.render("颗粒强度", false, cx))
+                            .child(description("仅作用于背景，照片与文字保持清晰。"))
+                    }),
+            ))
     }
 
     pub(in crate::app) fn render_photo_border_section(

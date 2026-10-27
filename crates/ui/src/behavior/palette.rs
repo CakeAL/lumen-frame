@@ -557,7 +557,11 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     fn workspace(cx: &mut TestAppContext) -> (Entity<AppView>, &mut VisualTestContext) {
-        cx.update(gpui_kit::init);
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            // 这些用例验证背景控件；折叠动画会让连续点击的落点随卡片高度变化。
+            cx.set_reduce_motion(true);
+        });
         let slot = Rc::new(RefCell::new(None));
         let (_, cx) = cx.add_window_view({
             let slot = slot.clone();

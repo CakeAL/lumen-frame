@@ -36,7 +36,7 @@ use crate::backend::watermark::{
 use super::super::AppView;
 use super::field::{
     Choice, ColorField, NumberField, choices, description, field, index_of, muted_text, on_select,
-    select_state, warning,
+    parameter_card, select_state, warning,
 };
 use super::inspector::POSITIONS;
 use super::rich_text::{RichTextEditor, token_content, toolbar_button};
@@ -592,24 +592,17 @@ impl AppView {
         GroupBox::new()
             .id("text-section")
             .title(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_center()
-                    .gap_2()
-                    .child("文字与 Logo 水印")
-                    .child(
-                        Button::new("custom-logos-open")
-                            .icon(gpui_kit::assets::IconName::Images)
-                            .label("自定义 Logo…")
-                            .outline()
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.open_logo_window(window, cx)
-                                }),
-                            ),
-                    ),
+                v_flex().w_full().gap_2().child("文字与 Logo 水印").child(
+                    Button::new("custom-logos-open")
+                        .icon(gpui_kit::assets::IconName::Images)
+                        .label("自定义 Logo…")
+                        .outline()
+                        .small()
+                        .w_full()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_logo_window(window, cx)),
+                        ),
+                ),
             )
             .child(description("每个文字组可独立设置位置、方向和多行文字。"))
             .child(
@@ -675,47 +668,47 @@ impl AppView {
             .map(|line| line.trim().chars().take(30).collect::<String>())
             .unwrap_or_else(|| format!("空文字组 {}", ix + 1));
         let edit_view = view.clone();
-        v_flex()
-            .id(("text-group-row", id))
-            .w_full()
-            .gap_1()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        Button::new(("text-group-edit", id))
-                            .label(title)
-                            .ghost()
-                            .small()
-                            .justify_start()
-                            .flex_1()
-                            .min_w_0()
-                            .tooltip("编辑文字组…")
-                            .accessibility_label(format!("编辑文字组 {}", ix + 1))
-                            .on_click(move |_, window, cx| {
-                                edit_view.update(cx, |this, cx| {
-                                    this.open_text_group_editor(id, window, cx)
-                                })
-                            }),
-                    )
-                    .child(
-                        Button::new(("text-group-remove", id))
-                            .icon(IconName::Delete)
-                            .ghost()
-                            .xsmall()
-                            .tooltip("删除这个文字组")
-                            .accessibility_label(format!("删除文字组 {}", ix + 1))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.remove_text_group(id, cx)),
-                            ),
-                    ),
-            )
-            .child(div().px_2().child(muted_text(summary, cx)))
-            .into_any_element()
+        parameter_card(
+            ("inspector-text-card", id),
+            v_flex()
+                .id(("text-group-row", id))
+                .w_full()
+                .gap_1()
+                .min_w_0()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            Button::new(("text-group-edit", id))
+                                .label(title)
+                                .ghost()
+                                .small()
+                                .justify_start()
+                                .flex_1()
+                                .min_w_0()
+                                .tooltip("编辑文字组…")
+                                .accessibility_label(format!("编辑文字组 {}", ix + 1))
+                                .on_click(move |_, window, cx| {
+                                    edit_view.update(cx, |this, cx| {
+                                        this.open_text_group_editor(id, window, cx)
+                                    })
+                                }),
+                        )
+                        .child(
+                            Button::new(("text-group-remove", id))
+                                .icon(IconName::Delete)
+                                .ghost()
+                                .xsmall()
+                                .tooltip("删除这个文字组")
+                                .accessibility_label(format!("删除文字组 {}", ix + 1))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_text_group(id, cx)
+                                })),
+                        ),
+                )
+                .child(div().px_2().child(muted_text(summary, cx))),
+        )
     }
 
     pub(super) fn open_text_group_editor(

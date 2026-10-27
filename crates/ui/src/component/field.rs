@@ -7,6 +7,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     form::Field,
+    group_box::{GroupBox, GroupBoxVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState, NumberInput, NumberStep},
     searchable_list::SearchableListItem,
@@ -16,10 +17,12 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, Hsla, Rgba, SharedString, Subscription, Window, div,
+    AnyElement, App, Context, ElementId, Entity, Hsla, Rgba, SharedString, StyleRefinement,
+    Subscription, Window, div,
 };
 
 use super::super::AppView;
+use gpui_kit::TestSupportExt as _;
 
 /// 给下拉框用的「标签 + 领域值」选项。
 ///
@@ -492,6 +495,25 @@ impl ColorField {
             )
             .into_any_element()
     }
+}
+
+/// 参数项共用卡片边界和内边距，让焦点光圈与滑块拇指留在展开面板的裁切范围内。
+pub(super) fn parameter_card(id: impl Into<ElementId>, content: impl IntoElement) -> AnyElement {
+    div()
+        .id(id)
+        .test_support()
+        .w_full()
+        .min_w_0()
+        .flex_shrink_0()
+        .child(
+            GroupBox::new()
+                .outline()
+                .w_full()
+                .min_w_0()
+                .content_style(StyleRefinement::default().p_3().gap_3())
+                .child(content),
+        )
+        .into_any_element()
 }
 
 /// 一行「标签 + 下拉框」的字段。

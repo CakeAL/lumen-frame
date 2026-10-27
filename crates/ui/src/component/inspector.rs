@@ -4,6 +4,7 @@
 //! 始终以 [`AppView::params`] 为准：控件回调写入参数，然后请求一次预览重算。这样预览、
 //! 导出、界面读数永远来自同一份数据。
 
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::base::{
     Accordion as BaseAccordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger,
     motion::{MotionReveal, Transition, transition},
@@ -14,14 +15,13 @@ use gpui_kit::component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     kbd::Kbd,
+    scroll::ScrollableElement as _,
     select::{Select, SelectEvent, SelectState},
     switch::Switch,
     tab::{Tab, TabBar},
     v_flex,
 };
 use gpui_kit::prelude::*;
-#[cfg(test)]
-use gpui_kit::test::TestSupportExt as _;
 use gpui_kit::{
     AnyElement, Context, DragMoveEvent, Entity, EntityId, Focusable as _, FontWeight, Hsla,
     IntoElement, KeyDownEvent, Keystroke, Role, ScrollHandle, SharedString, Subscription, Window,
@@ -36,7 +36,7 @@ use crate::backend::watermark::{
 use super::super::{AppView, ExportState, PresetScope};
 use super::field::{
     Choice, ColorField, NumberField, choices, description, field, index_of, muted_text, on_select,
-    rgb_to_hsla, select_state, warning,
+    parameter_card, rgb_to_hsla, select_state, warning,
 };
 
 fn preset_text_marker(group: &TextGroup, color: Hsla) -> AnyElement {
@@ -659,6 +659,7 @@ impl AppView {
             .unwrap_or_else(|| "新照片默认样式".to_owned());
         v_flex()
             .h_full()
+            .min_h_0()
             .w_80()
             .flex_shrink_0()
             .border_l_1()
@@ -719,39 +720,42 @@ impl AppView {
                                 "当前样式用于后续导入的照片"
                             })),
                     )
-                    .child(field(
-                        "自定义文本",
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .child(
-                                Input::new(&self.controls.custom_text)
-                                    .id("photo-custom-text")
-                                    .aria_label("当前图片的自定义文本")
-                                    .disabled(selected.is_none())
-                                    .flex_1()
-                                    .min_w_0(),
-                            )
-                            .child(
-                                Button::new("photo-custom-text-next")
-                                    .icon(IconName::ChevronRight)
-                                    .size_8()
-                                    .p_0()
-                                    .tooltip("下一张照片")
-                                    .accessibility_label("下一张照片")
-                                    .disabled(
-                                        selected.is_none()
-                                            || self.photos().last().map(|photo| photo.id())
-                                                == self.selected_photo_id(),
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.select_adjacent_photo(false, window, cx);
-                                        this.controls.custom_text.update(cx, |input, cx| {
-                                            window.focus(&input.focus_handle(cx), cx)
-                                        });
-                                    })),
-                            ),
-                        cx,
+                    .child(parameter_card(
+                        "inspector-custom-text-card",
+                        field(
+                            "自定义文本",
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    Input::new(&self.controls.custom_text)
+                                        .id("photo-custom-text")
+                                        .aria_label("当前图片的自定义文本")
+                                        .disabled(selected.is_none())
+                                        .flex_1()
+                                        .min_w_0(),
+                                )
+                                .child(
+                                    Button::new("photo-custom-text-next")
+                                        .icon(IconName::ChevronRight)
+                                        .size_8()
+                                        .p_0()
+                                        .tooltip("下一张照片")
+                                        .accessibility_label("下一张照片")
+                                        .disabled(
+                                            selected.is_none()
+                                                || self.photos().last().map(|photo| photo.id())
+                                                    == self.selected_photo_id(),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.select_adjacent_photo(false, window, cx);
+                                            this.controls.custom_text.update(cx, |input, cx| {
+                                                window.focus(&input.focus_handle(cx), cx)
+                                            });
+                                        })),
+                                ),
+                            cx,
+                        ),
                     ))
                     .child(
                         TabBar::new("inspector-tabs")
@@ -773,15 +777,18 @@ impl AppView {
                     } else {
                         "inspector-watermark-scroll"
                     })
+                    .test_support()
                     .flex_1()
                     .min_h_0()
+                    .min_w_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.inspector.scroll[self.inspector.tab])
+                    .vertical_scrollbar(&self.inspector.scroll[self.inspector.tab])
                     .child(
                         v_flex()
                             .w_full()
                             .gap_4()
-                            .px_4()
+                            .px_3()
                             .pb_4()
                             .when(self.inspector.tab == 0, |this| {
                                 let params = self.backend.params();
@@ -855,7 +862,10 @@ impl AppView {
                             })
                             .when(self.inspector.tab == 1, |this| {
                                 this.child(self.render_text_section(cx))
-                                    .child(self.render_palette_card_section(cx))
+                                    .child(parameter_card(
+                                        "inspector-palette-card",
+                                        self.render_palette_card_section(cx),
+                                    ))
                             }),
                     ),
             )
@@ -1465,73 +1475,89 @@ impl AppView {
         let equal = self.backend.params().border_equal;
         v_flex()
             .w_full()
+            .min_w_0()
             .gap_3()
-            .child(
-                Switch::new("border-equal")
-                    .checked(equal)
-                    .label("四边等宽")
-                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                        this.backend.params_mut().border_equal = *checked;
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-            )
-            .when(equal, |this| {
-                this.child(controls.border_top.render("四边留白", false, cx))
-            })
-            .when(!equal, |this| {
-                this.child(controls.border_top.render("上留白", false, cx))
-                    .child(controls.border_bottom.render("下留白", false, cx))
-                    .child(controls.border_left.render("左留白", false, cx))
-                    .child(controls.border_right.render("右留白", false, cx))
-            })
-            .child(field(
-                "宽高比",
-                Select::new(&controls.aspect_ratio).w_full(),
-                cx,
-            ))
-            .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&controls.aspect_width)),
-                        )
-                        .child(div().text_sm().child(":"))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&controls.aspect_height)),
-                        ),
-                )
-            })
-            .child(field(
-                "照片位置",
-                TabBar::new("photo-position")
-                    .segmented()
+            .child(parameter_card(
+                "inspector-border-card",
+                v_flex()
                     .w_full()
-                    .children(
-                        POSITIONS
-                            .iter()
-                            .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                    .gap_3()
+                    .child(
+                        Switch::new("border-equal")
+                            .checked(equal)
+                            .label("四边等宽")
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.backend.params_mut().border_equal = *checked;
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            })),
                     )
-                    .selected_index(
-                        POSITIONS
-                            .iter()
-                            .position(|(_, value)| *value == self.backend.params().position)
-                            .unwrap_or(0),
-                    )
-                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                        this.backend.params_mut().position = POSITIONS[*ix].1;
-                        this.refresh_preview(cx);
-                        cx.notify();
-                    })),
-                cx,
+                    .when(equal, |this| {
+                        this.child(controls.border_top.render("四边留白", false, cx))
+                    })
+                    .when(!equal, |this| {
+                        this.child(controls.border_top.render("上留白", false, cx))
+                            .child(controls.border_bottom.render("下留白", false, cx))
+                            .child(controls.border_left.render("左留白", false, cx))
+                            .child(controls.border_right.render("右留白", false, cx))
+                    }),
+            ))
+            .child(parameter_card(
+                "inspector-aspect-card",
+                v_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(field(
+                        "宽高比",
+                        Select::new(&controls.aspect_ratio).w_full(),
+                        cx,
+                    ))
+                    .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
+                        this.child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&controls.aspect_width)),
+                                )
+                                .child(div().text_sm().child(":"))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&controls.aspect_height)),
+                                ),
+                        )
+                    }),
+            ))
+            .child(parameter_card(
+                "inspector-position-card",
+                v_flex().w_full().gap_3().child(field(
+                    "照片位置",
+                    TabBar::new("photo-position")
+                        .segmented()
+                        .w_full()
+                        .children(
+                            POSITIONS
+                                .iter()
+                                .map(|(label, _)| Tab::new().label(*label).flex_1()),
+                        )
+                        .selected_index(
+                            POSITIONS
+                                .iter()
+                                .position(|(_, value)| *value == self.backend.params().position)
+                                .unwrap_or(0),
+                        )
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                            this.backend.params_mut().position = POSITIONS[*ix].1;
+                            this.refresh_preview(cx);
+                            cx.notify();
+                        })),
+                    cx,
+                )),
             ))
     }
 
@@ -1540,37 +1566,52 @@ impl AppView {
         v_flex()
             .w_full()
             .gap_3()
-            .child(controls.border_radius.render("圆角", false, cx))
-            .child(self.render_photo_border_section(cx))
-            .child(controls.shadow_size.render("阴影模糊", false, cx))
+            .child(parameter_card(
+                "inspector-radius-card",
+                controls.border_radius.render("圆角", false, cx),
+            ))
+            .child(parameter_card(
+                "inspector-stroke-card",
+                self.render_photo_border_section(cx),
+            ))
+            .child(parameter_card(
+                "inspector-shadow-blur-card",
+                controls.shadow_size.render("阴影模糊", false, cx),
+            ))
             .when(self.backend.params().shadow_size > 0., |this| {
-                this.child(div().id("shadow-scale").child(controls.shadow_scale.render(
-                    "阴影大小",
-                    false,
-                    cx,
-                )))
-                .child(
-                    div()
-                        .id("shadow-density")
-                        .child(controls.shadow_density.render("阴影浓度", false, cx)),
-                )
-                .child(field(
-                    "阴影颜色",
-                    TabBar::new("shadow-color")
-                        .segmented()
-                        .w_full()
-                        .child(Tab::new().label("黑色").flex_1())
-                        .child(Tab::new().label("白色").flex_1())
-                        .selected_index(usize::from(self.backend.params().shadow_color == [255; 3]))
-                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.backend.params_mut().shadow_color =
-                                if *ix == 1 { [255; 3] } else { [0; 3] };
-                            this.refresh_preview(cx);
-                            cx.notify();
-                        })),
-                    cx,
+                this.child(parameter_card(
+                    "shadow-scale",
+                    controls.shadow_scale.render("阴影大小", false, cx),
                 ))
-                .child(self.render_shadow_offset(cx))
+                .child(parameter_card(
+                    "shadow-density",
+                    controls.shadow_density.render("阴影浓度", false, cx),
+                ))
+                .child(parameter_card(
+                    "inspector-shadow-color-card",
+                    field(
+                        "阴影颜色",
+                        TabBar::new("shadow-color")
+                            .segmented()
+                            .w_full()
+                            .child(Tab::new().label("黑色").flex_1())
+                            .child(Tab::new().label("白色").flex_1())
+                            .selected_index(usize::from(
+                                self.backend.params().shadow_color == [255; 3],
+                            ))
+                            .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                this.backend.params_mut().shadow_color =
+                                    if *ix == 1 { [255; 3] } else { [0; 3] };
+                                this.refresh_preview(cx);
+                                cx.notify();
+                            })),
+                        cx,
+                    ),
+                ))
+                .child(parameter_card(
+                    "inspector-shadow-offset-card",
+                    self.render_shadow_offset(cx),
+                ))
             })
     }
 
@@ -1752,6 +1793,75 @@ impl AppView {
 mod tests {
     use super::*;
     use gpui_kit::{TestAppContext, component::Root, test::TestWindowExt as _};
+
+    struct InspectorHarness {
+        app: Entity<AppView>,
+        _subscription: Subscription,
+    }
+    impl Render for InspectorHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.app.update(cx, |app, cx| {
+                app.render_inspector(window, cx).into_any_element()
+            })
+        }
+    }
+
+    #[gpui_kit::test]
+    fn inspector_controls_leave_room_for_focus_and_expanded_content(cx: &mut TestAppContext) {
+        use gpui_kit::{px, size};
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let app = cx.new(|cx| {
+                let mut app = AppView::new_with_settings_path(None, window, cx);
+                app.inspector.expanded = [false, true, false];
+                app
+            });
+            let panel = cx.new(|cx| InspectorHarness {
+                _subscription: cx.observe(&app, |_, _, cx| cx.notify()),
+                app,
+            });
+            Root::new(panel, window, cx)
+        });
+        for font_size in [14., 16., 18.] {
+            cx.update(|_, cx| {
+                gpui_kit::component::Theme::update(cx, |theme| theme.font_size = px(font_size))
+            });
+            cx.simulate_resize(size(px(20. * font_size), px(1800.)));
+            cx.run_until_parked();
+            cx.update(|window, cx| window.render_frame(cx));
+            for _ in 0..2 {
+                cx.update(|window, cx| window.click("photo-border-enabled", cx));
+                cx.run_until_parked();
+                cx.update(|window, cx| window.render_frame(cx));
+                cx.update(|window, _| {
+                    let panel = window.find(("inspector-panel", 1_usize)).bounds();
+                    let switch = window.find("photo-border-enabled").bounds();
+                    let card = window.find("inspector-stroke-card").bounds();
+                    let following = window.find("inspector-shadow-blur-card").bounds();
+                    assert!(panel.size.height > px(0.));
+                    assert!(
+                        switch.origin.x - panel.origin.x >= px(4.),
+                        "开关焦点光圈需要留在展开面板的裁切边界内：{panel:?}, {switch:?}"
+                    );
+                    assert!(panel.right() - switch.right() >= px(4.));
+                    assert!(
+                        following.origin.y >= card.bottom() + px(8.),
+                        "展开描边选项不能挤压或遮住下一张卡片"
+                    );
+                    assert!((following.origin.x - card.origin.x).abs() <= px(1.));
+                    assert!((following.right() - card.right()).abs() <= px(1.));
+                });
+            }
+        }
+        cx.simulate_resize(size(px(320.), px(680.)));
+        cx.run_until_parked();
+        cx.update(|window, _| {
+            assert!(window.find("inspector-image-scroll").bounds().size.height > px(100.));
+        });
+    }
 
     struct ShadowPanel {
         app: Entity<AppView>,
