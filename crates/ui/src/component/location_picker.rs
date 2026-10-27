@@ -25,7 +25,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyWindowHandle, App, AvailableSpace, Bounds, Context, Entity, FocusHandle, KeyBinding,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, Pixels, Point,
-    RenderImage, Role, ScrollDelta, ScrollWheelEvent, SharedString, Subscription, Task, WeakEntity,
+    RenderImage, Role, ScrollDelta, ScrollEvent, SharedString, Subscription, Task, WeakEntity,
     Window, WindowBounds, WindowOptions, canvas, div, img, point, px, size,
 };
 use std::{
@@ -644,7 +644,7 @@ impl LocationPicker {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| this.drag = None),
             )
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, _, cx| {
                 cx.stop_propagation();
                 let delta = match event.delta {
                     ScrollDelta::Pixels(p) => p.y.as_f32(),

@@ -7,7 +7,7 @@
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::base::{
     Accordion as BaseAccordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger,
-    motion::{MotionReveal, Transition, transition},
+    motion::{Transition, transition},
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -881,7 +881,7 @@ impl AppView {
     ) -> impl IntoElement {
         let ix = section.index();
         let title = section.title();
-        // 共用进度让内容与箭头同步；由框架处理反向切换、减少动态效果和帧调度。
+        // 箭头动效仍由框架处理反向切换、减少动态效果和帧调度。
         let progress = transition(
             (section.id(), "disclosure"),
             if self.inspector.expanded[ix] {
@@ -953,18 +953,10 @@ impl AppView {
                     .panel(
                         AccordionPanel::new()
                             .id(("inspector-panel", ix))
-                            // 收起动画结束才卸载；减少动态效果时保留测量以便立即展开。
-                            .keep_mounted(progress > 0. || cx.reduce_motion())
-                            .child(MotionReveal::new(
-                                ("inspector-reveal", ix),
-                                progress,
-                                v_flex()
-                                    .w_full()
-                                    .gap_3()
-                                    .pt_2()
-                                    .child(content)
-                                    .into_any_element(),
-                            )),
+                            // gpui-kit 0.8.1 的 MotionReveal 仍在 prepaint 中布局子树，
+                            // 受控 Popover 此时移交焦点会触发辅助功能的重复焦点断言。
+                            // 用普通布局让焦点在 request_layout 阶段确定，详见 docs/issues。
+                            .child(v_flex().w_full().gap_3().pt_2().child(content)),
                     ),
             )
     }
@@ -1861,6 +1853,101 @@ mod tests {
         cx.update(|window, _| {
             assert!(window.find("inspector-image-scroll").bounds().size.height > px(100.));
         });
+    }
+
+    struct PopoverFocusHarness {
+        app: Entity<AppView>,
+        open: bool,
+        trigger_focus: gpui_kit::FocusHandle,
+        input: Entity<InputState>,
+        phases: std::rc::Rc<std::cell::RefCell<Vec<Option<gpui_kit::FocusHandle>>>>,
+    }
+    impl Render for PopoverFocusHarness {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let popup = gpui_kit::component::popover::Popover::new("focus-test-popup")
+                .open(self.open)
+                .trigger(Button::new("focus-test-popup-trigger").label("取色选项"))
+                .child(Input::new(&self.input));
+            let panel = self.app.update(cx, |app, cx| {
+                app.render_inspector_section(
+                    InspectorSection::Canvas,
+                    String::new(),
+                    popup,
+                    window,
+                    cx,
+                )
+                .into_any_element()
+            });
+            let before = self.phases.clone();
+            let after = self.phases.clone();
+            v_flex()
+                .size_full()
+                .child(
+                    gpui_kit::canvas(
+                        move |_, window, cx| before.borrow_mut().push(window.focused(cx)),
+                        |_, _, _, _| {},
+                    )
+                    .h_1(),
+                )
+                .child(
+                    div()
+                        .id("focus-test-controller")
+                        .role(Role::Button)
+                        .track_focus(&self.trigger_focus)
+                        .child("切换分组"),
+                )
+                .child(panel)
+                .child(
+                    gpui_kit::canvas(
+                        move |_, window, cx| after.borrow_mut().push(window.focused(cx)),
+                        |_, _, _, _| {},
+                    )
+                    .h_1(),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn inspector_popover_focus_is_set_before_prepaint(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let phases = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (root, cx) = cx.add_window_view({
+            let phases = phases.clone();
+            move |window, cx| {
+                let app = cx.new(|cx| AppView::new_with_settings_path(None, window, cx));
+                let harness = cx.new(|cx| PopoverFocusHarness {
+                    app,
+                    open: false,
+                    trigger_focus: cx.focus_handle(),
+                    input: cx.new(|cx| InputState::new(window, cx)),
+                    phases,
+                });
+                Root::new(harness, window, cx)
+            }
+        });
+        cx.run_until_parked();
+        let harness = root.read_with(cx, |root, _| {
+            root.view()
+                .clone()
+                .downcast::<PopoverFocusHarness>()
+                .ok()
+                .unwrap()
+        });
+        harness.update_in(cx, |harness, window, cx| {
+            phases.borrow_mut().clear();
+            harness.trigger_focus.focus(window, cx);
+            harness.open = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+        let phases = phases.borrow();
+        assert!(phases.len() >= 2);
+        // 无辅助功能适配器的测试平台也能捕获根因：同帧开始登记焦点后，子树不得再切换焦点。
+        assert!(
+            phases.chunks_exact(2).all(|frame| frame[0] == frame[1]),
+            "展开内容在 prepaint 中更改了焦点，原生辅助功能会重复登记：{phases:?}"
+        );
     }
 
     struct ShadowPanel {
