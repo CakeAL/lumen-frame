@@ -57,7 +57,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Install libvips and packaging tools
-        run: brew install vips glib gettext dylibbundler create-dmg
+        run: brew install pkgconf vips glib gettext dylibbundler create-dmg
       - name: Build and verify DMG
         shell: bash
         run: |
@@ -131,7 +131,7 @@ jobs:
           if (-not $env:VIPS_DEV_ROOT -or -not (Test-Path -LiteralPath (Join-Path $env:VIPS_DEV_ROOT 'lib\libvips.lib'))) {
             throw 'VIPS_DEV_ROOT 未指向已解压的 libvips 开发包'
           }
-          & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install vips:x64-windows "--overlay-ports=$env:GITHUB_WORKSPACE\vcpkg-overlay"
+          & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install libvips:x64-windows "--overlay-ports=$env:GITHUB_WORKSPACE\vcpkg-overlay"
           if ($LASTEXITCODE -ne 0) { throw 'vcpkg 安装 libvips 失败' }
       - name: Build and verify Windows package
         shell: pwsh

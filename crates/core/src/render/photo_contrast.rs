@@ -4,10 +4,7 @@ use anyhow::Result;
 
 use crate::{
     image::{RasterImage, rasterize},
-    media::{
-        ensure_vips,
-        vips::{VipsImage, image_op},
-    },
+    media::{ensure_vips, vips::VipsImage},
 };
 
 pub(crate) struct PhotoContrast {
@@ -19,14 +16,7 @@ impl PhotoContrast {
     pub(crate) fn new(source: &VipsImage) -> Result<Self> {
         ensure_vips();
         let size = (source.width() as i32, source.height() as i32);
-        let image = image_op(|out| unsafe {
-            vips_sys::vips_colourspace(
-                source.as_ptr(),
-                out,
-                vips::VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-                std::ptr::null::<i8>(),
-            )
-        })?;
+        let image = source.colourspace(vips::VipsInterpretation::VIPS_INTERPRETATION_sRGB)?;
         let edge = size.0.max(size.1);
         let image = if edge > 256 {
             image.resize(256.0 / f64::from(edge), None, None)?

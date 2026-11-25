@@ -1,10 +1,8 @@
 //! 色块由 SVG 绘制，色号和占比复用 GPUI 字体后端；两种输出路径共用此透明图层。
 
+use crate::media::vips::{composite_over, decode_image_buffer};
 use crate::{
-    media::{
-        ExifInfo, ensure_vips,
-        vips::{VipsImage, from_owned_ptr, image_op},
-    },
+    media::{ExifInfo, ensure_vips, vips::VipsImage},
     watermark::{PaletteShape, Text, TextAlign, TextDirection, TextParams, WatermarkParams},
 };
 use anyhow::Result;
@@ -120,37 +118,17 @@ pub(crate) fn render(
     let svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">{shapes}</svg>"#
     );
-    let borrowed = vips::VipsImage::from_buffer(svg.as_bytes())?;
-    let mut image = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
+    let mut image = decode_image_buffer(svg.as_bytes())?;
     let label_cell = (length - gap * (n - 1) as f64) / n as f64;
     for (ix, label) in labels.into_iter().enumerate() {
         if let Some(label) = label {
             let x = (ix as f64 * (label_cell + gap) + (label_cell - label.width() as f64) / 2.0)
                 .round() as i32;
-            image = image_op(|out| unsafe {
-                vips_sys::vips_composite2(
-                    image.as_ptr(),
-                    label.as_ptr(),
-                    out,
-                    vips::VipsBlendMode::VIPS_BLEND_MODE_OVER,
-                    c"x".as_ptr(),
-                    x,
-                    c"y".as_ptr(),
-                    (size + label_gap).round() as i32,
-                    std::ptr::null::<i8>(),
-                )
-            })?;
+            image = composite_over(&image, &label, x, (size + label_gap).round() as i32)?;
         }
     }
     if card.direction() == TextDirection::Vertical {
-        image = image_op(|out| unsafe {
-            vips_sys::vips_rot(
-                image.as_ptr(),
-                out,
-                vips::VipsAngle::VIPS_ANGLE_D90,
-                std::ptr::null::<i8>(),
-            )
-        })?;
+        image = image.rot(vips::VipsAngle::VIPS_ANGLE_D90)?;
     }
     Ok(Some(image))
 }

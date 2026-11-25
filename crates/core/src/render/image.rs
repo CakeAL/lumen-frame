@@ -1,7 +1,7 @@
-use crate::media::{
-    ensure_vips,
-    vips::{VipsImage, from_owned_ptr, image_op},
+use crate::media::vips::{
+    constant_like, decode_image_buffer, extract_bands, has_alpha, linear_uchar,
 };
+use crate::media::{ensure_vips, vips::VipsImage};
 use vips::Result;
 
 use crate::{
@@ -59,83 +59,38 @@ pub fn add_round_corner(img: VipsImage, border_radius: f64) -> Result<VipsImage>
         h = img_h,
         r = radius,
     );
-    let svg_image = vips::VipsImage::from_buffer(svg.as_bytes())?;
-    let mask = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(svg_image.as_ptr()))? };
+    let mask = decode_image_buffer(svg.as_bytes())?;
 
     // SVG 的 RGB 在半透明边缘仍是纯白，必须取 alpha 才能保留圆角抗锯齿。
     let mask = if mask.bands() > 1 {
-        image_op(|out| unsafe {
-            vips_sys::vips_extract_band(
-                mask.as_ptr(),
-                out,
-                mask.bands() as i32 - 1,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        mask.extract_band(mask.bands() as i32 - 1)?
     } else {
         mask
     };
 
     // 原图已有透明度时与圆角覆盖率相乘，不能用圆角遮罩覆盖它。
-    let has_alpha = unsafe { vips_sys::vips_image_hasalpha(img.as_ptr()) } != 0;
+    let has_alpha = has_alpha(&img);
     let mask = if has_alpha {
         let alpha = alpha_mask(&img)?;
-        let multiplied = image_op(|out| unsafe {
-            vips_sys::vips_multiply(alpha.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
-        })?;
-        image_op(|out| unsafe {
-            vips_sys::vips_linear(
-                multiplied.as_ptr(),
-                out,
-                [1.0 / 255.0].as_ptr(),
-                [0.0].as_ptr(),
-                1,
-                c"uchar".as_ptr(),
-                1_i32,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        let multiplied = alpha.multiply(&mask)?;
+        linear_uchar(&multiplied, &[1.0 / 255.0], &[0.0])?
     } else {
         mask
     };
     let colour = if has_alpha {
-        image_op(|out| unsafe {
-            vips_sys::vips_extract_band(
-                img.as_ptr(),
-                out,
-                0,
-                c"n".as_ptr(),
-                img.bands() as i32 - 1,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        extract_bands(&img, 0, img.bands() as i32 - 1)?
     } else {
         img
     };
-    image_op(|out| unsafe {
-        vips_sys::vips_bandjoin2(colour.as_ptr(), mask.as_ptr(), out, std::ptr::null::<i8>())
-    })
+    colour.bandjoin2(&mask)
 }
 
 /// 获取照片的真实覆盖率，供投影使用；无 alpha 的照片视为完全不透明。
 pub(crate) fn alpha_mask(img: &VipsImage) -> Result<VipsImage> {
-    if unsafe { vips_sys::vips_image_hasalpha(img.as_ptr()) } != 0 {
-        image_op(|out| unsafe {
-            vips_sys::vips_extract_band(
-                img.as_ptr(),
-                out,
-                img.bands() as i32 - 1,
-                std::ptr::null::<i8>(),
-            )
-        })
+    if has_alpha(img) {
+        img.extract_band(img.bands() as i32 - 1)
     } else {
-        unsafe {
-            from_owned_ptr(vips_sys::vips_image_new_from_image(
-                img.as_ptr(),
-                [255.0].as_ptr(),
-                1,
-            ))
-        }
+        constant_like(img, &[255.0])
     }
 }
 
@@ -165,7 +120,6 @@ pub(crate) fn border_layer(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}"><rect width="{w}" height="{h}" rx="{radius}" fill="rgb({r},{g},{b})"/></svg>"#
     );
     // SVG 解码是延迟求值的，返回前复制像素以解除对局部字符串的借用。
-    let borrowed = vips::VipsImage::from_buffer(svg.as_bytes())?;
-    let image = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
+    let image = decode_image_buffer(svg.as_bytes())?;
     Ok(Some((image, -border, -border)))
 }

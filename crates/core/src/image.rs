@@ -4,15 +4,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use vips::{VipsBandFormat, VipsSize};
-use vips_sys::VipsForeignKeep;
 
 use crate::{
     features::colour_gainmap,
     gainmap as gain_map,
-    media::{
-        ExifInfo, ensure_vips, image_write_to_memory, load_base_image,
-        vips::{VipsImage, from_owned_ptr, image_op},
-    },
+    media::{ExifInfo, ensure_vips, image_write_to_memory, load_base_image, vips::VipsImage},
     photo::Photo,
     rotation::Rotation,
     watermark::{TextGroup, WatermarkParams},
@@ -92,18 +88,7 @@ pub fn render_gainmap_preview(path: &Path, show_gainmap: bool) -> Result<Option<
         return Ok(None);
     };
     let gainmap = if gainmap.bands() == 1 {
-        // `VipsImage::clone` 只会复制底层句柄；把同一个所有权句柄交给 bandjoin 后会在
-        // 释放时发生重复释放。单通道 gain map 要明确创建三份独立的 vips 图像。
-        let green = image_op(|out| unsafe {
-            vips_sys::vips_copy(gainmap.as_ptr(), out, std::ptr::null::<i8>())
-        })?;
-        let blue = image_op(|out| unsafe {
-            vips_sys::vips_copy(gainmap.as_ptr(), out, std::ptr::null::<i8>())
-        })?;
-        let mut images = [gainmap.as_ptr(), green.as_ptr(), blue.as_ptr()];
-        image_op(|out| unsafe {
-            vips_sys::vips_bandjoin(images.as_mut_ptr(), out, 3, std::ptr::null::<i8>())
-        })?
+        gainmap.bandjoin2(&gainmap)?.bandjoin2(&gainmap)?
     } else {
         gainmap
     };
@@ -139,8 +124,7 @@ pub fn render_motion_photo_cover(
     let jpeg = crate::features::motion_photo::render_motion_photo_cover(
         ffmpeg, path, start, end, cover_time, rotation,
     )?;
-    let borrowed = vips::VipsImage::from_buffer(&jpeg).context("读取视频封面 JPEG")?;
-    let image = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
+    let image = crate::media::vips::decode_image_buffer(&jpeg).context("读取视频封面 JPEG")?;
     let image = shrink_to_edge(&image, PREVIEW_DEFAULT_MAX_EDGE)?;
     rasterize(&image).context("转换视频封面预览")
 }
@@ -149,18 +133,7 @@ pub fn render_motion_photo_cover(
 pub fn export_colour_gainmap(path: &Path, output: &Path, rotation: Rotation) -> Result<()> {
     ensure_vips();
     let image = colour_gainmap::load_black_and_white_with_colour_gainmap(path, rotation)?;
-    let output_c = std::ffi::CString::new(output.to_string_lossy().as_bytes())?;
-    vips::code_to_result(unsafe {
-        vips_sys::vips_jpegsave(
-            image.as_ptr(),
-            output_c.as_ptr(),
-            c"Q".as_ptr(),
-            95_i32,
-            c"keep".as_ptr(),
-            VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    image.write_jpeg(output, Some(95))?;
     gain_map::mark_jpeg_gainmap(output)?;
     Ok(())
 }
@@ -195,10 +168,7 @@ pub fn load_scaled(path: &Path, max_edge: i32) -> Result<VipsImage> {
 pub(crate) fn shrink_to_edge(image: &VipsImage, max_edge: i32) -> Result<VipsImage> {
     let edge = image.width().max(image.height()) as i32;
     if edge <= max_edge {
-        return image_op(|out| unsafe {
-            vips_sys::vips_copy(image.as_ptr(), out, std::ptr::null::<i8>())
-        })
-        .map_err(anyhow::Error::from);
+        return image.copy().map_err(anyhow::Error::from);
     }
     image
         .resize(max_edge as f64 / edge as f64, None, None)
@@ -252,15 +222,9 @@ impl RasterImage {
 
 pub(crate) fn rasterize(img: &VipsImage) -> Result<RasterImage> {
     ensure_vips();
-    let img = image_op(|out| unsafe {
-        vips_sys::vips_cast(
-            img.as_ptr(),
-            out,
-            VipsBandFormat::VIPS_FORMAT_UCHAR,
-            std::ptr::null::<i8>(),
-        )
-    })
-    .context("转换为 8bit 失败")?;
+    let img = img
+        .cast(VipsBandFormat::VIPS_FORMAT_UCHAR)
+        .context("转换为 8bit 失败")?;
     let (width, height) = (img.width(), img.height());
     if width == 0 || height == 0 {
         bail!("尺寸非法：{width}x{height}");

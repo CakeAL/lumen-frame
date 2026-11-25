@@ -1,15 +1,14 @@
 pub(crate) mod layers;
 
+use crate::media::vips::{composite_over, flatten_rgb};
 use anyhow::{Context, Result, anyhow};
 use std::path::{Path, PathBuf};
-use vips::VipsBlendMode;
-use vips_sys::VipsForeignKeep;
 
 use crate::{
     gainmap as gain_map,
     media::{
         ExifInfo, ensure_vips, load_base_image,
-        vips::{VipsImage, from_owned_ptr, image_metadata_string, image_op},
+        vips::{VipsImage, image_metadata_string},
     },
     render::{canvas, image, photo_contrast::PhotoContrast, text::TextGroupRegion},
     watermark::{TextGroup, WatermarkParams},
@@ -136,20 +135,8 @@ impl Photo {
             {
                 regions.push(region);
             }
-            canvas = image_op(|out| unsafe {
-                vips_sys::vips_composite2(
-                    canvas.as_ptr(),
-                    layer.image.as_ptr(),
-                    out,
-                    VipsBlendMode::VIPS_BLEND_MODE_OVER,
-                    c"x".as_ptr(),
-                    layer.x,
-                    c"y".as_ptr(),
-                    layer.y,
-                    std::ptr::null::<i8>(),
-                )
-            })
-            .context("合成水印图层失败")?;
+            canvas = composite_over(&canvas, &layer.image, layer.x, layer.y)
+                .context("合成水印图层失败")?;
         }
 
         // 原图带 Ultra HDR gain map 时，重写一个只覆盖中间照片区域、四周为
@@ -204,21 +191,8 @@ impl Photo {
             // 合成结果带 alpha（4 band），写出 JPEG 前先压平为 3 band RGB。
             let [r, g, b] = params.background;
             let background = [r as f64, g as f64, b as f64];
-            let array = unsafe { vips_sys::vips_array_double_new(background.as_ptr(), 3) };
-            if array.is_null() {
-                return Err(anyhow!("无法创建 JPEG 背景色"));
-            }
-            let flatten_result = image_op(|out| unsafe {
-                vips_sys::vips_flatten(
-                    watermark.as_ptr(),
-                    out,
-                    c"background".as_ptr(),
-                    array,
-                    std::ptr::null::<i8>(),
-                )
-            });
-            unsafe { vips_sys::vips_area_unref(array.cast()) };
-            let mut flattened = flatten_result.context("flatten image failed")?;
+            let mut flattened =
+                flatten_rgb(&watermark, background).context("flatten image failed")?;
 
             // libuhdr 只接受边长不超过 8192 的 Ultra HDR 图像。普通 JPEG 不走这条
             // 编码器，绝不能因为同一个上限被悄悄缩小；只有确实带 gain map 的输出才缩放。
@@ -233,9 +207,7 @@ impl Photo {
 
             // thumbnail_image 会以小块请求上游像素，直接遍历合成管线会让模糊、阴影等
             // 操作非常慢。先一次性求值成片，缩略图与 JPEG 编码共用这份 RGB 像素。
-            flattened =
-                unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(flattened.as_ptr())) }
-                    .context("准备导出像素失败")?;
+            flattened = flattened.copy_memory().context("准备导出像素失败")?;
             if let Some(exif) = &self.exif {
                 crate::media::gps::write_gps(&mut flattened, exif.gps_info.as_ref())
                     .context("写入导出 GPS 信息失败")?;
@@ -244,19 +216,9 @@ impl Photo {
 
             // 保留源图的 ICC（如 Display P3），让照片保持原色域。
             // profile: None 表示不要用 libvips 默认的 sRGB profile 覆盖它。
-            let output = std::ffi::CString::new(output_path.to_string_lossy().as_bytes())?;
-            vips::code_to_result(unsafe {
-                vips_sys::vips_jpegsave(
-                    flattened.as_ptr(),
-                    output.as_ptr(),
-                    c"Q".as_ptr(),
-                    params.quality,
-                    c"keep".as_ptr(),
-                    VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
-                    std::ptr::null::<i8>(),
-                )
-            })
-            .context("save jpg failed")?;
+            flattened
+                .write_jpeg(&output_path, Some(params.quality))
+                .context("save jpg failed")?;
             if gain_map::get_gainmap(&flattened).is_some() {
                 gain_map::mark_jpeg_gainmap(&output_path)?;
             }
@@ -290,9 +252,7 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
     }
 
     fn crop(image: VipsImage, (x, y, w, h): (i32, i32, i32, i32)) -> Result<VipsImage> {
-        Ok(image_op(|out| unsafe {
-            vips_sys::vips_extract_area(image.as_ptr(), out, x, y, w, h, std::ptr::null::<i8>())
-        })?)
+        Ok(image.crop(x, y, w, h)?)
     }
 
     fn content_bounds(image: &VipsImage) -> Result<(i32, i32, i32, i32)> {
@@ -343,9 +303,7 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
 
     fn photo(&mut self) -> Result<VipsImage> {
         if self.rounded.is_none() {
-            let img = image_op(|out| unsafe {
-                vips_sys::vips_copy(self.img.as_ptr(), out, std::ptr::null::<i8>())
-            })?;
+            let img = self.img.copy()?;
             self.rounded = Some(if self.params.border_radius > 0.0 {
                 image::add_round_corner(img, self.params.border_radius)?
             } else {
@@ -353,13 +311,7 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
             });
         }
         // 独立 GObject 引用，不能依赖 vips crate 的浅拷贝 Clone。
-        Ok(image_op(|out| unsafe {
-            vips_sys::vips_copy(
-                self.rounded.as_ref().unwrap().as_ptr(),
-                out,
-                std::ptr::null::<i8>(),
-            )
-        })?)
+        Ok(self.rounded.as_ref().unwrap().copy()?)
     }
 
     fn shadow(&mut self) -> Result<Option<layers::PositionedLayer<VipsImage>>> {

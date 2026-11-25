@@ -7,7 +7,6 @@ use lumen_frame_core::{
     rotation::Rotation,
 };
 use vips::VipsInterpretation;
-use vips_sys::VipsForeignKeep;
 
 const PHOTO: &str = "./test_images/ultra_hdr.jpg";
 
@@ -26,7 +25,7 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
         VipsInterpretation::VIPS_INTERPRETATION_sRGB as i32,
         "底图没有标记为 sRGB"
     );
-    let base_pixel = getpoint(&result, 100, 100);
+    let base_pixel = result.getpoint(100, 100).unwrap();
     assert!(
         base_pixel
             .windows(2)
@@ -62,7 +61,7 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
             <= 2.0,
         "显示端应在常见 HDR 余量下完整应用 gain map"
     );
-    let gainmap_pixel = getpoint(&result_gainmap, 100, 100);
+    let gainmap_pixel = result_gainmap.getpoint(100, 100).unwrap();
     assert!(
         gainmap_pixel
             .windows(2)
@@ -80,19 +79,9 @@ fn colour_gainmap_restores_colour_at_normal_display_headroom() {
             .expect("输入文件缺少 UTF-8 文件名")
     );
     let output = output_dir.join(file_name);
-    let output_c = std::ffi::CString::new(output.to_string_lossy().as_bytes()).unwrap();
-    vips::code_to_result(unsafe {
-        vips_sys::vips_jpegsave(
-            result.as_ptr(),
-            output_c.as_ptr(),
-            c"Q".as_ptr(),
-            95_i32,
-            c"keep".as_ptr(),
-            VipsForeignKeep::VIPS_FOREIGN_KEEP_ALL,
-            std::ptr::null::<i8>(),
-        )
-    })
-    .expect("保存完整彩色 gain map 效果失败");
+    result
+        .write_jpeg(&output, Some(95))
+        .expect("保存完整彩色 gain map 效果失败");
     gain_map::mark_jpeg_gainmap(&output).expect("写入 MPF GainMap 类型失败");
     assert!(output.is_file(), "没有生成完整效果图片");
     assert!(
@@ -129,24 +118,4 @@ fn colour_gainmap_rotates_base_and_gainmap_together() {
     rotated_gainmap
         .write_to_memory()
         .expect("旋转 gain map 求值失败");
-}
-
-fn getpoint(image: &vips::VipsImage<'_>, x: i32, y: i32) -> Vec<f64> {
-    let mut values = std::ptr::null_mut();
-    let mut count = 0;
-    vips::code_to_result(unsafe {
-        vips_sys::vips_getpoint(
-            image.as_ptr(),
-            &mut values,
-            &mut count,
-            x,
-            y,
-            std::ptr::null::<i8>(),
-        )
-    })
-    .unwrap();
-    assert!(!values.is_null());
-    let result = unsafe { std::slice::from_raw_parts(values, count as usize).to_vec() };
-    unsafe { vips_sys::g_free(values.cast()) };
-    result
 }

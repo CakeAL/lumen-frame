@@ -1,71 +1,264 @@
-//! libvips 的进程生命周期、图像所有权和基础解码。
+//! libvips 的进程生命周期、基础解码及安全绑定缺少的操作。
 
 use std::{ffi::CStr, path::Path, ptr, sync::OnceLock};
 
-use anyhow::{Context as _, Result, anyhow};
-use vips::VipsInstance;
+use anyhow::{Context as _, Result};
+use vips::{Error, VipsBlendMode, VipsExtend, VipsInstance, VipsInterpretation, VipsPrecision};
 
 pub type VipsImage = vips::VipsImage<'static>;
 
-fn instance() -> &'static VipsInstance {
+/// 保证 libvips 已初始化，并让进程级实例存活到程序退出。
+pub fn ensure_vips() -> &'static VipsInstance {
     static VIPS: OnceLock<VipsInstance> = OnceLock::new();
     VIPS.get_or_init(|| VipsInstance::new("lumen-frame", false).expect("failed to init libvips"))
 }
 
-/// 保证 libvips 已初始化，并让进程级实例存活到程序退出。
-pub fn ensure_vips() -> &'static VipsInstance {
-    instance()
-}
+type RawImage = *mut vips_sys::VipsImage;
 
-/// 接管 libvips 返回的一个非空、独占引用。
-///
-/// `vips` 0.1.0 尚未公开从原始指针构造图像的方法。这里固定该版本，并集中处理
-/// 底层操作的返回值；升级 `vips` 时需要重新核对其 `VipsImage` 布局。
-pub(crate) unsafe fn from_owned_ptr(raw: *mut vips_sys::VipsImage) -> vips::Result<VipsImage> {
-    if raw.is_null() {
-        return Err(vips::Error::Vips(
-            vips::take_vips_error().unwrap_or_else(|| "未知 libvips 错误".into()),
-        ));
-    }
-    assert_eq!(
-        std::mem::size_of::<VipsImage>(),
-        std::mem::size_of::<*mut vips_sys::VipsImage>(),
-    );
-    // SAFETY: vips 0.1.0 的 VipsImage 仅包含一个 NonNull 指针和零尺寸的 PhantomData。
-    // 调用方必须转交一份 GObject 引用，Drop 会释放它。
-    Ok(unsafe { std::mem::transmute::<*mut vips_sys::VipsImage, VipsImage>(raw) })
-}
-
-/// 执行返回一张新图像的 vips-sys 操作，并验证状态与所有权。
-pub(crate) fn image_op(
-    f: impl FnOnce(*mut *mut vips_sys::VipsImage) -> i32,
+/// 输出指针必须为空，或持有一份可释放的引用。延迟输出只能依赖自有数据。
+fn write_operation(
+    target: VipsImage,
+    operation: impl FnOnce(*mut RawImage) -> i32,
 ) -> vips::Result<VipsImage> {
-    let mut out = ptr::null_mut();
-    let status = f(&mut out);
-    if status != 0 {
-        if !out.is_null() {
-            unsafe { vips_sys::g_object_unref(out.cast()) };
+    let mut raw = ptr::null_mut();
+    let status = vips::code_to_result(operation(&mut raw));
+    let result = status.and_then(|()| {
+        if raw.is_null() {
+            return Err(Error::Vips("libvips 未返回图像".into()));
         }
-        return Err(vips::Error::Vips(
-            vips::take_vips_error().unwrap_or_else(|| "未知 libvips 错误".into()),
-        ));
+        // SAFETY: 两张图均存活。对于延迟输出，libvips 会自行保留输入引用；
+        // 写入内存图时则立即求值，并断开与输入的像素依赖。
+        vips::code_to_result(unsafe { vips_sys::vips_image_write(raw, target.as_ptr()) })
+    });
+    if !raw.is_null() {
+        // SAFETY: 操作移交的引用只释放一次。
+        unsafe { vips_sys::g_object_unref(raw.cast()) };
     }
-    unsafe { from_owned_ptr(out) }
+    result.map(|()| target)
+}
+
+pub(crate) fn composite_over(
+    base: &VipsImage,
+    overlay: &VipsImage,
+    x: i32,
+    y: i32,
+) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_composite2(
+            base.as_ptr(),
+            overlay.as_ptr(),
+            out,
+            VipsBlendMode::VIPS_BLEND_MODE_OVER,
+            c"x".as_ptr(),
+            x,
+            c"y".as_ptr(),
+            y,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn copy_with_layout(
+    image: &VipsImage,
+    width: i32,
+    height: i32,
+    bands: i32,
+    interpretation: VipsInterpretation,
+) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_copy(
+            image.as_ptr(),
+            out,
+            c"width".as_ptr(),
+            width,
+            c"height".as_ptr(),
+            height,
+            c"bands".as_ptr(),
+            bands,
+            c"interpretation".as_ptr(),
+            interpretation,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn extract_bands(image: &VipsImage, first: i32, count: i32) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_extract_band(
+            image.as_ptr(),
+            out,
+            first,
+            c"n".as_ptr(),
+            count,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn linear_uchar(image: &VipsImage, a: &[f64], b: &[f64]) -> vips::Result<VipsImage> {
+    ensure_vips();
+    assert_eq!(a.len(), b.len());
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_linear(
+            image.as_ptr(),
+            out,
+            a.as_ptr(),
+            b.as_ptr(),
+            a.len() as i32,
+            c"uchar".as_ptr(),
+            1_i32,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn add_alpha(image: &VipsImage) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_addalpha(image.as_ptr(), out, ptr::null::<i8>())
+    })
+}
+
+pub(crate) fn constant_like(image: &VipsImage, values: &[f64]) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| {
+        let raw = unsafe {
+            vips_sys::vips_image_new_from_image(
+                image.as_ptr(),
+                values.as_ptr(),
+                values.len() as i32,
+            )
+        };
+        unsafe { *out = raw };
+        if raw.is_null() { -1 } else { 0 }
+    })
+}
+
+pub(crate) fn has_alpha(image: &VipsImage) -> bool {
+    ensure_vips();
+    unsafe { vips_sys::vips_image_hasalpha(image.as_ptr()) != 0 }
+}
+
+pub(crate) fn interpretation(image: &VipsImage) -> VipsInterpretation {
+    ensure_vips();
+    unsafe { vips_sys::vips_image_get_interpretation(image.as_ptr()) }
+}
+
+pub(crate) fn flatten_rgb(image: &VipsImage, background: [f64; 3]) -> vips::Result<VipsImage> {
+    ensure_vips();
+    let target = VipsImage::new()?;
+    let array = unsafe { vips_sys::vips_array_double_new(background.as_ptr(), 3) };
+    if array.is_null() {
+        return Err(Error::Vips("无法创建 JPEG 背景色".into()));
+    }
+    let result = write_operation(target, |out| unsafe {
+        vips_sys::vips_flatten(
+            image.as_ptr(),
+            out,
+            c"background".as_ptr(),
+            array,
+            ptr::null::<i8>(),
+        )
+    });
+    unsafe { vips_sys::vips_area_unref(array.cast()) };
+    result
+}
+
+pub(crate) fn shadow_blur(mask: &VipsImage, sigma: f64) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_gaussblur(
+            mask.as_ptr(),
+            out,
+            sigma,
+            c"min_ampl".as_ptr(),
+            0.001_f64,
+            c"precision".as_ptr(),
+            VipsPrecision::VIPS_PRECISION_FLOAT,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn scale_shadow(mask: &VipsImage, scale: f64) -> vips::Result<VipsImage> {
+    ensure_vips();
+    let interpolate = vips::VipsInterpolate::new("bilinear")?;
+    // 显式对齐像素中心，避免放大时半像素偏移令四角投影不对称。
+    let offset = 0.5 * (1.0 - 1.0 / scale);
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_affine(
+            mask.as_ptr(),
+            out,
+            scale,
+            0.0_f64,
+            0.0_f64,
+            scale,
+            c"interpolate".as_ptr(),
+            interpolate.as_ptr(),
+            c"idx".as_ptr(),
+            offset,
+            c"idy".as_ptr(),
+            offset,
+            c"extend".as_ptr(),
+            VipsExtend::VIPS_EXTEND_BLACK,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn seeded_noise(width: i32, height: i32, sigma: f64) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_gaussnoise(
+            out,
+            width,
+            height,
+            c"mean".as_ptr(),
+            0.0_f64,
+            c"sigma".as_ptr(),
+            sigma,
+            c"seed".as_ptr(),
+            42_i32,
+            ptr::null::<i8>(),
+        )
+    })
+}
+
+pub(crate) fn srgb_to_scrgb(image: &VipsImage) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_sRGB2scRGB(image.as_ptr(), out, ptr::null::<i8>())
+    })
+}
+
+pub(crate) fn max_pair(a: &VipsImage, b: &VipsImage) -> vips::Result<VipsImage> {
+    ensure_vips();
+    write_operation(VipsImage::new()?, |out| unsafe {
+        vips_sys::vips_maxpair(a.as_ptr(), b.as_ptr(), out, ptr::null::<i8>())
+    })
 }
 
 /// 加载图片并按 EXIF orientation 摆正，同时保留 Ultra HDR gain map 元数据。
 pub fn load_base_image(path: &Path) -> Result<VipsImage> {
     ensure_vips();
-    let image = VipsImage::from_file(path).context("failed to load image")?;
-    image_op(|out| unsafe { vips_sys::vips_autorot(image.as_ptr(), out, ptr::null::<i8>()) })
+    VipsImage::from_file(path)
+        .context("failed to load image")?
+        .autorot()
         .context("failed to autorotate image")
 }
 
-/// 从素材快照解码并立即求值，避免 libvips 延迟管线借用已释放的文件字节。
-pub fn load_logo_image(bytes: &[u8]) -> vips::Result<VipsImage> {
+/// 从素材字节解码并立即写入自有内存，断开延迟管线对输入字节的依赖。
+pub fn decode_image_buffer(bytes: &[u8]) -> vips::Result<VipsImage> {
     ensure_vips();
     let borrowed = vips::VipsImage::from_buffer(bytes)?;
-    unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr())) }
+    let decoded = VipsImage::new_memory()?;
+    vips::code_to_result(unsafe {
+        vips_sys::vips_image_write(borrowed.as_ptr(), decoded.as_ptr())
+    })?;
+    Ok(decoded)
 }
 
 /// SVG 按最终尺寸栅格化，导出放大时不放大低分辨率的中间位图。
@@ -86,7 +279,7 @@ pub(crate) fn load_logo_at_height(
         return Ok(natural);
     }
     let scale = height.max(1.0) / natural.height() as f64;
-    let svg = image_op(|out| unsafe {
+    write_operation(VipsImage::new_memory()?, |out| unsafe {
         vips_sys::vips_svgload_buffer(
             bytes.as_ptr().cast_mut().cast(),
             bytes.len(),
@@ -95,8 +288,7 @@ pub(crate) fn load_logo_at_height(
             scale,
             ptr::null::<i8>(),
         )
-    })?;
-    unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(svg.as_ptr())) }
+    })
 }
 
 /// 将 vips 图像求值为连续像素内存，并在 libvips 失败时返回错误。
@@ -106,14 +298,13 @@ pub fn image_write_to_memory(image: &VipsImage) -> Result<Vec<u8>> {
 }
 
 pub fn image_metadata_string(image: &VipsImage, name: &str) -> Result<String> {
+    ensure_vips();
     let name = std::ffi::CString::new(name)?;
     let mut value = ptr::null_mut();
     let status =
         unsafe { vips_sys::vips_image_get_as_string(image.as_ptr(), name.as_ptr(), &mut value) };
     vips::code_to_result(status)?;
-    if value.is_null() {
-        return Err(anyhow!("libvips 未返回元数据值"));
-    }
+    anyhow::ensure!(!value.is_null(), "libvips 未返回元数据值");
     let text = unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() };
     unsafe { vips_sys::g_free(value.cast()) };
     Ok(text)

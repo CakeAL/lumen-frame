@@ -1,13 +1,11 @@
 //! 为文字行或整组位图绘制边框及组背景；最小尺寸只增加留白，不缩放内容。
 
+use crate::media::vips::{composite_over, decode_image_buffer};
 use crate::{
-    media::{
-        ensure_vips,
-        vips::{VipsImage, from_owned_ptr, image_op},
-    },
+    media::{ensure_vips, vips::VipsImage},
     watermark::{Placement, TextBorder},
 };
-use vips::{Result, VipsBlendMode};
+use vips::Result;
 
 pub(super) fn apply(image: VipsImage, border: &TextBorder, photo_height: i32) -> Result<VipsImage> {
     apply_background(image, border, photo_height, None)
@@ -101,20 +99,7 @@ pub(super) fn apply_background(
     let svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">{fill}<path d="{path}" fill="none" stroke="rgb({r},{g},{b})" stroke-width="{stroke}" stroke-linejoin="round"/></svg>"#
     );
-    let borrowed = vips::VipsImage::from_buffer(svg.as_bytes())?;
     // 立即求值，不能让延迟解码借用局部 SVG 字符串。
-    let frame = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(borrowed.as_ptr()))? };
-    image_op(|out| unsafe {
-        vips_sys::vips_composite2(
-            frame.as_ptr(),
-            image.as_ptr(),
-            out,
-            VipsBlendMode::VIPS_BLEND_MODE_OVER,
-            c"x".as_ptr(),
-            offset_left,
-            c"y".as_ptr(),
-            offset_top,
-            std::ptr::null::<i8>(),
-        )
-    })
+    let frame = decode_image_buffer(svg.as_bytes())?;
+    composite_over(&frame, &image, offset_left, offset_top)
 }

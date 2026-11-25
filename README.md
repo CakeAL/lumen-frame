@@ -219,22 +219,19 @@ args = ["--mcp-stdio"]
 
 ## 开发
 
-需要较新的稳定版 Rust 及本机可用的 libvips (参考：https://github.com/houseme/vips-sys/blob/main/README_CN.md)。
+需要较新的稳定版 Rust 和 libvips 8.18 或更新版本。
 
 ```bash
 # macOS
-brew install vips
+brew install pkgconf vips
 cargo run
 ```
 
-Windows 构建需要 vcpkg 和 libvips 8.16.6 (vips-dev-x64-web-8.18.6.zip)。  
+Windows x64 构建使用 vcpkg 的 `libvips:x64-windows` port。仓库的 overlay 使用官方
+`vips-dev-x64-web-8.18.6.zip` 开发包。设置 `VIPS_DEV_ROOT` 和 `VCPKG_KEEP_ENV_VARS` 后安装：
 
-vcpkg 需要手动 overlay 安装 vips-dev-x64-web-8.18.6 （vcpkg 最新的 vips 是 `8.18.5`，没有`.6`，然后，`vips-sys`的库可能识别 vcpkg 的 port 有错误，应是 `libvips`，但是却识别 `vips`）
-
-```bash
-# Windows
-vcpkg install vips:x64-windows --overlay-ports=.\vcpkg-overlay
-# 手动在 .cargo/config.toml 设置 vcpkg 文件夹
+```powershell
+vcpkg install libvips:x64-windows --overlay-ports=.\vcpkg-overlay
 cargo run
 ```
 

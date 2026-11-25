@@ -1,8 +1,8 @@
-use crate::media::{
-    ensure_vips,
-    vips::{VipsImage, from_owned_ptr, image_op},
+use crate::media::vips::{
+    add_alpha, composite_over, constant_like, copy_with_layout, scale_shadow, shadow_blur,
 };
-use vips::{Result, VipsBandFormat, VipsBlendMode, VipsInterpretation};
+use crate::media::{ensure_vips, vips::VipsImage};
+use vips::{Result, VipsBandFormat, VipsInterpretation};
 
 use crate::watermark::{Placement, WatermarkParams};
 
@@ -80,28 +80,8 @@ pub fn new_canvas(
     } else if params.solid_background {
         // 纯色背景
         let [r, g, b] = params.background;
-        let background = image_op(|out| unsafe {
-            vips_sys::vips_black(
-                out,
-                canvas_w,
-                canvas_h,
-                c"bands".as_ptr(),
-                3_i32,
-                std::ptr::null::<i8>(),
-            )
-        })?;
-        let a = [1.0; 3];
-        let b = [r as f64, g as f64, b as f64];
-        image_op(|out| unsafe {
-            vips_sys::vips_linear(
-                background.as_ptr(),
-                out,
-                a.as_ptr(),
-                b.as_ptr(),
-                3,
-                std::ptr::null::<i8>(),
-            )
-        })
+        let background = vips::black(canvas_w as u32, canvas_h as u32)?;
+        background.linear(&[1.0; 3], &[r as f64, g as f64, b as f64])
     } else {
         // 模糊背景
         // 1. 计算缩放比例，使原图完全覆盖画布 (Cover 模式)
@@ -115,30 +95,11 @@ pub fn new_canvas(
         let (scaled_w, scaled_h) = (scaled_img.width() as i32, scaled_img.height() as i32);
         let crop_x = (scaled_w - canvas_w) / 2;
         let crop_y = (scaled_h - canvas_h) / 2;
-        let background_img = image_op(|out| unsafe {
-            vips_sys::vips_extract_area(
-                scaled_img.as_ptr(),
-                out,
-                crop_x,
-                crop_y,
-                canvas_w,
-                canvas_h,
-                std::ptr::null::<i8>(),
-            )
-        })?;
+        let background_img = scaled_img.crop(crop_x, crop_y, canvas_w, canvas_h)?;
         // 4. 对裁剪后的背景图片应用高斯模糊
-        image_op(|out| unsafe {
-            vips_sys::vips_gaussblur(
-                background_img.as_ptr(),
-                out,
-                params.blur_sigma,
-                std::ptr::null::<i8>(),
-            )
-        })
+        background_img.gaussblur(params.blur_sigma)
     }?;
-    let canvas = image_op(|out| unsafe {
-        vips_sys::vips_addalpha(canvas.as_ptr(), out, std::ptr::null::<i8>())
-    })?;
+    let canvas = add_alpha(&canvas)?;
     let canvas = rgba_srgb(&canvas, canvas_w, canvas_h)?;
     let canvas = if params.background_grain
         && params.grain_strength.is_finite()
@@ -164,19 +125,7 @@ pub fn add_shadow(
         return Ok(canvas);
     };
     let (offset_x, offset_y) = shadow_offset(img.height() as i32, params);
-    image_op(|out| unsafe {
-        vips_sys::vips_composite2(
-            canvas.as_ptr(),
-            shadow.as_ptr(),
-            out,
-            VipsBlendMode::VIPS_BLEND_MODE_OVER,
-            c"x".as_ptr(),
-            img_x + x + offset_x,
-            c"y".as_ptr(),
-            img_y + y + offset_y,
-            std::ptr::null::<i8>(),
-        )
-    })
+    composite_over(&canvas, &shadow, img_x + x + offset_x, img_y + y + offset_y)
 }
 
 /// 统一使用原照片高度换算偏移，避免外边框或预览缩放改变偏移比例。
@@ -222,16 +171,11 @@ pub(crate) fn shadow_layer(
     let mask = super::image::alpha_mask(img)?;
     // 只缩放透明轮廓，保留源图的透明区域；模糊仍按原照片高度计算。
     let mask = if params.shadow_scale != 1.0 {
-        image_op(|out| unsafe {
-            vips_sys::vips_resize(
-                mask.as_ptr(),
-                out,
-                params.shadow_scale,
-                c"kernel".as_ptr(),
-                vips_sys::VipsKernel::VIPS_KERNEL_LINEAR,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        mask.resize(
+            params.shadow_scale,
+            None,
+            Some(vips::VipsKernel::VIPS_KERNEL_LINEAR),
+        )?
     } else {
         mask
     };
@@ -253,133 +197,32 @@ pub(crate) fn shadow_layer(
     let margin_y = aligned_margin(mask_h);
     let shadow_w = mask_w + margin_x * 2;
     let shadow_h = mask_h + margin_y * 2;
-    let mask = image_op(|out| unsafe {
-        vips_sys::vips_embed(
-            mask.as_ptr(),
-            out,
-            margin_x,
-            margin_y,
-            shadow_w,
-            shadow_h,
-            c"extend".as_ptr(),
-            vips_sys::VipsExtend::VIPS_EXTEND_BLACK,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let mask = mask.embed(margin_x, margin_y, shadow_w, shadow_h, None)?;
 
     // 大投影只在缩小后的单通道遮罩上做浮点模糊，使工作分辨率的 σ 不超过
     // 8 像素。比全尺寸长卷积核快得多，最后用无振铃的线性插值还原尺寸。
-    let mask = image_op(|out| unsafe {
-        vips_sys::vips_cast(
-            mask.as_ptr(),
-            out,
-            VipsBandFormat::VIPS_FORMAT_FLOAT,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let mask = mask.cast(VipsBandFormat::VIPS_FORMAT_FLOAT)?;
     let mask = if shrink > 1 {
-        image_op(|out| unsafe {
-            vips_sys::vips_shrink(
-                mask.as_ptr(),
-                out,
-                shrink as f64,
-                shrink as f64,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        mask.shrink_box(shrink as f64, shrink as f64)?
     } else {
         mask
     };
     // 默认 min_ampl=0.2 的核在约 1.8σ 处截断，宽阴影的角部会出现方形边界。
     // 保留高斯尾部并全程使用浮点，直到最后生成 RGBA 才量化为 uchar。
-    let mask = image_op(|out| unsafe {
-        vips_sys::vips_gaussblur(
-            mask.as_ptr(),
-            out,
-            shadow_sigma / shrink as f64,
-            c"min_ampl".as_ptr(),
-            0.001_f64,
-            c"precision".as_ptr(),
-            vips_sys::VipsPrecision::VIPS_PRECISION_FLOAT,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let mask = shadow_blur(&mask, shadow_sigma / shrink as f64)?;
     // 把浓度视为光学密度：alpha = 1 - exp(-density * coverage)。旧算法直接乘
     // 浓度再裁切到 255，density > 1 时会出现纯黑平台和突变的圆角轮廓。
-    let transmission = image_op(|out| unsafe {
-        vips_sys::vips_linear(
-            mask.as_ptr(),
-            out,
-            [-params.shadow_density / 255.0].as_ptr(),
-            [0.0].as_ptr(),
-            1,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    let transmission = image_op(|out| unsafe {
-        vips_sys::vips_math(
-            transmission.as_ptr(),
-            out,
-            vips_sys::VipsOperationMath::VIPS_OPERATION_MATH_EXP,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    let shadow_alpha = image_op(|out| unsafe {
-        vips_sys::vips_linear(
-            transmission.as_ptr(),
-            out,
-            [-255.0].as_ptr(),
-            [255.0].as_ptr(),
-            1,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let transmission = mask.linear1(-params.shadow_density / 255.0, 0.0)?;
+    let transmission = transmission.exp()?;
+    let shadow_alpha = transmission.linear1(-255.0, 255.0)?;
     let shadow_alpha = if shrink > 1 {
-        let interpolate = vips::VipsInterpolate::new("bilinear")?;
-        // 显式按像素中心对齐：某些 libvips 版本的 resize 放大固定偏移半个
-        // 输入像素，会把右下角投影加深。这里把中心位移按真实倍率换算。
-        let offset = 0.5 * (1.0 - 1.0 / shrink as f64);
-        image_op(|out| unsafe {
-            vips_sys::vips_affine(
-                shadow_alpha.as_ptr(),
-                out,
-                shrink as f64,
-                0.0_f64,
-                0.0_f64,
-                shrink as f64,
-                c"interpolate".as_ptr(),
-                interpolate.as_ptr(),
-                c"idx".as_ptr(),
-                offset,
-                c"idy".as_ptr(),
-                offset,
-                c"extend".as_ptr(),
-                vips_sys::VipsExtend::VIPS_EXTEND_BLACK,
-                std::ptr::null::<i8>(),
-            )
-        })?
+        scale_shadow(&shadow_alpha, shrink as f64)?
     } else {
         shadow_alpha
     };
-    // 生成与 mask 同尺寸的阴影 RGB（3 band）。注意不能对 VipsImage 使用 `.clone()`
-    // 来复制 band：该 crate 的 Clone 是浅拷贝（不增加 GObject 引用计数），而 Drop
-    // 会 unref，多次 clone 会导致 double-free / use-after-free。
-    let shadow_rgb = unsafe {
-        from_owned_ptr(vips_sys::vips_image_new_from_image(
-            shadow_alpha.as_ptr(),
-            params.shadow_color.map(f64::from).as_ptr(),
-            3,
-        ))?
-    };
+    let shadow_rgb = constant_like(&shadow_alpha, &params.shadow_color.map(f64::from))?;
     // RGB + Alpha → RGBA
-    let shadow = image_op(|out| unsafe {
-        vips_sys::vips_bandjoin2(
-            shadow_rgb.as_ptr(),
-            shadow_alpha.as_ptr(),
-            out,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let shadow = shadow_rgb.bandjoin2(&shadow_alpha)?;
     let shadow = rgba_srgb(&shadow, shadow_w, shadow_h)?;
     Ok(Some((
         shadow,
@@ -389,29 +232,14 @@ pub(crate) fn shadow_layer(
 }
 
 fn rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {
-    let cast = image_op(|out| unsafe {
-        vips_sys::vips_cast(
-            image.as_ptr(),
-            out,
-            VipsBandFormat::VIPS_FORMAT_UCHAR,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    image_op(|out| unsafe {
-        vips_sys::vips_copy(
-            cast.as_ptr(),
-            out,
-            c"width".as_ptr(),
-            width,
-            c"height".as_ptr(),
-            height,
-            c"bands".as_ptr(),
-            4_i32,
-            c"interpretation".as_ptr(),
-            VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-            std::ptr::null::<i8>(),
-        )
-    })
+    let cast = image.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
+    copy_with_layout(
+        &cast,
+        width,
+        height,
+        4,
+        VipsInterpretation::VIPS_INTERPRETATION_sRGB,
+    )
 }
 
 #[cfg(test)]

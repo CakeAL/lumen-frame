@@ -46,8 +46,8 @@ base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
 nom-exif = { version = "3", features = ["tokio-fs"] }
 anyhow = "1"
-vips = "=0.1.0"
-vips-sys = "=0.2.0"
+vips = { version = "=0.2.0", features = ["v8_18"] }
+vips-sys = "=0.3.0"
 dirs = "7"
 regex = "1"
 num-integer = "0.1"

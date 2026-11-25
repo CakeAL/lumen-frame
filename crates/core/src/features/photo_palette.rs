@@ -11,10 +11,7 @@ use anyhow::{Context as _, Result, ensure};
 use auto_palette::{ImageData, Palette};
 use vips::{VipsBandFormat, VipsInterpretation, VipsSize};
 
-use crate::media::{
-    ensure_vips, image_write_to_memory,
-    vips::{VipsImage, image_op},
-};
+use crate::media::{ensure_vips, image_write_to_memory, vips::VipsImage};
 use crate::watermark::{BackgroundGradient, BackgroundKind, PaletteTheme, WatermarkParams};
 
 #[derive(PartialEq)]
@@ -87,22 +84,8 @@ fn load_palette(path: &Path) -> Result<Palette<f64>> {
     // thumbnail 使用解码器缩小能力，并按 EXIF 摆正；统一经过 libvips 支持原有格式。
     let source = VipsImage::from_file(path).context("读取照片失败")?;
     let image = source.thumbnail(192, 192, VipsSize::VIPS_SIZE_DOWN)?;
-    let image = image_op(|out| unsafe {
-        vips_sys::vips_colourspace(
-            image.as_ptr(),
-            out,
-            VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    let image = image_op(|out| unsafe {
-        vips_sys::vips_cast(
-            image.as_ptr(),
-            out,
-            VipsBandFormat::VIPS_FORMAT_UCHAR,
-            std::ptr::null::<i8>(),
-        )
-    })?;
+    let image = image.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB)?;
+    let image = image.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
     let pixels = image_write_to_memory(&image)?;
     let rgba = match image.bands() {
         3 => pixels

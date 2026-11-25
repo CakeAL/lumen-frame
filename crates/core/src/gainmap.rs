@@ -1,35 +1,20 @@
-use crate::media::vips::{VipsImage, from_owned_ptr, image_op};
+use crate::media::vips::{constant_like, copy_with_layout, decode_image_buffer, interpretation};
+use crate::media::{ensure_vips, vips::VipsImage};
 use std::path::Path;
 use vips::{Result, VipsBandFormat};
 
-/// 取得 VipsImage 的底层指针。
-///
-/// 从 `vips` 包装类型取得借用指针；不可在这里释放。
-fn image_raw(img: &VipsImage) -> *mut vips_sys::VipsImage {
-    img.as_ptr()
-}
-
-/// 如果图片带 Ultra HDR gain map，返回它。
+/// 如果图片带可解码的 Ultra HDR gain map，返回它。
 pub fn get_gainmap(img: &VipsImage) -> Option<VipsImage> {
-    unsafe {
-        let raw = image_raw(img);
-        let gm = vips_sys::vips_image_get_gainmap(raw);
-        if gm.is_null() {
-            // 没有 gain map 时 libvips 可能留下 error buffer，清掉避免影响后续操作。
-            vips_sys::vips_error_clear();
-            return None;
-        }
-        // 还原成包装类型。gain map 可能是 1 通道（BW），也可能是 3 通道（YUV 4:4:4 的
-        // MPF Gain map，例如 DSC_4587），都视为真实 gain map。
-        from_owned_ptr(gm).ok()
-    }
+    ensure_vips();
+    img.gainmap().ok().flatten()
 }
 
 /// 把已经构造好的 gain map 写回图片。
 pub fn set_gainmap(img: &mut VipsImage, gainmap: &VipsImage) {
+    ensure_vips();
     unsafe {
-        let raw = image_raw(img);
-        let gm = image_raw(gainmap);
+        let raw = img.as_ptr();
+        let gm = gainmap.as_ptr();
         let name = std::ffi::CString::new("gainmap").unwrap();
         vips_sys::vips_image_set_image(raw, name.as_ptr(), gm);
 
@@ -44,18 +29,18 @@ pub fn set_gainmap(img: &mut VipsImage, gainmap: &VipsImage) {
 
 /// gain map 是否仍携带 ICC profile，用于导出前的回归测试。
 pub fn has_icc_profile(img: &VipsImage) -> bool {
+    ensure_vips();
     unsafe {
-        vips_sys::vips_image_get_typeof(
-            image_raw(img),
-            vips_sys::VIPS_META_ICC_NAME.as_ptr().cast(),
-        ) != 0
+        vips_sys::vips_image_get_typeof(img.as_ptr(), vips_sys::VIPS_META_ICC_NAME.as_ptr().cast())
+            != 0
     }
 }
 
 /// 更新 base 上的 gainmap-scale-factor 元数据。
 pub fn set_scale_factor(img: &mut VipsImage, scale: f64) {
+    ensure_vips();
     unsafe {
-        let raw = image_raw(img);
+        let raw = img.as_ptr();
         let name = std::ffi::CString::new("gainmap-scale-factor").unwrap();
         vips_sys::vips_image_set_double(raw, name.as_ptr(), scale);
     }
@@ -70,8 +55,9 @@ pub fn set_rgb_gainmap_metadata(
     // 新的彩色恢复图不应让极暗像素的异常大 gain 抬高显示门槛。将完整应用 gain map
     // 的门槛定为 2× SDR 白点，能在常见 HDR 显示器（含 macOS Preview）完整恢复彩色。
     const TARGET_DISPLAY_BOOST: f64 = 2.0;
+    ensure_vips();
     unsafe {
-        let raw = image_raw(img);
+        let raw = img.as_ptr();
         let set_array = |name: &str, values: &[f64; 3]| {
             let name = std::ffi::CString::new(name).unwrap();
             vips_sys::vips_image_set_array_double(raw, name.as_ptr(), values.as_ptr(), 3);
@@ -254,9 +240,7 @@ pub fn make_watermark_gainmap(
                 None,
             )?
         } else {
-            image_op(|out| unsafe {
-                vips_sys::vips_copy(original_gainmap.as_ptr(), out, std::ptr::null::<i8>())
-            })?
+            original_gainmap.copy()?
         };
         // 如果照片有圆角，gain map 也要做同样的圆角，否则圆角处会被提亮。
         // 圆角外的 else 分支也要用 neutral 值（多通道为 0.5/128），而不是 0，
@@ -265,83 +249,27 @@ pub fn make_watermark_gainmap(
             let radius = ((img_h as f64 * border_radius) / scale_factor).round() as i32;
             let mask = rounded_rect_mask(target_w, target_h, radius)?;
             let zero = neutral_image(target_w, target_h, gm_bands, neutral)?;
-            image_op(|out| unsafe {
-                vips_sys::vips_ifthenelse(
-                    mask.as_ptr(),
-                    scaled.as_ptr(),
-                    zero.as_ptr(),
-                    out,
-                    std::ptr::null::<i8>(),
-                )
-            })?
+            mask.ifthenelse(&scaled, &zero)?
         } else {
             scaled
         };
         let gx = ((img_x as f64) / scale_factor).round() as i32;
         let gy = ((img_y as f64) / scale_factor).round() as i32;
-        background = image_op(|out| unsafe {
-            vips_sys::vips_insert(
-                background.as_ptr(),
-                scaled.as_ptr(),
-                out,
-                gx,
-                gy,
-                std::ptr::null::<i8>(),
-            )
-        })?;
+        background = background.insert(&scaled, gx, gy)?;
     }
 
-    let interp = unsafe { vips_sys::vips_image_get_interpretation(original_gainmap.as_ptr()) };
-    let background = image_op(|out| unsafe {
-        vips_sys::vips_cast(
-            background.as_ptr(),
-            out,
-            VipsBandFormat::VIPS_FORMAT_UCHAR,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    image_op(|out| unsafe {
-        vips_sys::vips_copy(
-            background.as_ptr(),
-            out,
-            c"width".as_ptr(),
-            gw,
-            c"height".as_ptr(),
-            gh,
-            c"bands".as_ptr(),
-            gm_bands,
-            c"interpretation".as_ptr(),
-            interp,
-            std::ptr::null::<i8>(),
-        )
-    })
+    let interp = interpretation(original_gainmap);
+    let background = background.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
+    copy_with_layout(&background, gw, gh, gm_bands, interp)
 }
 
 fn neutral_image(width: i32, height: i32, bands: i32, neutral: f64) -> Result<VipsImage> {
-    let black = image_op(|out| unsafe {
-        vips_sys::vips_black(
-            out,
-            width,
-            height,
-            c"bands".as_ptr(),
-            bands,
-            std::ptr::null::<i8>(),
-        )
-    })?;
-    let a = vec![1.0; bands as usize];
-    let b = vec![neutral; bands as usize];
-    image_op(|out| unsafe {
-        vips_sys::vips_linear(
-            black.as_ptr(),
-            out,
-            a.as_ptr(),
-            b.as_ptr(),
-            bands,
-            c"uchar".as_ptr(),
-            1_i32,
-            std::ptr::null::<i8>(),
-        )
-    })
+    ensure_vips();
+    let black = vips::black(width as u32, height as u32)?;
+    if neutral == 0.0 && bands == 1 {
+        return Ok(black);
+    }
+    constant_like(&black, &vec![neutral; bands as usize])
 }
 
 /// 生成一张白色圆角矩形 mask（1 通道 uchar），用于给 gain map 打圆角。
@@ -360,12 +288,9 @@ fn rounded_rect_mask(w: i32, h: i32, radius: i32) -> Result<VipsImage> {
         h = h,
         radius = radius.max(0),
     );
-    let svg_image = vips::VipsImage::from_buffer(svg.as_bytes())?;
-    let mask = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(svg_image.as_ptr()))? };
+    let mask = decode_image_buffer(svg.as_bytes())?;
     if mask.bands() > 1 {
-        image_op(|out| unsafe {
-            vips_sys::vips_extract_band(mask.as_ptr(), out, 0, std::ptr::null::<i8>())
-        })
+        mask.extract_band(0)
     } else {
         Ok(mask)
     }

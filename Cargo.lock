@@ -8689,18 +8689,18 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vips"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "159e305456a180ef997d052098576694fc5563240a29e544c511540fc3e5453f"
+checksum = "0b752db693ae3e04db743f56f790821530f94295985ec6f694a315c61579d30d"
 dependencies = [
  "vips-sys",
 ]
 
 [[package]]
 name = "vips-sys"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b8bb8aaa10190bf16805d3f38be992663904db2cf4731d677dff1b4bacbba35"
+checksum = "5d381abf62f1a6d05fc9f24ca73be79d6a67cff8f9eae5638baae046130105e4"
 dependencies = [
  "pkg-config",
  "vcpkg",

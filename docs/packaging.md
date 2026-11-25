@@ -16,7 +16,7 @@
 ## macOS
 
 ```bash
-brew install vips glib gettext dylibbundler create-dmg
+brew install pkgconf vips glib gettext dylibbundler create-dmg
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
 # 每个架构在对应的 Mac 上分别构建。
@@ -134,14 +134,17 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 因此资源管理器、任务栏和快捷方式可以各自选择合适分辨率。
 
 ```powershell
-# 设置 VCPKG_ROOT 和 VIPS_DEV_ROOT，再用本地 overlay 安装 vips:x64-windows。
+# 设置 VCPKG_ROOT 和 VIPS_DEV_ROOT，再用本地 overlay 安装 libvips:x64-windows。
 # VIPS_DEV_ROOT 指向解压后的开发包根目录（下面有 include、lib、bin）。
 $env:VCPKG_ROOT = 'C:\path\to\vcpkg'
 $env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-x64-web-8.18.6'
 $env:VCPKG_KEEP_ENV_VARS = 'VIPS_DEV_ROOT'
-& "$env:VCPKG_ROOT\vcpkg.exe" install vips:x64-windows --overlay-ports=./vcpkg-overlay
+& "$env:VCPKG_ROOT\vcpkg.exe" install libvips:x64-windows --overlay-ports=./vcpkg-overlay
 cargo build --release
 ```
+
+若之前用本仓库的旧 overlay 安装过 `vips:x64-windows`，先用
+`vcpkg remove vips:x64-windows` 卸载旧 port，避免它与 `libvips` 重复拥有同一组安装文件。
 
 vcpkg 默认清理 port 的构建环境变量；`VCPKG_KEEP_ENV_VARS` 让本地 overlay 的
 `portfile.cmake` 能读取 `VIPS_DEV_ROOT`。

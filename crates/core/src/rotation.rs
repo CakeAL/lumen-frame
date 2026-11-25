@@ -1,9 +1,9 @@
 //! 照片与视频输出共用的 90° 旋转状态。
 
-use crate::media::vips::{VipsImage, from_owned_ptr, image_op};
+use crate::media::vips::VipsImage;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use vips_sys::{self, VipsAngle};
+use vips::VipsAngle;
 
 use crate::gainmap;
 
@@ -53,30 +53,25 @@ pub fn apply_to_image(image: &VipsImage, rotation: Rotation) -> Result<VipsImage
         Rotation::HalfTurn => VipsAngle::VIPS_ANGLE_D180,
         Rotation::CounterClockwise90 => VipsAngle::VIPS_ANGLE_D270,
     };
-    Ok(image_op(|out| unsafe {
-        vips_sys::vips_rot(image.as_ptr(), out, angle, std::ptr::null::<i8>())
-    })?)
+    Ok(image.rot(angle)?)
 }
 
 /// 旋转已经完成排版与合成的成片，并让内嵌 Ultra HDR gain map 保持同一方向。
 pub fn apply_to_output(image: &VipsImage, rotation: Rotation) -> Result<VipsImage> {
     if rotation == Rotation::None {
-        return Ok(image_op(|out| unsafe {
-            vips_sys::vips_copy(image.as_ptr(), out, std::ptr::null::<i8>())
-        })?);
+        return Ok(image.copy()?);
     }
 
     let rotated_gainmap = gainmap::get_gainmap(image)
         .map(|gainmap| {
-            let gainmap =
-                unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(gainmap.as_ptr()))? };
+            let gainmap = gainmap.copy_memory()?;
             apply_to_image(&gainmap, rotation)
         })
         .transpose()?;
     // JPEG loader 常以顺序访问模式工作，而最终 rot 会倒序或跨行请求上游像素，部分
     // 相机会因此报 `out of order read`。先按原方向把完整成片求值到内存，再旋转这份
     // 内存图；排版语义不变，同时不再要求 JPEG 解码器随机访问。
-    let materialized = unsafe { from_owned_ptr(vips_sys::vips_image_copy_memory(image.as_ptr()))? };
+    let materialized = image.copy_memory()?;
     let mut rotated = apply_to_image(&materialized, rotation)?;
     if let Some(rotated_gainmap) = rotated_gainmap.as_ref() {
         gainmap::set_gainmap(&mut rotated, rotated_gainmap);

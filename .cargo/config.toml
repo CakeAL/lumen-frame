@@ -1,10 +1,8 @@
 # 链接 libvips 的搜索路径。
 #
-# libvips 的 Rust 绑定只做一件事：`cargo:rustc-link-lib=vips`（外加 glib/gobject）。
-# 它不查 pkg-config，也不猜路径 —— 库在哪，完全由这里的 `-L` 决定。
+# vips-sys 在 macOS 使用 pkg-config 探测，在 Windows MSVC 使用 vcpkg。
+# 下方保留 Homebrew 的链接搜索路径，Windows 则由 libvips port 提供库。
 #
-# 按目标平台分开写，免得把某个平台的路径带到另一个平台上。
-
 # macOS：Homebrew 的 vips。
 # 用 `opt/` 而不是 `Cellar/<精确版本>`：后者会在 `brew upgrade vips` 之后失效。
 [target.aarch64-apple-darwin]

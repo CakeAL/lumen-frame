@@ -311,20 +311,16 @@ impl CachedRenderer<'_> {
                 vips::VipsBandFormat::VIPS_FORMAT_UCHAR,
             )?;
             // memory 图像默认是 MULTIBAND；声明 sRGB 才能让 hasalpha 正确识别圆角覆盖率。
-            return Ok(crate::media::vips::image_op(|out| unsafe {
-                vips_sys::vips_copy(
-                    image.as_ptr(),
-                    out,
-                    c"interpretation".as_ptr(),
-                    vips::VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-                    std::ptr::null::<i8>(),
-                )
-            })?);
+            return Ok(crate::media::vips::copy_with_layout(
+                &image,
+                size.0,
+                size.1,
+                4,
+                vips::VipsInterpretation::VIPS_INTERPRETATION_sRGB,
+            )?);
         }
         let base = self.base()?;
-        let image = crate::media::vips::image_op(|out| unsafe {
-            vips_sys::vips_copy(base.as_ptr(), out, std::ptr::null::<i8>())
-        })?;
+        let image = base.copy()?;
         Ok(if radius > 0.0 {
             photo_image::add_round_corner(image, radius)?
         } else {
