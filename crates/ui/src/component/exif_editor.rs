@@ -249,7 +249,7 @@ impl ExifEditor {
         input: &Entity<InputState>,
         cx: &App,
     ) -> impl IntoElement {
-        field(label, Input::new(input).w_full(), cx)
+        field(label, Input::new(input).aria_label(label).w_full(), cx)
     }
 }
 

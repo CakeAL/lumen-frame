@@ -7,7 +7,7 @@
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::base::{
     Accordion as BaseAccordion, AccordionHeader, AccordionItem, AccordionPanel, AccordionTrigger,
-    motion::{Transition, transition},
+    motion::{MotionReveal, Transition, transition},
 };
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
@@ -883,7 +883,7 @@ impl AppView {
         let title = section.title();
         // 箭头动效仍由框架处理反向切换、减少动态效果和帧调度。
         let progress = transition(
-            (section.id(), "disclosure"),
+            (section.id(), "reveal"),
             if self.inspector.expanded[ix] {
                 1_f32
             } else {
@@ -953,10 +953,17 @@ impl AppView {
                     .panel(
                         AccordionPanel::new()
                             .id(("inspector-panel", ix))
-                            // gpui-kit 0.8.1 的 MotionReveal 仍在 prepaint 中布局子树，
-                            // 受控 Popover 此时移交焦点会触发辅助功能的重复焦点断言。
-                            // 用普通布局让焦点在 request_layout 阶段确定，详见 docs/issues。
-                            .child(v_flex().w_full().gap_3().pt_2().child(content)),
+                            .keep_mounted(progress > 0.)
+                            .child(MotionReveal::new(
+                                "inspector-content",
+                                progress,
+                                v_flex()
+                                    .w_full()
+                                    .gap_3()
+                                    .pt_2()
+                                    .child(content)
+                                    .into_any_element(),
+                            )),
                     ),
             )
     }
@@ -1478,7 +1485,7 @@ impl AppView {
                         Switch::new("border-equal")
                             .checked(equal)
                             .label("四边等宽")
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                 this.backend.params_mut().border_equal = *checked;
                                 this.refresh_preview(cx);
                                 cx.notify();
@@ -1501,7 +1508,9 @@ impl AppView {
                     .gap_3()
                     .child(field(
                         "宽高比",
-                        Select::new(&controls.aspect_ratio).w_full(),
+                        Select::new(&controls.aspect_ratio)
+                            .highlight_matches(true)
+                            .w_full(),
                         cx,
                     ))
                     .when(self.aspect_choice == AspectRatioChoice::Custom, |this| {
@@ -1908,7 +1917,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn inspector_popover_focus_is_set_before_prepaint(cx: &mut TestAppContext) {
+    fn inspector_popover_defers_focus_until_after_prepaint(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let phases = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let (root, cx) = cx.add_window_view({

@@ -1,5 +1,6 @@
 //! 主窗口标题栏与页面导航。
 
+use gpui_kit::Context;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Sizable as _,
@@ -8,7 +9,6 @@ use gpui_kit::component::{
     tab::{Tab, TabBar},
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, div};
 
 use super::super::{AppPage, AppView};
 
@@ -66,22 +66,15 @@ impl AppView {
                     })),
             )
             .child(
-                div()
-                    .id("app-settings-hitbox")
-                    .debug_selector(|| "app-settings-hitbox".into())
-                    .child(
-                        Button::new("app-settings")
-                            .occlude()
-                            .icon(IconName::Settings)
-                            .label("设置")
-                            .outline()
-                            .small()
-                            .tooltip("设置")
-                            .accessibility_label("设置")
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.go_to(AppPage::Settings, cx)),
-                            ),
-                    ),
+                Button::new("app-settings")
+                    .occlude()
+                    .icon(IconName::Settings)
+                    .label("设置")
+                    .outline()
+                    .small()
+                    .tooltip("设置")
+                    .accessibility_label("设置")
+                    .on_click(cx.listener(|this, _, _, cx| this.go_to(AppPage::Settings, cx))),
             )
     }
 }

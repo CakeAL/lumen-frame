@@ -274,13 +274,13 @@ impl TextLine {
         subscriptions.push(cx.subscribe_in(
             &template_input,
             window,
-            move |this, state, event, window, cx| {
+            move |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.rich_text_changed(id, &state.read(cx).value(), cx);
                     this.refresh_preview(cx);
                     cx.notify();
                 } else if matches!(event, InputEvent::Blur) {
-                    this.finish_rich_token_edit(id, window, cx);
+                    this.finish_rich_token_edit(id, cx);
                 }
             },
         ));

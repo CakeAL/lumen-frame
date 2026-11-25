@@ -303,8 +303,6 @@ impl AppView {
             }))
             .child(
                 Popover::new(("gradient-color-editor", id))
-                    // 内层取色器打开时，点击它的色块必须先提交颜色，保留外层编辑器。
-                    .overlay_closable(!color.is_open(cx))
                     .open(self.background_state.editor == Some(id))
                     .on_open_change(move |open, _, cx| {
                         let _ = view.update(cx, |this, cx| {
@@ -410,6 +408,7 @@ impl AppView {
             .child(field(
                 "照片色卡风格",
                 Select::new(theme_control)
+                    .highlight_matches(true)
                     .id(if border {
                         "border-palette-theme"
                     } else {

@@ -25,9 +25,9 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, Context, ElementId, Entity, EntityInputHandler as _, Focusable as _, Font,
-    FontStyle, FontWeight, IntoElement, RenderOnce, SharedString, StyledText, Subscription,
-    TextRun, UnderlineStyle, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, App, Context, ElementId, Entity, Focusable as _, Font, FontStyle, FontWeight,
+    IntoElement, RenderOnce, SharedString, StyledText, Subscription, TextRun, UnderlineStyle,
+    WeakEntity, Window, div, prelude::*, px,
 };
 use std::{ops::Range, sync::LazyLock};
 
@@ -213,30 +213,15 @@ fn text_runs(
     runs
 }
 
-fn sync_template_tokens(line: &mut TextLine, window: &mut Window, cx: &mut Context<AppView>) {
+fn sync_template_tokens(line: &mut TextLine, cx: &mut Context<AppView>) {
     if !line.rich.tokens_dirty {
         return;
     }
     let editing_token = line.rich.editing_token;
     let synced = line.template.update(cx, |state, cx| {
-        // 组合输入尚未提交时，保留原生 IME 状态，下一次通知再识别字段。
-        if state.marked_text_range(window, cx).is_some() {
-            return false;
-        }
-        let text = state.value();
-        let selected = state.selected_range();
-        let content = token_content(&text, editing_token);
-        for token in content.tokens() {
-            if !state.tokens().iter().any(|existing| existing == token)
-                && state
-                    .replace_range_with_token(token.range(), token.token().clone(), window, cx)
-                    .is_err()
-            {
-                return false;
-            }
-        }
-        state.set_selected_range(selected, cx);
-        true
+        let content = token_content(&state.value(), editing_token);
+        // 组合输入或光标仍在字段内部时，由下一次输入通知重试。
+        state.set_tokens(content, cx).is_ok()
     });
     line.rich.tokens_dirty = !synced;
 }
@@ -356,7 +341,7 @@ impl AppView {
                 cx.notify();
             }
         }
-        sync_template_tokens(line, window, cx);
+        sync_template_tokens(line, cx);
         let range = selection_range(&line.rich.source, line.template.read(cx).selected_range());
         if line.rich.selection == range {
             return;
@@ -445,23 +430,26 @@ impl AppView {
         else {
             return;
         };
-        line.rich.editing_token = Some(range.start);
-        line.template.update(cx, |state, cx| {
-            let text = state.value();
+        let editing_token = Some(range.start);
+        let opened = line.template.update(cx, |state, cx| {
+            let content = token_content(&state.value(), editing_token);
+            let previous = state.selected_range();
             state.set_selected_range(range.clone(), cx);
-            state.replace(text[range.clone()].to_owned(), window, cx);
+            if state.set_tokens(content, cx).is_err() {
+                state.set_selected_range(previous, cx);
+                return false;
+            }
             state.set_selected_range(range.start + 1..range.end - 1, cx);
             state.focus(window, cx);
+            true
         });
-        cx.notify();
+        if opened {
+            line.rich.editing_token = editing_token;
+            cx.notify();
+        }
     }
 
-    pub(super) fn finish_rich_token_edit(
-        &mut self,
-        id: u64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn finish_rich_token_edit(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(line) = self
             .text_groups
             .iter_mut()
@@ -470,9 +458,25 @@ impl AppView {
         else {
             return;
         };
-        if line.rich.editing_token.take().is_some() {
-            line.rich.tokens_dirty = true;
-            sync_template_tokens(line, window, cx);
+        if let Some(start) = line.rich.editing_token.take() {
+            line.rich.tokens_dirty = line.template.update(cx, |state, cx| {
+                let content = token_content(&state.value(), None);
+                if let Some(token) = content
+                    .tokens()
+                    .iter()
+                    .find(|token| token.range().start == start)
+                {
+                    let range = token.range();
+                    let selection = state.selected_range();
+                    // 字段收起时，选区端点只能落在 token 边界。
+                    if range.start < selection.start && selection.start < range.end
+                        || range.start < selection.end && selection.end < range.end
+                    {
+                        state.set_selected_range(range.end..range.end, cx);
+                    }
+                }
+                state.set_tokens(content, cx).is_err()
+            });
             cx.notify();
         }
     }
@@ -520,6 +524,7 @@ impl AppView {
             .child(
                 div().size_8().flex_shrink_0().child(
                     Combobox::new(&line.rich.font)
+                        .highlight_matches(true)
                         .appearance(false)
                         .small()
                         .p_0()
@@ -537,8 +542,6 @@ impl AppView {
             )
             .child(
                 Popover::new(("rich-text-color-popup", id))
-                    // 选色面板绘制在外层弹层之外，不能把它的点击当成关闭外层的操作。
-                    .overlay_closable(!color.is_open(cx))
                     .trigger(toolbar_button(
                         ("rich-text-color", id),
                         IconName::Baseline,
@@ -838,7 +841,8 @@ mod tests {
             assert_eq!(input.selected_range(), 3..6);
         });
         cx.update(|window, cx| {
-            window.input("型号", cx);
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("型号".into()));
+            window.press("cmd-v", cx);
             window.press("cmd-right", cx);
         });
         cx.run_until_parked();
@@ -846,6 +850,19 @@ mod tests {
             let input = app.text_groups[0].lines[0].template.read(cx);
             assert_eq!(input.value().as_ref(), "AB{型号}中文");
             assert_eq!(input.tokens()[0].token().text().as_ref(), "{型号}");
+        });
+        cx.update(|window, cx| window.press("cmd-z", cx));
+        cx.run_until_parked();
+        app.read_with(cx, |app, cx| {
+            assert_eq!(
+                app.text_groups[0].lines[0]
+                    .template
+                    .read(cx)
+                    .value()
+                    .as_ref(),
+                "AB{ISO}中文",
+                "一次撤销直接回到字段编辑前的文字",
+            );
         });
         let gradient_id = app.read_with(cx, |app, _| app.background_state.colors[0].id);
         cx.update(|window, cx| {

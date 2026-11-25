@@ -449,7 +449,7 @@ impl AppView {
             )
             .child(field(
                 "取色风格",
-                Select::new(&controls.theme)
+                Select::new(&controls.theme).highlight_matches(true)
                     .id("palette-card-theme")
                     .w_full(),
                 cx,

@@ -464,44 +464,23 @@ fn dropping_a_folder_recursively_imports_its_photos(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// 设置页要能渲染，而且切过去再切回来不能出问题。
-///
-/// 明暗选择是三项单选，索引和 `AppearanceMode` 的对应关系错了会在渲染时暴露出来；
-/// 默认值本身由 `tests/settings.rs` 覆盖，这里不依赖开发机上的偏好文件。
+/// 从标题栏进入设置，切换到关于并展开二维码，再返回水印页面。
 #[gpui_kit::test]
 fn settings_page_renders_and_returns(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
 
-    cx.run_until_parked();
-    let settings_button = cx
-        .debug_bounds("app-settings-hitbox")
-        .expect("设置按钮没有渲染");
-    cx.simulate_click(settings_button.center(), Default::default());
-    cx.run_until_parked();
-
-    let preferences = cx
-        .debug_bounds("settings-preferences")
-        .expect("设置选项栏没有渲染");
-    let about_panel = cx
-        .debug_bounds("settings-about-panel")
-        .expect("关于栏没有渲染");
-    let settings_width = preferences.size.width.as_f32() + about_panel.size.width.as_f32();
-    let about_ratio = about_panel.size.width.as_f32() / settings_width;
-    assert!(
-        (about_ratio - 0.3).abs() <= 0.01,
-        "关于栏应占设置内容宽度的 30%，实际为 {:.1}%",
-        about_ratio * 100.0,
-    );
-
-    // 关于区域的二维码默认收起；展开首个可见项后不应破坏设置页布局。
     cx.update(|window, cx| {
-        window.click("settings-sponsor-toggle", cx);
-    });
-    cx.run_until_parked();
+        window.click("app-settings", cx);
+        let preferences = window.find("settings-preferences").bounds();
+        let navigation = window.find("settings-navigation").bounds();
+        assert!(preferences.left() >= navigation.right());
+        assert!(window.try_find("settings-sponsor-toggle").is_none());
 
-    let _wechat = cx
-        .debug_bounds("settings-sponsor-image")
-        .expect("展开赞助信息后没有显示微信二维码");
+        window.within("settings-navigation").click("0-3", cx);
+        assert!(window.try_find("settings-sponsor-qr").is_none());
+        window.click("settings-sponsor-toggle", cx);
+        assert!(window.try_find("settings-sponsor-qr").is_some());
+    });
 
     view.update_in(cx, |view, _, cx| view.go_to(AppPage::Watermark, cx));
     cx.run_until_parked();
@@ -568,21 +547,22 @@ fn adding_a_text_group_opens_its_editor(cx: &mut TestAppContext) {
 fn inspector_tabs_and_sections_keep_common_controls_visible(cx: &mut TestAppContext) {
     use gpui_kit::component::{Theme, ThemeMode};
     let (view, cx) = workspace(cx);
+    cx.simulate_resize(gpui_kit::size(px(1440.), px(1000.)));
     cx.run_until_parked();
     let before = view.read_with(cx, |view, _| view.params().clone());
     cx.update(|window, cx| {
+        cx.set_reduce_motion(true);
+        window.render_frame(cx);
         assert!(window.try_find("background-grain").is_none());
         window.click("inspector-canvas-toggle", cx);
-    });
-    cx.run_until_parked();
-    cx.update(|window, cx| window.click("inspector-background-toggle", cx));
-    cx.run_until_parked();
-    cx.update(|window, cx| {
+        window.click("inspector-background-toggle", cx);
+        // MotionReveal measures its child once, then uses that height on the next frame.
+        window.render_frame(cx);
         assert!(window.try_find("background-grain").is_some());
         window.press("enter", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("background-grain").is_none());
     });
-    cx.run_until_parked();
-    cx.update(|window, _| assert!(window.try_find("background-grain").is_none()));
     for (width, height, font, mode) in [
         (1180., 680., 14., ThemeMode::Light),
         (1440., 900., 18., ThemeMode::Dark),
@@ -620,18 +600,23 @@ fn inspector_tabs_and_sections_keep_common_controls_visible(cx: &mut TestAppCont
 #[gpui_kit::test]
 fn inspector_disclosure_animates_and_respects_reduced_motion(cx: &mut TestAppContext) {
     let (view, cx) = workspace(cx);
+    cx.simulate_resize(gpui_kit::size(px(1440.), px(1000.)));
     cx.update(|window, cx| {
+        cx.set_reduce_motion(true);
+        window.click("inspector-canvas-toggle", cx);
         cx.set_reduce_motion(false);
-        window.refresh();
+        window.render_frame(cx);
     });
     cx.run_until_parked();
     let before = view.read_with(cx, |view, _| view.params().clone());
     cx.update(|window, cx| {
         window.click("inspector-background-toggle", cx);
+        assert!(window.try_find(("inspector-panel", 2_usize)).is_some());
         window.render_frame(cx);
     });
     cx.executor().advance_clock(Duration::from_millis(60));
     let partial = cx.update(|window, cx| {
+        window.simulate_next_frame(cx);
         window.render_frame(cx);
         window
             .find(("inspector-panel", 2_usize))
@@ -672,13 +657,8 @@ fn inspector_disclosure_animates_and_respects_reduced_motion(cx: &mut TestAppCon
         );
         window.press("enter", cx);
         window.render_frame(cx);
-        assert_eq!(
-            window
-                .find(("inspector-panel", 2_usize))
-                .bounds()
-                .size
-                .height,
-            px(0.),
+        assert!(
+            window.try_find(("inspector-panel", 2_usize)).is_none(),
             "减少动态效果时应立即收起"
         );
     });

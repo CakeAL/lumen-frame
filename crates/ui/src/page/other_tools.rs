@@ -178,7 +178,13 @@ impl MotionTimeField {
                         h_flex()
                             .items_center()
                             .gap_2()
-                            .child(Input::new(&self.input).small().w_20().disabled(disabled))
+                            .child(
+                                Input::new(&self.input)
+                                    .aria_label(format!("{label}（秒）"))
+                                    .small()
+                                    .w_20()
+                                    .disabled(disabled),
+                            )
                             .child(
                                 div()
                                     .text_sm()
@@ -187,7 +193,12 @@ impl MotionTimeField {
                             ),
                     ),
             )
-            .child(Slider::new(&self.slider).disabled(disabled).w_full())
+            .child(
+                Slider::new(&self.slider)
+                    .accessibility_label(label)
+                    .disabled(disabled)
+                    .w_full(),
+            )
             .into_any_element()
     }
 }

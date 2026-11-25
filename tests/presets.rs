@@ -380,11 +380,14 @@ fn bundled_presets_load_from_assets() {
             "colorwalk_背景色卡",
         ]
     );
-    assert!(
-        presets
-            .iter()
-            .all(|(_, preset)| !preset.text_groups.is_empty())
-    );
+    for (name, preset) in &presets {
+        if name == "色卡" {
+            assert!(preset.text_groups.is_empty());
+            assert!(preset.params.palette_card.enabled());
+        } else {
+            assert!(!preset.text_groups.is_empty(), "预设「{name}」缺少文字组");
+        }
+    }
     assert!(
         presets
             .iter()

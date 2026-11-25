@@ -17,7 +17,7 @@ Lumen Frame 是一款添加边框水印的工具，同时保留Ultra HDR（Gainm
 8. 如果原图含HDR Gain Map，导出的水印同时保留HDR Gain Map (此时图片大小会限制在 8192x8192，由于`libultrahdr`限制)。
 9. 提供小工具，生成Motion Photo（实况照片）以及“黑白 + 彩色Gain Map”的照片。
 10. 支持 MCP，可使用AI Agent操作软件，批量处理照片。
-11. 不含任何恼人的Web技术 (Chromium 以及 Electron)，UI使用 `gpui-kit` 构建，照片处理使用`vips`。
+11. 原生界面使用 GPUI Kit 和 GPUI Fast，照片处理使用 libvips, 不含任何恼人的Web技术 (Chromium 以及 Electron)。
 
 ## 界面预览
 

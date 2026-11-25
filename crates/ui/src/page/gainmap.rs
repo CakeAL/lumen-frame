@@ -113,7 +113,7 @@ impl AppView {
                         RadioGroup::horizontal("gainmap-view")
                             .children(vec!["原图", "Gain Map"])
                             .selected_index(Some(if self.gainmap.show_gainmap() { 1 } else { 0 }))
-                            .on_click(cx.listener(|this, index: &usize, _, cx| {
+                            .on_change(cx.listener(|this, index: &usize, _, cx| {
                                 this.set_gainmap_view(*index == 1, cx);
                             })),
                     )

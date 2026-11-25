@@ -116,8 +116,6 @@ impl NumberField {
         let slider = cx.new(|_| {
             SliderState::new()
                 .max(max as f32)
-                // `SliderState::min` immediately recomputes the thumb with its current max
-                // (100 by default), so ranges above 100 must install max first.
                 .min(min as f32)
                 .step(step as f32)
                 .default_value(display as f32)
@@ -251,11 +249,17 @@ impl NumberField {
         disabled: bool,
         cx: &App,
     ) -> AnyElement {
+        let label = label.into();
         v_flex()
             .w_full()
             .gap_2()
-            .child(self.render_compact(label, disabled, cx))
-            .child(Slider::new(&self.slider).disabled(disabled).w_full())
+            .child(self.render_compact(label.clone(), disabled, cx))
+            .child(
+                Slider::new(&self.slider)
+                    .accessibility_label(label)
+                    .disabled(disabled)
+                    .w_full(),
+            )
             .into_any_element()
     }
 
@@ -265,6 +269,7 @@ impl NumberField {
         disabled: bool,
         cx: &App,
     ) -> AnyElement {
+        let label = label.into();
         h_flex()
             .w_full()
             .justify_between()
@@ -274,7 +279,7 @@ impl NumberField {
                     .flex_shrink_0()
                     .text_sm()
                     .text_color(label_color(cx, disabled))
-                    .child(label.into()),
+                    .child(label.clone()),
             )
             .child(
                 h_flex()
@@ -283,12 +288,14 @@ impl NumberField {
                     .items_center()
                     .child(if self.slider_offset != 0.0 {
                         NumberInput::new(&self.input)
+                            .accessibility_label(label)
                             .small()
                             .w_32()
                             .disabled(disabled)
                             .into_any_element()
                     } else {
                         Input::new(&self.input)
+                            .aria_label(label)
                             .small()
                             .w_20()
                             .disabled(disabled)
@@ -378,10 +385,6 @@ impl ColorField {
 
     pub(super) fn rgba_value(&self, cx: &App) -> [u8; 4] {
         self.picker.read(cx).value().map_or([0; 4], hsla_to_rgba)
-    }
-
-    pub(super) fn is_open(&self, cx: &App) -> bool {
-        self.picker.read(cx).is_open()
     }
 
     pub(super) fn value(&self, cx: &App) -> [u8; 3] {

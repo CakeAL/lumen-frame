@@ -328,9 +328,9 @@ impl AppView {
         } else {
             image.into_any_element()
         };
-        let image_selector = format!("{}-image", disclosure.id());
         let image = div()
-            .debug_selector(move || image_selector.clone())
+            .id(format!("{}-qr", disclosure.id()))
+            .test_support()
             .w_full()
             .max_w_80()
             .h_128()
@@ -385,7 +385,11 @@ impl AppView {
             ThemeMode::Light => ("浅色主题", &self.settings.light_theme),
             ThemeMode::Dark => ("深色主题", &self.settings.dark_theme),
         };
-        field(label, Select::new(state).w_full(), cx)
+        field(
+            label,
+            Select::new(state).highlight_matches(true).w_full(),
+            cx,
+        )
     }
 
     pub(in crate::app) fn render_settings_page(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -535,7 +539,9 @@ impl AppView {
                     .child(
                         field(
                             "默认字体",
-                            Select::new(&self.settings.default_font).w_full(),
+                            Select::new(&self.settings.default_font)
+                                .highlight_matches(true)
+                                .w_full(),
                             cx,
                         )
                         .description(
@@ -568,7 +574,7 @@ impl AppView {
                                     .label("窗口毛玻璃")
                                     .checked(self.window_effects)
                                     .disabled(!crate::window_effects::supported())
-                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                         this.set_window_effects(*checked, cx)
                                     })),
                             )
@@ -589,7 +595,7 @@ impl AppView {
                                         .collect::<Vec<_>>(),
                                 )
                                 .selected_index(appearance_index)
-                                .on_click(cx.listener(|this, index: &usize, window, cx| {
+                                .on_change(cx.listener(|this, index: &usize, window, cx| {
                                     if let Some((_, mode)) = APPEARANCES.get(*index) {
                                         this.set_appearance_mode(*mode, window, cx);
                                     }
@@ -624,7 +630,7 @@ impl AppView {
                                     .collect::<Vec<_>>(),
                             )
                             .selected_index(scale_index)
-                            .on_click(cx.listener(|this, index: &usize, window, cx| {
+                            .on_change(cx.listener(|this, index: &usize, window, cx| {
                                 if let Some((_, scale)) = INTERFACE_SCALES.get(*index) {
                                     this.set_interface_scale(*scale, window, cx);
                                 }
@@ -661,7 +667,7 @@ impl AppView {
                 ),
                 UpdateState::Failed { message } => ("重试".into(), message.clone(), false),
             };
-        v_flex().id("settings-about-panel").w_full().gap_6()
+        v_flex().w_full().gap_6()
             .child(GroupBox::new().id("settings-about").title("Lumen Frame")
                 .child(div().text_sm().child(format!("版本 {}", env!("CARGO_PKG_VERSION"))))
                 .child(description("为照片加上边框、阴影与 EXIF 文字水印。"))

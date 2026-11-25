@@ -7,7 +7,10 @@ use lumen_frame_core::{
     watermark::{GroupAttachment, PaletteTheme, Placement, TextGroup},
 };
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 #[ctor::ctor(unsafe)]
 fn initialize_fonts() {
@@ -16,15 +19,17 @@ fn initialize_fonts() {
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
+        static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "lumen-backend-{}-{}",
+            "lumen-backend-{}-{}-{}",
             std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
         Self(path)
     }
 }
