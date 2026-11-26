@@ -15,6 +15,18 @@ pub enum Rational {
     Float(f64),
 }
 
+impl PartialEq for Rational {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Fraction(n1, d1), Self::Fraction(n2, d2)) => n1 == n2 && d1 == d2,
+            (Self::Float(v1), Self::Float(v2)) => v1.to_bits() == v2.to_bits(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Rational {}
+
 impl Display for Rational {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let format_value = |value: f64| {
@@ -53,7 +65,7 @@ impl Display for Rational {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct ExifInfo {
     pub created_time: Option<ExifDateTime>,
     pub make: Option<String>,

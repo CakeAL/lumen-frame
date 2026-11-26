@@ -2,7 +2,7 @@
 
 use super::{PreviewJob, RasterImage, load_scaled, rasterize};
 use crate::{
-    media::{ensure_vips, vips::VipsImage},
+    media::{ExifInfo, ensure_vips, vips::VipsImage},
     photo::{
         Photo,
         layers::{LayerRenderer, PositionedLayer},
@@ -85,7 +85,7 @@ struct TextKey {
     default_font: String,
     background: [u8; 3],
     solid: bool,
-    exif: String,
+    exif: Option<ExifInfo>,
     custom_text: String,
     custom_logos: Vec<(String, Option<Arc<Vec<u8>>>)>,
 }
@@ -396,7 +396,7 @@ impl LayerRenderer for CachedRenderer<'_> {
                 .text_background_color()
                 .unwrap_or(self.job.params.background),
             solid: self.job.params.text_background_color().is_some(),
-            exif: format!("{:?}", self.job.exif),
+            exif: self.job.exif.clone(),
             custom_logos: group
                 .custom_logo_names()
                 .into_iter()
