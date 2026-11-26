@@ -1,73 +1,11 @@
 //! 外部操作与桌面共享 Session；文件/媒体工作使用冻结快照，结果回到 GPUI 主线程提交。
 use super::super::{AppView, ExportState, Thumbnail, page::settings};
 use crate::backend::{
-    Command, ErrorCode, OperationError, Reply, Request, Session, bridge::CommandInbox,
-    presets::WatermarkPreset, workspace::PhotoId,
+    Command, CommandExecution, ErrorCode, ExportPhotosOutput, OperationError, Reply, Request,
+    Session, bridge::CommandInbox, presets::WatermarkPreset, workspace::PhotoId,
 };
 use gpui_kit::{AppContext as _, Context, SharedString, Window};
 
-/// 调度策略属于桌面宿主：纯状态修改同步执行，I/O 在后台执行。
-enum Execution {
-    Foreground,
-    /// 仅返回结果，不提交 Session；仍可能写入预设或导出文件。
-    Background,
-    BackgroundWrite,
-}
-fn execution(command: &Command) -> Execution {
-    use Command::*;
-    match command {
-        GetState
-        | GetWatermark { .. }
-        | GetExif { .. }
-        | SelectPhoto { .. }
-        | RemovePhoto { .. }
-        | ClearPhotos
-        | SetWatermark { .. }
-        | PatchParams { .. }
-        | SetCustomText { .. }
-        | SetEnvironment { .. }
-        | ResetWatermark
-        | SetTextGroups { .. }
-        | AddTextGroup { .. }
-        | UpdateTextGroup { .. }
-        | RemoveTextGroup { .. }
-        | AddTextLine { .. }
-        | UpdateTextLine { .. }
-        | RemoveTextLine { .. }
-        | FormatTextLine { .. }
-        | EditTextLine { .. }
-        | ApplyCurrentToAll
-        | UpdateExif { .. }
-        | SetGps { .. } => Execution::Foreground,
-        ImportPhotos { .. }
-        | LoadPreset { .. }
-        | SaveSettings { .. }
-        | ImportLogos { .. }
-        | DeleteLogo { .. } => Execution::BackgroundWrite,
-        ExtractPalette { .. }
-        | RenderPreview { .. }
-        | RenderThumbnail { .. }
-        | ExportPhotos { .. }
-        | ListPresets
-        | SavePreset { .. }
-        | DeletePreset { .. }
-        | GetSettings
-        | ListLogos
-        | ExportGainmap { .. }
-        | ExportColourGainmap { .. }
-        | InspectVideo { .. }
-        | ExportMotionPhoto { .. }
-        | ClearMapCache
-        | SearchPlaces { .. }
-        | DetectFfmpeg
-        | ValidateFfmpeg { .. }
-        | RenderGainmapPreview { .. }
-        | RenderColourGainmapPreview { .. }
-        | RenderMotionPhotoCover { .. }
-        | CheckUpdate
-        | InstallUpdate => Execution::Background,
-    }
-}
 enum Prepared {
     Complete(Reply),
     Background(Box<Session>),
@@ -237,7 +175,10 @@ impl AppView {
             };
             cx.notify();
         }
-        if matches!(execution(&request.command), Execution::Foreground) {
+        if matches!(
+            request.command.descriptor().execution,
+            CommandExecution::Foreground
+        ) {
             let before = self.backend.current().clone();
             let selected = self.selected_photo_id();
             let revision = self.backend.revision();
@@ -286,17 +227,23 @@ impl AppView {
         self.backend.commit_groups(self.build_text_groups(cx));
         if matches!(command, Command::ExportPhotos { .. }) {
             self.export = match &reply.result {
-                Ok(output) => ExportState::Finished {
-                    succeeded: output.value()["exported_inputs"]
-                        .as_array()
-                        .map_or(0, Vec::len),
-                    failed: output.value()["errors"].as_array().map_or(0, Vec::len),
+                Ok(output) => match output.decode::<ExportPhotosOutput>() {
+                    Ok(summary) => ExportState::Finished {
+                        succeeded: summary.exported_inputs.len(),
+                        failed: summary.errors.len(),
+                    },
+                    Err(_) => ExportState::Idle,
                 },
                 Err(_) => ExportState::Idle,
             };
             cx.notify();
         }
-        if reply.result.is_ok() && matches!(execution(command), Execution::BackgroundWrite) {
+        if reply.result.is_ok()
+            && matches!(
+                command.descriptor().execution,
+                CommandExecution::BackgroundWrite
+            )
+        {
             if cancelled {
                 return failure(
                     self.backend.revision(),

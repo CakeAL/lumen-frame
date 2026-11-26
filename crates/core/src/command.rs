@@ -211,6 +211,492 @@ pub enum Command {
     InstallUpdate,
 }
 
+/// 桌面宿主调度策略：纯状态修改在主线程同步执行，I/O 在后台线程执行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandExecution {
+    Foreground,
+    /// 仅返回结果，不提交 Session；仍可能写入预设或导出文件。
+    Background,
+    BackgroundWrite,
+}
+
+/// 每条命令的单一元数据真值，供 MCP schema 注解与桌面调度共同读取。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandDescriptor {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub read_only: bool,
+    pub destructive: bool,
+    pub supports_inline_image: bool,
+    pub execution: CommandExecution,
+}
+
+macro_rules! define_command_descriptors {
+    (
+        $(
+            $variant:ident $( { $($field:tt)* } )? => {
+                name: $name:literal,
+                execution: $execution:ident,
+                read_only: $read_only:literal,
+                destructive: $destructive:literal,
+                inline_image: $inline_image:literal,
+                description: $description:literal,
+            }
+        ),* $(,)?
+    ) => {
+        pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
+            $(
+                CommandDescriptor {
+                    name: $name,
+                    description: $description,
+                    read_only: $read_only,
+                    destructive: $destructive,
+                    supports_inline_image: $inline_image,
+                    execution: CommandExecution::$execution,
+                },
+            )*
+        ];
+
+        impl Command {
+            pub fn descriptor(&self) -> &'static CommandDescriptor {
+                match self {
+                    $(
+                        Self::$variant $( { $($field)* } )? => &CommandDescriptor {
+                            name: $name,
+                            description: $description,
+                            read_only: $read_only,
+                            destructive: $destructive,
+                            supports_inline_image: $inline_image,
+                            execution: CommandExecution::$execution,
+                        },
+                    )*
+                }
+            }
+        }
+    };
+}
+
+define_command_descriptors! {
+    GetState => {
+        name: "get_state",
+        execution: Foreground,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "读取工作区照片、选中项、当前水印和会话版本。修改前先调用，photo_id 来自本工具返回值。",
+    },
+    ImportPhotos { .. } => {
+        name: "import_photos",
+        execution: BackgroundWrite,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "导入本机照片或目录（递归），返回新增 PhotoId 与路径错误。原文件不修改。",
+    },
+    SelectPhoto { .. } => {
+        name: "select_photo",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "切换当前工作区中的照片，桌面模式同步更新窗口。",
+    },
+    RemovePhoto { .. } => {
+        name: "remove_photo",
+        execution: Foreground,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "从队列移除指定照片及其配置；不删除原文件。",
+    },
+    ClearPhotos => {
+        name: "clear_photos",
+        execution: Foreground,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "清空工作区队列与逐照片配置；不删除原文件。",
+    },
+    GetWatermark { .. } => {
+        name: "get_watermark",
+        execution: Foreground,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "读取指定照片或当前照片的完整水印；自定义文本与本机环境另列。",
+    },
+    SetWatermark { .. } => {
+        name: "set_watermark",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "替换完整水印样式，可应用全部照片；保留各照片自定义内容及本机环境。",
+    },
+    PatchParams { .. } => {
+        name: "patch_params",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "递归修改当前水印参数。先 get_watermark 查看字段；支持背景、渐变、阴影、边框、色卡。数组整体替换；gradient 是 linear-gradient(135deg,#b5b9ff,#2b2c49) 字符串。",
+    },
+    SetCustomText { .. } => {
+        name: "set_custom_text",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "设置当前照片的自定义文本，用于 {自定义文本} 标签。",
+    },
+    SetEnvironment { .. } => {
+        name: "set_environment",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "设置会话共用的输出目录、JPEG质量(1–100)、默认字体和旋转。只改运行期；持久化请 save_settings。",
+    },
+    ResetWatermark => {
+        name: "reset_watermark",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "恢复默认水印样式，保留自定义文本和本机导出环境。",
+    },
+    SetTextGroups { .. } => {
+        name: "set_text_groups",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "替换全部文字组。组与行下标只对应当前版本，读取后使用 expected_revision。",
+    },
+    AddTextGroup { .. } => {
+        name: "add_text_group",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "添加文字组，支持位置、对齐、方向、边框和相邻依附。",
+    },
+    UpdateTextGroup { .. } => {
+        name: "update_text_group",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "替换指定文字组；依附关系不得循环。",
+    },
+    RemoveTextGroup { .. } => {
+        name: "remove_text_group",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "删除文字组，并修正其他组及色卡的依附下标。",
+    },
+    AddTextLine { .. } => {
+        name: "add_text_line",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "向文字组添加模板行和行样式。模板可使用 {型号}、{ISO}、{自定义文本} 等字段。",
+    },
+    UpdateTextLine { .. } => {
+        name: "update_text_line",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "替换指定模板行及其完整样式。",
+    },
+    RemoveTextLine { .. } => {
+        name: "remove_text_line",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "删除指定文字行。",
+    },
+    FormatTextLine { .. } => {
+        name: "format_text_line",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "修改字体、颜色、粗斜体、下划线或清除格式。start/end 为 UTF-8 字节选区；空选区作用于整行，触及标签时扩展为整个标签。",
+    },
+    EditTextLine { .. } => {
+        name: "edit_text_line",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "编辑模板行文本，自动移动已有富文本样式范围。",
+    },
+    ApplyCurrentToAll => {
+        name: "apply_current_to_all",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "当前样式应用到全部照片和后续导入；保留各照片自定义内容与EXIF，色卡按各照片重新取色。",
+    },
+    GetExif { .. } => {
+        name: "get_exif",
+        execution: Foreground,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "读取队列中照片的有效 EXIF（含手动覆盖）。",
+    },
+    UpdateExif { .. } => {
+        name: "update_exif",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "局部修改 EXIF 覆盖值；不修改原文件。日期、分数、GPS使用可读字符串。",
+    },
+    SetGps { .. } => {
+        name: "set_gps",
+        execution: Foreground,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "使用 WGS 84 经纬度设置指定照片的 GPS 覆盖值。",
+    },
+    ExtractPalette { .. } => {
+        name: "extract_palette",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "提取指定照片的代表色与面积占比，支持全部 PaletteTheme。",
+    },
+    RenderPreview { .. } => {
+        name: "render_preview",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: true,
+        description: "按指定长边分辨率生成水印预览并保存到本机路径（推荐 .png），可同时返回内联图片。",
+    },
+    RenderThumbnail { .. } => {
+        name: "render_thumbnail",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: true,
+        description: "生成指定照片的缩略图并保存（推荐 .png），可同时返回内联图片。",
+    },
+    ExportPhotos { .. } => {
+        name: "export_photos",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "按冻结配置导出当前或全部照片到环境中的输出目录，返回成功输入与错误。保留 Ultra HDR gain map。",
+    },
+    ListPresets => {
+        name: "list_presets",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "列出内置和个人预设。",
+    },
+    SavePreset { .. } => {
+        name: "save_preset",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "将当前水印保存为个人 TOML 预设；同名个人预设会覆盖，内置预设不可覆盖。",
+    },
+    LoadPreset { .. } => {
+        name: "load_preset",
+        execution: BackgroundWrite,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "载入预设，可应用全部照片；保留照片内容及本机导出环境。",
+    },
+    DeletePreset { .. } => {
+        name: "delete_preset",
+        execution: Background,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "删除个人预设文件，不能删除内置预设。",
+    },
+    GetSettings => {
+        name: "get_settings",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "读取持久化应用设置。",
+    },
+    SaveSettings { .. } => {
+        name: "save_settings",
+        execution: BackgroundWrite,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "保存完整应用设置并同步运行期导出环境；先 get_settings 获取完整结构，避免重置未提供的偏好。",
+    },
+    ListLogos => {
+        name: "list_logos",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "列出内置示例和本机自定义 Logo，返回 id、name、token 和 builtin。",
+    },
+    ImportLogos { .. } => {
+        name: "import_logos",
+        execution: BackgroundWrite,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "导入本机 Logo 文件。names 可省略，或与 paths 等长（null 使用默认编号）；自定义名称自动追加 logo 后缀，如旅行变为 {旅行logo}。内置名称不可重复。",
+    },
+    DeleteLogo { .. } => {
+        name: "delete_logo",
+        execution: BackgroundWrite,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "按 logo_id 删除素材库副本并更新预览；保留导入源文件和模板文字，内置示例不能删除。",
+    },
+    ExportGainmap { .. } => {
+        name: "export_gainmap",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "提取输入照片的 gain map 到文件；没有 gain map 时返回 exported=false。",
+    },
+    ExportColourGainmap { .. } => {
+        name: "export_colour_gainmap",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "生成黑白底图与彩色恢复 gain map 照片。",
+    },
+    InspectVideo { .. } => {
+        name: "inspect_video",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "使用指定 FFmpeg 路径读取视频信息。",
+    },
+    ExportMotionPhoto { .. } => {
+        name: "export_motion_photo",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "按时间范围与封面时间从视频生成 Motion Photo。",
+    },
+    ClearMapCache => {
+        name: "clear_map_cache",
+        execution: Background,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "删除所有地图源的本机瓦片缓存。",
+    },
+    SearchPlaces { .. } => {
+        name: "search_places",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "通过配置的在线地点服务搜索地名。",
+    },
+    DetectFfmpeg => {
+        name: "detect_ffmpeg",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "检测 PATH 和常见目录中的 FFmpeg。",
+    },
+    ValidateFfmpeg { .. } => {
+        name: "validate_ffmpeg",
+        execution: Background,
+        read_only: true,
+        destructive: false,
+        inline_image: false,
+        description: "验证指定 FFmpeg 可执行文件。",
+    },
+    RenderGainmapPreview { .. } => {
+        name: "render_gainmap_preview",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "生成原图或 gain map 可视化预览并保存。",
+    },
+    RenderColourGainmapPreview { .. } => {
+        name: "render_colour_gainmap_preview",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "生成黑白底图和彩色 gain map 两张预览。",
+    },
+    RenderMotionPhotoCover { .. } => {
+        name: "render_motion_photo_cover",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "生成指定视频时间范围内的 Motion Photo 封面预览。",
+    },
+    CheckUpdate => {
+        name: "check_update",
+        execution: Background,
+        read_only: false,
+        destructive: false,
+        inline_image: false,
+        description: "联网检查 GitHub Releases 并记录检查时间。",
+    },
+    InstallUpdate => {
+        name: "install_update",
+        execution: Background,
+        read_only: false,
+        destructive: true,
+        inline_image: false,
+        description: "下载并安装新版本，会替换本机应用程序文件。",
+    },
+}
+
+pub fn command_descriptor(name: &str) -> Option<&'static CommandDescriptor> {
+    COMMAND_DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.name == name)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportPhotoError {
+    pub input: PathBuf,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportPhotosOutput {
+    pub exported_inputs: Vec<PathBuf>,
+    pub errors: Vec<ExportPhotoError>,
+}
+
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -239,6 +725,10 @@ pub struct CommandOutput(Value);
 impl CommandOutput {
     pub fn value(&self) -> &Value {
         &self.0
+    }
+
+    pub fn decode<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_value(self.0.clone()).context("解析命令输出失败")
     }
 }
 
@@ -565,16 +1055,22 @@ impl Session {
                     ExportScope::CurrentPhoto
                 });
                 ensure!(!jobs.is_empty(), "没有可导出的照片");
-                let mut outputs = Vec::new();
+                let mut exported_inputs = Vec::new();
                 let mut errors = Vec::new();
                 for job in jobs {
                     let path = job.path.clone();
                     match job.run() {
-                        Ok(()) => outputs.push(path),
-                        Err(e) => errors.push(json!({"input":path,"message":format!("{e:#}")})),
+                        Ok(()) => exported_inputs.push(path),
+                        Err(e) => errors.push(ExportPhotoError {
+                            input: path,
+                            message: format!("{e:#}"),
+                        }),
                     }
                 }
-                json!({"exported_inputs":outputs,"errors":errors})
+                serde_json::to_value(ExportPhotosOutput {
+                    exported_inputs,
+                    errors,
+                })?
             }
             ListPresets => {
                 json!({"builtin":super::presets::builtin()?.into_iter().map(|(name,_)|name).collect::<Vec<_>>(),"personal":super::presets::list_in(self.storage().presets()?)?})
@@ -892,4 +1388,49 @@ pub(crate) fn validate_watermark(w: &WatermarkPreset) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn command_descriptors_have_unique_names_and_descriptions() {
+        let mut names = BTreeSet::new();
+        for descriptor in COMMAND_DESCRIPTORS {
+            assert!(
+                names.insert(descriptor.name),
+                "重复的命令名称：{}",
+                descriptor.name
+            );
+            assert!(
+                !descriptor.description.trim().is_empty(),
+                "命令缺少说明：{}",
+                descriptor.name
+            );
+        }
+        assert_eq!(
+            command_descriptor("get_state").map(|d| d.read_only),
+            Some(true)
+        );
+        assert!(Command::ClearPhotos.descriptor().destructive);
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn command_descriptors_match_json_schema_variants_one_to_one() {
+        let schema = serde_json::to_value(schemars::schema_for!(Command)).unwrap();
+        let variants = schema
+            .get("oneOf")
+            .or_else(|| schema.get("anyOf"))
+            .and_then(Value::as_array)
+            .unwrap();
+        let schema_names: BTreeSet<&str> = variants
+            .iter()
+            .map(|variant| variant["properties"]["method"]["const"].as_str().unwrap())
+            .collect();
+        let descriptor_names: BTreeSet<&str> = COMMAND_DESCRIPTORS.iter().map(|d| d.name).collect();
+        assert_eq!(schema_names, descriptor_names);
+    }
 }

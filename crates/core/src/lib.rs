@@ -8,7 +8,10 @@ mod storage;
 pub mod text;
 pub use storage::StoragePaths;
 mod command;
-pub use command::{Command, CommandOutput, ErrorCode, OperationError, Reply, Request};
+pub use command::{
+    COMMAND_DESCRIPTORS, Command, CommandDescriptor, CommandExecution, CommandOutput, ErrorCode,
+    ExportPhotoError, ExportPhotosOutput, OperationError, Reply, Request, command_descriptor,
+};
 mod session;
 pub use session::Session;
 // 持久化和独立工作流通过同一后端命名空间公开，UI 不再承载这些实现。
