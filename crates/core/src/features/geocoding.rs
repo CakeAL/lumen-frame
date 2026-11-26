@@ -9,7 +9,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt,
     io::Read,
-    sync::{LazyLock, Mutex, OnceLock},
+    sync::{Arc, Condvar, LazyLock, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -258,9 +258,135 @@ struct CachedResponse {
     at: Instant,
     value: std::result::Result<Value, String>,
 }
+struct InFlight {
+    result: Mutex<Option<std::result::Result<Value, String>>>,
+    ready: Condvar,
+}
+
+impl InFlight {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn complete(&self, outcome: std::result::Result<Value, String>) {
+        let mut slot = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = Some(outcome);
+        self.ready.notify_all();
+    }
+
+    fn wait(&self) -> Result<Value> {
+        let mut slot = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        while slot.is_none() {
+            slot = self.ready.wait(slot).unwrap_or_else(|e| e.into_inner());
+        }
+        slot.clone()
+            .expect("通知唤醒后应存在请求结果")
+            .map_err(anyhow::Error::msg)
+    }
+}
+
+struct InFlightGuard {
+    key: RequestKey,
+    flight: Arc<InFlight>,
+    completed: bool,
+}
+
+impl InFlightGuard {
+    fn finish(mut self, outcome: std::result::Result<Value, String>) {
+        {
+            let mut inflight = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+            inflight.remove(&self.key);
+        }
+        self.flight.complete(outcome);
+        self.completed = true;
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            let mut inflight = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+            inflight.remove(&self.key);
+            self.flight
+                .complete(Err("逆地理编码请求异常中止，请重试".into()));
+        }
+    }
+}
+
 type RequestKey = (String, String);
 static RESPONSES: LazyLock<Mutex<HashMap<RequestKey, CachedResponse>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static INFLIGHT: LazyLock<Mutex<HashMap<RequestKey, Arc<InFlight>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn cached_response(key: &RequestKey) -> Result<Option<CachedResponse>> {
+    let cache = RESPONSES
+        .lock()
+        .map_err(|_| anyhow::anyhow!("地址缓存异常，请重启应用"))?;
+    Ok(cache.get(key).filter(|entry| fresh(entry)).cloned())
+}
+
+fn fetch_or_coalesce(
+    key: &RequestKey,
+    fetch: impl FnOnce(&RequestKey) -> Result<Value>,
+) -> Result<Value> {
+    if let Some(entry) = cached_response(key)? {
+        return entry.value.map_err(anyhow::Error::msg);
+    }
+
+    let (flight, is_leader) = {
+        let mut inflight = INFLIGHT
+            .lock()
+            .map_err(|_| anyhow::anyhow!("地址缓存异常，请重启应用"))?;
+        if let Some(existing) = inflight.get(key) {
+            (Arc::clone(existing), false)
+        } else {
+            let created = Arc::new(InFlight::new());
+            inflight.insert(key.clone(), Arc::clone(&created));
+            (created, true)
+        }
+    };
+
+    if !is_leader {
+        return flight.wait();
+    }
+
+    let guard = InFlightGuard {
+        key: key.clone(),
+        flight,
+        completed: false,
+    };
+
+    // 抢到 leader 后复查一次缓存，避免前一个同坐标请求刚写完缓存就被重复拉取。
+    if let Some(entry) = cached_response(key)? {
+        let outcome = entry.value;
+        guard.finish(outcome.clone());
+        return outcome.map_err(anyhow::Error::msg);
+    }
+
+    // 阻塞 HTTP 在任何全局锁之外执行，不阻塞其它坐标或 UI 缓存读取。
+    let outcome = fetch(key).map_err(|error| error.to_string());
+    {
+        let mut cache = RESPONSES
+            .lock()
+            .map_err(|_| anyhow::anyhow!("地址缓存异常，请重启应用"))?;
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(
+            key.clone(),
+            CachedResponse {
+                at: Instant::now(),
+                value: outcome.clone(),
+            },
+        );
+    }
+    guard.finish(outcome.clone());
+    outcome.map_err(anyhow::Error::msg)
+}
 fn request_key(exif: &ExifInfo, settings: &GeocodingSettings) -> Option<RequestKey> {
     let gps = Location::from_gps(exif.gps_info.as_ref()?)?;
     let point = MapCoordinates::Gcj02.map_location(gps).ok()?;
@@ -349,24 +475,7 @@ pub fn resolve_exif(
         builtin_response(exif)
     } else if let Some(key) = request_key(exif, settings) {
         ensure!(!key.0.is_empty(), "请在设置中配置高德 Web 服务 API Key");
-        // 合并并发的相同请求；UI 的缓存读取使用 try_lock，不会在主线程等待网络。
-        let mut cache = RESPONSES
-            .lock()
-            .map_err(|_| anyhow::anyhow!("地址缓存异常，请重启应用"))?;
-        let entry = if let Some(entry) = cache.get(&key).filter(|e| fresh(e)) {
-            entry.clone()
-        } else {
-            let entry = CachedResponse {
-                at: Instant::now(),
-                value: request(&key).map_err(|e| e.to_string()),
-            };
-            if cache.len() >= 256 {
-                cache.clear();
-            }
-            cache.insert(key, entry.clone());
-            entry
-        };
-        entry.value.map_err(anyhow::Error::msg)?
+        fetch_or_coalesce(&key, request)?
     } else {
         json!({})
     };
@@ -610,6 +719,99 @@ mod tests {
         );
         drop(guard);
         RESPONSES.lock().unwrap().remove(&key);
+    }
+
+    #[test]
+    fn singleflight_coalesces_same_key_without_blocking_other_keys_or_cache_reads() {
+        use std::sync::{
+            Barrier,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let settings = GeocodingSettings {
+            provider: GeocodingProvider::Amap,
+            api_key: "singleflight-test-key".into(),
+            ..Default::default()
+        };
+        let cached_source = exif();
+        let cached_key = request_key(&cached_source, &settings).unwrap();
+        RESPONSES.lock().unwrap().insert(
+            cached_key.clone(),
+            CachedResponse {
+                at: Instant::now(),
+                value: Ok(example_response()),
+            },
+        );
+
+        let key_a: RequestKey = (
+            "singleflight-test-key".into(),
+            "116.100000,39.100000".into(),
+        );
+        let key_b: RequestKey = (
+            "singleflight-test-key".into(),
+            "121.200000,31.200000".into(),
+        );
+        let entered_a = Arc::new(Barrier::new(2));
+        let release_a = Arc::new(Barrier::new(2));
+        let calls_a = Arc::new(AtomicUsize::new(0));
+
+        let t1 = {
+            let key_a = key_a.clone();
+            let entered_a = Arc::clone(&entered_a);
+            let release_a = Arc::clone(&release_a);
+            let calls_a = Arc::clone(&calls_a);
+            std::thread::spawn(move || {
+                fetch_or_coalesce(&key_a, |_| {
+                    calls_a.fetch_add(1, Ordering::SeqCst);
+                    entered_a.wait();
+                    release_a.wait();
+                    Ok(json!({"formatted_address": "地点A"}))
+                })
+                .unwrap()
+            })
+        };
+
+        // 等待 key_a 进入阻塞 I/O，此时不应持有 RESPONSES 全局锁。
+        entered_a.wait();
+
+        // 已缓存的其它坐标可立即被 UI 读到。
+        assert_eq!(
+            cached_exif(&cached_source, &settings)
+                .address_fields
+                .unwrap()["格式化地址"],
+            "北京市海淀区颐和园路5号北京大学"
+        );
+
+        // 其它坐标的请求可以独立完成，不被 key_a 阻塞。
+        let res_b =
+            fetch_or_coalesce(&key_b, |_| Ok(json!({"formatted_address": "地点B"}))).unwrap();
+        assert_eq!(res_b["formatted_address"], "地点B");
+
+        // 同坐标的第二个并发请求合并到正在进行的 leader 上，不会发起第二次请求。
+        let t2 = {
+            let key_a = key_a.clone();
+            let calls_a = Arc::clone(&calls_a);
+            std::thread::spawn(move || {
+                fetch_or_coalesce(&key_a, |_| {
+                    calls_a.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({"formatted_address": "重复请求不应执行"}))
+                })
+                .unwrap()
+            })
+        };
+
+        // 稍微等一下让 t2 注册到 INFLIGHT 等待队列，然后放行 leader。
+        std::thread::sleep(Duration::from_millis(20));
+        release_a.wait();
+
+        assert_eq!(t1.join().unwrap()["formatted_address"], "地点A");
+        assert_eq!(t2.join().unwrap()["formatted_address"], "地点A");
+        assert_eq!(calls_a.load(Ordering::SeqCst), 1);
+
+        let mut cache = RESPONSES.lock().unwrap();
+        cache.remove(&cached_key);
+        cache.remove(&key_a);
+        cache.remove(&key_b);
     }
 }
 
