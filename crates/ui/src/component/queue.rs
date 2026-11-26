@@ -3,6 +3,8 @@
 //! 队列是「待处理对象」的集合：拖入或选择进来的照片按顺序排在这里，点一张就切到它。
 //! 每张卡片的缩略图单独加载，不会为了显示一排小图去解码整张原图。
 
+use std::collections::HashMap;
+
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
@@ -13,12 +15,54 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, FontWeight, KeyBinding, Keystroke, ObjectFit, Role, Window, div, img,
+    App, Context, FocusHandle, FontWeight, KeyBinding, Keystroke, ObjectFit, Role, ScrollHandle,
+    Window, div, img,
 };
 
 use super::super::{AppView, Thumbnail};
 use super::field::description;
-use crate::backend::workspace::QueuedPhoto;
+use crate::backend::workspace::{PhotoId, QueuedPhoto};
+
+/// 队列面板的界面焦点、滚动条与缩略图缓存；领域照片列表仍归后端 `Session` 持有。
+pub(in crate::app) struct QueueState {
+    pub focus: FocusHandle,
+    pub scroll: ScrollHandle,
+    pub thumbnails: HashMap<PhotoId, Thumbnail>,
+}
+
+impl QueueState {
+    pub fn new(cx: &mut Context<AppView>) -> Self {
+        Self {
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            thumbnails: HashMap::new(),
+        }
+    }
+
+    pub fn thumbnail(&self, id: PhotoId) -> Option<&Thumbnail> {
+        self.thumbnails.get(&id)
+    }
+
+    pub fn mark_pending(&mut self, id: PhotoId) {
+        self.thumbnails.insert(id, Thumbnail::Pending);
+    }
+
+    pub fn set_thumbnail(&mut self, id: PhotoId, thumbnail: Thumbnail) {
+        self.thumbnails.insert(id, thumbnail);
+    }
+
+    pub fn remove(&mut self, id: PhotoId) {
+        self.thumbnails.remove(&id);
+    }
+
+    pub fn clear(&mut self) {
+        self.thumbnails.clear();
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(PhotoId) -> bool) {
+        self.thumbnails.retain(|id, _| keep(*id));
+    }
+}
 
 gpui_kit::actions!(photo_queue, [PreviousPhoto, NextPhoto]);
 
@@ -38,7 +82,7 @@ impl AppView {
     pub(in crate::app) fn render_queue_pane(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .id("photo-queue")
-            .track_focus(&self.queue_focus)
+            .track_focus(&self.queue.focus)
             .tab_index(0)
             .key_context("PhotoQueue")
             .role(Role::Region)
@@ -81,8 +125,8 @@ impl AppView {
         };
         if let Some(next) = next.filter(|next| *next < self.photos().len()) {
             self.select_photo_at(next, window, cx);
-            self.queue_scroll.scroll_to_item(next);
-            window.focus(&self.queue_focus, cx);
+            self.queue.scroll.scroll_to_item(next);
+            window.focus(&self.queue.focus, cx);
         }
     }
 
@@ -181,7 +225,7 @@ impl AppView {
             .pb_3()
             .min_h_0()
             .overflow_x_scroll()
-            .track_scroll(&self.queue_scroll)
+            .track_scroll(&self.queue.scroll)
             .when(self.photos().is_empty(), |this| {
                 this.child(div().w_full().py_6().text_center().child(description(
                     "拖入照片或文件夹，也可点击添加；文件夹包含所有子文件夹",
@@ -250,7 +294,7 @@ impl AppView {
             .focus_visible(|this| this.border_color(cx.theme().ring))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_photo(id, window, cx);
-                window.focus(&this.queue_focus, cx);
+                window.focus(&this.queue.focus, cx);
             }))
             .child(
                 div()
@@ -297,7 +341,7 @@ mod tests {
             }
         });
         let view: Entity<AppView> = view.borrow().clone().unwrap();
-        view.update_in(cx, |view, window, cx| window.focus(&view.queue_focus, cx));
+        view.update_in(cx, |view, window, cx| window.focus(&view.queue.focus, cx));
         cx.update(|window, cx| window.press("right", cx));
         assert_eq!(view.read_with(cx, |view, _| view.photo_count()), 0);
 
@@ -314,7 +358,7 @@ mod tests {
         view.update_in(cx, |view, window, cx| {
             view.add_photos(vec![first.clone(), second.clone()], cx);
             view.backend.params_mut().rotation = crate::backend::rotation::Rotation::Clockwise90;
-            window.focus(&view.queue_focus, cx);
+            window.focus(&view.queue.focus, cx);
         });
         cx.run_until_parked();
         cx.update(|window, cx| window.press("left", cx));

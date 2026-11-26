@@ -972,7 +972,7 @@ impl AppView {
 
     /// 左侧预设面板：两列卡片在独立滚动区内，保存与打开文件夹固定在顶部。
     pub(in crate::app) fn render_preset_panel(&self, cx: &Context<Self>) -> impl IntoElement {
-        if self.preset_panel_collapsed {
+        if self.presets.collapsed {
             return v_flex()
                 .id("preset-panel")
                 .w_12()
@@ -1063,18 +1063,18 @@ impl AppView {
                                 Tab::new().label("当前照片").flex_1(),
                                 Tab::new().label("全部照片").flex_1(),
                             ])
-                            .selected_index(if self.preset_scope == PresetScope::AllPhotos {
+                            .selected_index(if self.presets.scope == PresetScope::AllPhotos {
                                 1
                             } else {
                                 0
                             })
                             .on_click(cx.listener(|this, index: &usize, _, cx| {
-                                this.preset_scope = if *index == 1 {
+                                this.presets.scope = if *index == 1 {
                                     PresetScope::AllPhotos
                                 } else {
                                     PresetScope::CurrentPhoto
                                 };
-                                this.preset_feedback = None;
+                                this.presets.clear_feedback();
                                 cx.notify();
                             })),
                         cx,
@@ -1096,8 +1096,8 @@ impl AppView {
                                     .on_click(cx.listener(|this, _, _, cx| this.save_preset(cx))),
                             ),
                     )
-                    .when_some(self.preset_feedback.clone(), |this, feedback| {
-                        this.child(if self.preset_feedback_is_error {
+                    .when_some(self.presets.feedback.clone(), |this, feedback| {
+                        this.child(if self.presets.feedback_is_error {
                             warning(feedback, cx)
                         } else {
                             muted_text(feedback, cx)
@@ -1172,10 +1172,11 @@ impl AppView {
                                     .panel(
                                         AccordionPanel::new().child(
                                             v_flex().pt_3().gap_3().children(
-                                                self.preset_names
+                                                self.presets
+                                                    .names
                                                     .iter()
                                                     .filter(|name| {
-                                                        self.builtin_preset_names.contains(*name)
+                                                        self.presets.builtins.contains(*name)
                                                     })
                                                     .map(|name| {
                                                         self.render_preset_card(
@@ -1190,9 +1191,10 @@ impl AppView {
                             ),
                     )
                     .when(
-                        self.preset_names
+                        self.presets
+                            .names
                             .iter()
-                            .any(|name| !self.builtin_preset_names.contains(name)),
+                            .any(|name| !self.presets.builtins.contains(name)),
                         |this| {
                             this.child(preset_section_label("自定义预设", cx)).child(
                                 h_flex()
@@ -1209,9 +1211,10 @@ impl AppView {
                         },
                     )
                     .children(
-                        self.preset_names
+                        self.presets
+                            .names
                             .iter()
-                            .filter(|name| !self.builtin_preset_names.contains(*name))
+                            .filter(|name| !self.presets.builtins.contains(*name))
                             .map(|name| self.render_preset_card(name.clone(), false, cx)),
                     ),
             )
@@ -1239,13 +1242,15 @@ impl AppView {
             owner,
         };
         let drop_before = self
-            .preset_drop_target
+            .presets
+            .drop_target
             .as_ref()
             .filter(|(target, _)| target == &name)
             .map(|(_, before)| *before)
             .unwrap_or(true);
         let preview = self
-            .preset_previews
+            .presets
+            .previews
             .get(&name)
             .map(|preset| self.render_preset_preview(preset, cx))
             .unwrap_or_else(|| muted_text("预览不可用", cx));
@@ -1290,14 +1295,14 @@ impl AppView {
                             return;
                         }
                         if event.keystroke.key == "escape" && cx.stop_active_drag(window) {
-                            this.preset_drop_target = None;
+                            this.presets.drop_target = None;
                             cx.notify();
                         }
                     }))
                     .when(!builtin, |card| {
                         card.on_drag(dragged, move |dragged, _, _, cx| {
                             let _ = drag_owner.update(cx, |this, cx| {
-                                this.preset_drop_target = None;
+                                this.presets.drop_target = None;
                                 cx.notify();
                             });
                             cx.new(|_| dragged.clone())
@@ -1332,16 +1337,17 @@ impl AppView {
                                         for_move.clone(),
                                         event.event.position.y < event.bounds.center().y,
                                     );
-                                    if this.preset_drop_target.as_ref() != Some(&target) {
-                                        this.preset_drop_target = Some(target);
+                                    if this.presets.drop_target.as_ref() != Some(&target) {
+                                        this.presets.drop_target = Some(target);
                                         cx.notify();
                                     }
                                 } else if this
-                                    .preset_drop_target
+                                    .presets
+                                    .drop_target
                                     .as_ref()
                                     .is_some_and(|(target, _)| target == &for_move)
                                 {
-                                    this.preset_drop_target = None;
+                                    this.presets.drop_target = None;
                                     cx.notify();
                                 }
                             },
@@ -1351,7 +1357,7 @@ impl AppView {
                                 if dragged.owner != cx.entity_id() {
                                     return;
                                 }
-                                if let Some((target, before)) = this.preset_drop_target.take()
+                                if let Some((target, before)) = this.presets.drop_target.take()
                                     && target == for_drop
                                 {
                                     cx.stop_propagation();

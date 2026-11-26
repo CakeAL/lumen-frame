@@ -3,6 +3,8 @@
 //! [`AppView`] 持有全部文字组及其控件状态；右侧参数面板只展示摘要。编辑窗口复用这些
 //! 实体，并把组级参数与文字行分列展示，因此调整参数时主窗口中的照片预览仍然可见。
 
+use std::collections::{HashMap, HashSet};
+
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, IndexPath, Selectable as _, Sizable as _,
     TitleBar,
@@ -22,8 +24,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, Entity, IntoElement, SharedString, Subscription, Window,
-    WindowBounds, WindowOptions, div, px, size,
+    AnyElement, AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, SharedString,
+    Subscription, Window, WindowBounds, WindowOptions, div, px, size,
 };
 
 use crate::backend::media::ExifInfo;
@@ -41,6 +43,53 @@ use super::field::{
 use super::inspector::POSITIONS;
 use super::rich_text::{RichTextEditor, token_content, toolbar_button};
 use super::text_border::TextBorderControls;
+
+/// 管理文字组稳定 ID 分配与独立编辑窗口的句柄集合。
+pub(in crate::app) struct TextEditorWindows {
+    /// 每个文字组最多打开一个独立编辑窗口；已关闭的句柄会在下次打开时清理。
+    pub windows: HashMap<u64, AnyWindowHandle>,
+    /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
+    pub opening: HashSet<u64>,
+    pub next_group_id: u64,
+    pub next_line_id: u64,
+}
+
+impl TextEditorWindows {
+    pub fn new(next_group_id: u64, next_line_id: u64) -> Self {
+        Self {
+            windows: HashMap::new(),
+            opening: HashSet::new(),
+            next_group_id,
+            next_line_id,
+        }
+    }
+
+    pub fn alloc_group_id(&mut self) -> u64 {
+        let id = self.next_group_id;
+        self.next_group_id += 1;
+        id
+    }
+
+    pub fn alloc_line_id(&mut self) -> u64 {
+        let id = self.next_line_id;
+        self.next_line_id += 1;
+        id
+    }
+
+    pub fn len(&self) -> usize {
+        self.windows.len()
+    }
+
+    pub fn take_all(&mut self) -> HashMap<u64, AnyWindowHandle> {
+        self.opening.clear();
+        std::mem::take(&mut self.windows)
+    }
+
+    pub fn close_group(&mut self, id: u64) -> Option<AnyWindowHandle> {
+        self.opening.remove(&id);
+        self.windows.remove(&id)
+    }
+}
 
 pub(super) const TEXT_ALIGNS: &[(&str, TextAlign)] = &[
     ("左对齐", TextAlign::Left),
@@ -725,16 +774,16 @@ impl AppView {
             .iter()
             .position(|group| group.id == group_id)
             .expect("已确认文字组存在");
-        if let Some(handle) = self.text_editor_windows.get(&group_id).copied() {
+        if let Some(handle) = self.text_editors.windows.get(&group_id).copied() {
             if handle
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
             {
                 return;
             }
-            self.text_editor_windows.remove(&group_id);
+            self.text_editors.windows.remove(&group_id);
         }
-        if !self.opening_text_editor_ids.insert(group_id) {
+        if !self.text_editors.opening.insert(group_id) {
             return;
         }
 
@@ -743,7 +792,7 @@ impl AppView {
         cx.defer(move |cx| {
             let should_open = {
                 let app = view.read(cx);
-                app.opening_text_editor_ids.contains(&group_id)
+                app.text_editors.opening.contains(&group_id)
                     && app.text_groups.iter().any(|group| group.id == group_id)
             };
             if !should_open {
@@ -764,10 +813,10 @@ impl AppView {
                 },
             );
             view.update(cx, |this, cx| {
-                this.opening_text_editor_ids.remove(&group_id);
+                this.text_editors.opening.remove(&group_id);
                 match result {
                     Ok((handle, _)) => {
-                        this.text_editor_windows.insert(group_id, handle);
+                        this.text_editors.windows.insert(group_id, handle);
                     }
                     Err(error) => {
                         eprintln!("无法打开文字组编辑窗口: {error:#}");
@@ -1492,12 +1541,11 @@ impl AppView {
     }
 
     pub(super) fn add_text_group(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let id = self.next_text_group_id;
-        self.next_text_group_id += 1;
+        let id = self.text_editors.alloc_group_id();
         let group = TextGroupEditor::new(
             id,
             &TextGroup::default(),
-            &mut self.next_text_line_id,
+            &mut self.text_editors.next_line_id,
             &self.font_names,
             window,
             cx,
@@ -1529,8 +1577,7 @@ impl AppView {
                 group.attachment_target = None;
             }
         }
-        self.opening_text_editor_ids.remove(&id);
-        if let Some(handle) = self.text_editor_windows.remove(&id) {
+        if let Some(handle) = self.text_editors.close_group(id) {
             cx.defer(move |cx| {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
             });
@@ -1558,8 +1605,7 @@ impl AppView {
             .map(|line| line.to_params(cx))
             .unwrap_or_default();
         inherited.spans.clear();
-        let id = self.next_text_line_id;
-        self.next_text_line_id += 1;
+        let id = self.text_editors.alloc_line_id();
         group.lines.push(TextLine::new(
             id,
             "",

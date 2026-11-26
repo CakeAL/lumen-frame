@@ -906,7 +906,7 @@ mod tests {
                 view.backend.current().text_groups[0].position,
                 Placement::Up
             );
-            *view.text_editor_windows.values().next().unwrap()
+            *view.text_editors.windows.values().next().unwrap()
         });
         cx.update(|_, cx| {
             editor
@@ -1005,8 +1005,8 @@ mod tests {
         });
         cx.run_until_parked();
         view.read_with(cx, |view, _| {
-            assert!(view.text_editor_windows.contains_key(&ids[2]));
-            assert!(!view.text_editor_windows.contains_key(&ids[1]));
+            assert!(view.text_editors.windows.contains_key(&ids[2]));
+            assert!(!view.text_editors.windows.contains_key(&ids[1]));
         });
         cx.update(|window, cx| {
             window.click(("preview-text-group", ids[2]), cx);
@@ -1158,8 +1158,8 @@ mod tests {
         cx.simulate_click(bounds.center(), Default::default());
         cx.run_until_parked();
         view.read_with(cx, |view, _| {
-            assert!(view.text_editor_windows.contains_key(&ids[1]));
-            assert!(!view.text_editor_windows.contains_key(&ids[0]));
+            assert!(view.text_editors.windows.contains_key(&ids[1]));
+            assert!(!view.text_editors.windows.contains_key(&ids[0]));
         });
     }
 

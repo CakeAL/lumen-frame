@@ -17,15 +17,13 @@ mod component;
 #[path = "page/mod.rs"]
 mod page;
 
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::{Theme, WindowExt as _, notification::Notification};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyWindowHandle, App, Context, Entity, FocusHandle, PathPromptOptions, RenderImage,
-    ScrollHandle, SharedString, Subscription, Window,
+    App, Context, Entity, PathPromptOptions, RenderImage, SharedString, Subscription, Window,
 };
 
 use crate::backend::media::ExifInfo;
@@ -33,19 +31,20 @@ use crate::backend::motion_photo::{MotionPhotoOptions, export_motion_photo};
 use crate::backend::watermark::{TextGroup, WatermarkParams};
 use crate::backend::workspace::{PhotoId, QueuedPhoto};
 use crate::backend::{
-    presets::{self, WatermarkPreset},
+    presets::WatermarkPreset,
     settings::{self as settings_store, AppearanceMode},
 };
 
 use super::image::{PreviewJob, export_colour_gainmap, export_gainmap, render_thumbnail};
+use behavior::presets::{PresetPanelState, PresetScope};
 use behavior::update::UpdateState;
 use component::field::index_of;
 use component::inspector::{
     ASPECT_RATIOS, AspectRatioChoice, InspectorState, ParameterControls, preset_of,
 };
 use component::preview::WatermarkPreview;
-use component::queue::is_supported_image;
-use component::text_section::TextGroupEditor;
+use component::queue::{QueueState, is_supported_image};
+use component::text_section::{TextEditorWindows, TextGroupEditor};
 use page::{
     gainmap::GainMapPageState,
     other_tools::OtherToolsState,
@@ -77,34 +76,18 @@ pub enum ExportState {
     Finished { succeeded: usize, failed: usize },
 }
 
-/// 预设的应用范围；手动画面调整只修改当前照片，导出旋转对全部照片生效。
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PresetScope {
-    CurrentPhoto,
-    AllPhotos,
-}
-
 pub struct AppView {
     page: AppPage,
     /// 业务会话是照片、配置和快照的唯一所有者。
     backend: crate::backend::Session,
-    /// 队列键盘操作与滚动位置属于界面状态，不进入照片工作区模型。
-    queue_focus: FocusHandle,
-    queue_scroll: ScrollHandle,
-    /// 按照片身份缓存的 UI 位图状态；它不属于工作区的领域数据。
-    thumbnails: HashMap<PhotoId, Thumbnail>,
-    /// 预设面板当前选择的应用范围。
-    preset_scope: PresetScope,
+    /// 照片队列的焦点、滚动与缩略图缓存；领域照片列表归 `backend` 持有。
+    queue: QueueState,
+    /// 左侧预设面板、目录缓存与拖拽排序状态。
+    presets: PresetPanelState,
     /// 每个文字组各自持有组级控件与文字行；稳定 id 不随增删其它组改变。
     text_groups: Vec<TextGroupEditor>,
-    /// 每个文字组最多打开一个独立编辑窗口；已关闭的句柄会在下次打开时清理。
-    text_editor_windows: HashMap<u64, AnyWindowHandle>,
-    /// 窗口创建会延后到当前状态更新结束；这里防止同一组在延后期间被重复打开。
-    opening_text_editor_ids: HashSet<u64>,
-    /// 左侧预设面板可以收起，为照片预览腾出更多空间。
-    preset_panel_collapsed: bool,
-    next_text_group_id: u64,
-    next_text_line_id: u64,
+    /// 文字组独立编辑窗口句柄及稳定 ID 分配器。
+    text_editors: TextEditorWindows,
     /// 系统里可用的字体，每行的字体下拉都从这里取。
     font_names: Vec<SharedString>,
     inspector: InspectorState,
@@ -122,17 +105,7 @@ pub struct AppView {
     logos: page::logos::LogoPageState,
     export: ExportState,
     photo_import: behavior::import::PhotoImportState,
-
-    preset_names: Vec<SharedString>,
     gps_windows: component::location_picker::GpsWindows,
-    /// 拖动落点的预设名与前/后位置，不写入配置。
-    preset_drop_target: Option<(SharedString, bool)>,
-    /// 预设卡片使用的轻量视觉快照，避免在每一帧渲染时读取磁盘。
-    preset_previews: HashMap<SharedString, WatermarkPreset>,
-    /// 编译进应用的预设名称；用于禁止覆盖与删除，并在卡片上标明来源。
-    builtin_preset_names: HashSet<SharedString>,
-    preset_feedback: Option<SharedString>,
-    preset_feedback_is_error: bool,
 
     /// 应用级本机偏好、配置文件路径及保存反馈的唯一持有者。
     preferences: behavior::appearance::PreferencesState,
@@ -194,9 +167,7 @@ impl AppView {
             cx,
         )];
 
-        let (preset_names, preset_previews, builtin_preset_names) =
-            preset_catalog(&settings.preset_order);
-        let preset_order = user_preset_order(&preset_names, &builtin_preset_names);
+        let (presets, preset_order) = PresetPanelState::new(&settings.preset_order);
 
         // 内置配色要先装进注册表，后面的下拉和 `find` 才有东西可选。
         crate::theme::install(cx);
@@ -222,16 +193,10 @@ impl AppView {
             backend: crate::backend::Session::new(global_watermark).with_storage(
                 crate::backend::StoragePaths::default().with_settings_file(settings_path),
             ),
-            queue_focus: cx.focus_handle(),
-            queue_scroll: ScrollHandle::new(),
-            thumbnails: HashMap::new(),
-            preset_scope: PresetScope::AllPhotos,
+            queue: QueueState::new(cx),
+            presets,
             text_groups,
-            text_editor_windows: HashMap::new(),
-            opening_text_editor_ids: HashSet::new(),
-            preset_panel_collapsed: false,
-            next_text_group_id: 1,
-            next_text_line_id,
+            text_editors: TextEditorWindows::new(1, next_text_line_id),
             font_names,
             inspector: InspectorState::default(),
             aspect_choice,
@@ -244,13 +209,7 @@ impl AppView {
             logos,
             export: ExportState::Idle,
             photo_import: Default::default(),
-            preset_names,
             gps_windows: Default::default(),
-            preset_drop_target: None,
-            preset_previews,
-            builtin_preset_names,
-            preset_feedback: None,
-            preset_feedback_is_error: false,
             preferences,
             settings: settings_controls,
             update_state: UpdateState::Idle,
@@ -281,7 +240,7 @@ impl AppView {
 
     /// 已创建的文字组编辑窗口句柄数量。
     pub fn text_editor_window_count(&self) -> usize {
-        self.text_editor_windows.len()
+        self.text_editors.len()
     }
 
     /// 当前选中的照片路径。
@@ -297,7 +256,7 @@ impl AppView {
 
     /// 已保存的预设名。
     pub fn preset_names(&self) -> &[SharedString] {
-        &self.preset_names
+        &self.presets.names
     }
 
     /// 当前参数，供预览与预设读取。
@@ -318,7 +277,7 @@ impl AppView {
     }
 
     pub(super) fn thumbnail(&self, id: PhotoId) -> Option<&Thumbnail> {
-        self.thumbnails.get(&id)
+        self.queue.thumbnail(id)
     }
 
     /// 由控件状态拼出渲染用的文字组。
@@ -590,11 +549,6 @@ impl AppView {
         }
     }
 
-    pub(super) fn toggle_preset_panel(&mut self, cx: &mut Context<Self>) {
-        self.preset_panel_collapsed = !self.preset_panel_collapsed;
-        cx.notify();
-    }
-
     /// 用系统文件选择器挑照片。
     pub(super) fn pick_photos(&mut self, cx: &mut Context<Self>) {
         let prompt = cx.prompt_for_paths(PathPromptOptions {
@@ -798,7 +752,7 @@ impl AppView {
             return;
         }
         for (id, path) in added {
-            self.thumbnails.insert(id, Thumbnail::Pending);
+            self.queue.mark_pending(id);
             self.load_thumbnail(id, path.clone(), cx);
             self.load_exif(id, path, cx);
         }
@@ -821,7 +775,7 @@ impl AppView {
         self.save_current_watermark(cx);
         self.backend.select(id);
         self.restore_selected_watermark(window, cx);
-        self.preset_feedback = None;
+        self.presets.clear_feedback();
         cx.notify();
     }
 
@@ -844,12 +798,12 @@ impl AppView {
         let Some(id) = self.backend.remove_selected() else {
             return;
         };
-        self.thumbnails.remove(&id);
+        self.queue.remove(id);
         self.background_state
             .palettes
             .retain(|(photo_id, _), _| *photo_id != id);
         self.restore_selected_watermark(window, cx);
-        self.preset_feedback = None;
+        self.presets.clear_feedback();
         cx.notify();
     }
 
@@ -860,14 +814,14 @@ impl AppView {
             cx.notify();
             return;
         }
-        self.thumbnails.clear();
+        self.queue.clear();
         self.background_state.palettes.clear();
         // 导出任务拥有冻结的照片快照，清空队列不结束任务，也不能解除重复导出的锁。
         if !matches!(self.export, ExportState::Running { .. }) {
             self.export = ExportState::Idle;
         }
         self.restore_selected_watermark(window, cx);
-        self.preset_feedback = None;
+        self.presets.clear_feedback();
         cx.notify();
     }
 
@@ -881,7 +835,7 @@ impl AppView {
                 if this.backend.workspace().photo(id).is_none() {
                     return;
                 }
-                this.thumbnails.insert(
+                this.queue.set_thumbnail(
                     id,
                     match rendered {
                         Ok(image) => Thumbnail::Ready(image),
@@ -945,153 +899,7 @@ impl AppView {
         Some((width, height))
     }
 
-    // MARK: 预设
-
-    pub(in crate::app) fn set_builtin_presets_collapsed(
-        &mut self,
-        collapsed: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if self.preferences.values.builtin_presets_collapsed == collapsed {
-            return;
-        }
-        self.preferences.values.builtin_presets_collapsed = collapsed;
-        self.preset_feedback = None;
-        self.persist_preset_preferences();
-        cx.notify();
-    }
-
-    /// 按名字移动预设，避免拖动过程中目录变化让下标指向另一项。
-    pub(in crate::app) fn move_preset(
-        &mut self,
-        source: &str,
-        target: &str,
-        before: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.preset_drop_target = None;
-        if self.builtin_preset_names.contains(source)
-            || self.builtin_preset_names.contains(target)
-            || !move_preset_name(&mut self.preset_names, source, target, before)
-        {
-            cx.notify();
-            return;
-        }
-        self.preferences.values.preset_order =
-            user_preset_order(&self.preset_names, &self.builtin_preset_names);
-        self.preset_feedback = None;
-        self.persist_preset_preferences();
-        cx.notify();
-    }
-
-    pub(in crate::app) fn move_preset_by(
-        &mut self,
-        name: &str,
-        earlier: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self
-            .preferences
-            .values
-            .preset_order
-            .iter()
-            .position(|candidate| candidate == name)
-        else {
-            return;
-        };
-        let target_index = if earlier {
-            index.checked_sub(1)
-        } else {
-            index.checked_add(1)
-        };
-        if let Some(target) = target_index
-            .and_then(|index| self.preferences.values.preset_order.get(index))
-            .cloned()
-        {
-            self.move_preset(name, &target, earlier, cx);
-        }
-    }
-
-    fn persist_preset_preferences(&mut self) {
-        self.persist_settings();
-        if let Some(error) = self.preferences.feedback.clone() {
-            self.preset_feedback = Some(error);
-            self.preset_feedback_is_error = true;
-        }
-    }
-
-    /// 把当前配置按输入框里的名字保存成预设。
-    pub(super) fn save_preset(&mut self, cx: &mut Context<Self>) {
-        let name = self
-            .controls
-            .preset_name
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        if name.is_empty() {
-            return;
-        }
-
-        let preset = preset_of(self.backend.params(), &self.build_text_groups(cx));
-        match presets::save(&name, &preset) {
-            Ok(path) => {
-                self.preset_feedback = Some(format!("已保存到 {}", path.display()).into());
-                self.preset_feedback_is_error = false;
-                self.refresh_preset_names();
-                self.persist_preset_preferences();
-            }
-            Err(error) => {
-                self.preset_feedback = Some(format!("{error:#}").into());
-                self.preset_feedback_is_error = true;
-            }
-        }
-        cx.notify();
-    }
-
-    /// 载入预设，并把所有「自己存值」的控件同步到新配置上。
-    pub(super) fn load_preset(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let preset = if self.builtin_preset_names.contains(name) {
-            presets::load_builtin(name)
-        } else {
-            presets::load(name)
-        };
-        match preset {
-            Ok(preset) => {
-                let all = self.preset_scope == PresetScope::AllPhotos;
-                self.apply_preset(preset, window, cx);
-                self.preset_feedback = Some(
-                    if all {
-                        format!("已将「{name}」应用到全部照片及后续导入")
-                    } else if self.selected_photo_id().is_some() {
-                        format!("已将「{name}」应用到当前照片")
-                    } else {
-                        format!("新照片将使用「{name}」")
-                    }
-                    .into(),
-                );
-                self.preset_feedback_is_error = false;
-            }
-            Err(error) => {
-                self.preset_feedback = Some(format!("{error:#}").into());
-                self.preset_feedback_is_error = true;
-            }
-        }
-        cx.notify();
-    }
-
-    /// 用一份预设替换当前配置。
-    fn apply_preset(
-        &mut self,
-        preset: WatermarkPreset,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.backend.commit_groups(self.build_text_groups(cx));
-        self.backend
-            .apply_preset(preset, self.preset_scope == PresetScope::AllPhotos);
-        self.restore_selected_watermark(window, cx);
-    }
+    // MARK: 水印恢复与控件同步
 
     /// 恢复照片快照，包括用户主动删空的文字组；不能把它当成待初始化的预设。
     fn restore_watermark(
@@ -1113,8 +921,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let editor_windows = std::mem::take(&mut self.text_editor_windows);
-        self.opening_text_editor_ids.clear();
+        let editor_windows = self.text_editors.take_all();
         if !editor_windows.is_empty() {
             cx.defer(move |cx| {
                 for handle in editor_windows.into_values() {
@@ -1129,12 +936,11 @@ impl AppView {
             .collect::<Vec<_>>();
         let mut editors = Vec::with_capacity(text_groups.len());
         for text_group in text_groups {
-            let id = self.next_text_group_id;
-            self.next_text_group_id += 1;
+            let id = self.text_editors.alloc_group_id();
             editors.push(TextGroupEditor::new(
                 id,
                 &text_group,
-                &mut self.next_text_line_id,
+                &mut self.text_editors.next_line_id,
                 &self.font_names,
                 window,
                 cx,
@@ -1248,165 +1054,6 @@ impl AppView {
         self.restore_watermark(preset, window, cx);
         cx.notify();
     }
-
-    /// 弹一个确认框再删预设：文件删掉就找不回来了。
-    pub(super) fn confirm_delete_preset(
-        &mut self,
-        name: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.builtin_preset_names.contains(name) {
-            self.preset_feedback = Some("内置预设不可删除".into());
-            self.preset_feedback_is_error = true;
-            cx.notify();
-            return;
-        }
-        let view = cx.entity();
-        let target = name.to_string();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let view = view.clone();
-            let target = target.clone();
-            alert
-                .title(format!("删除预设「{target}」？"))
-                .description("预设文件会从磁盘上删除，无法恢复。")
-                .button_props(
-                    gpui_kit::component::dialog::DialogButtonProps::default()
-                        .ok_text("删除")
-                        .ok_variant(gpui_kit::component::button::ButtonVariant::Danger)
-                        .on_ok(move |_, _, cx| {
-                            let target = target.clone();
-                            view.update(cx, |this, cx| this.delete_preset(&target, cx));
-                            true
-                        }),
-                )
-        });
-    }
-
-    fn delete_preset(&mut self, name: &str, cx: &mut Context<Self>) {
-        match presets::delete(name) {
-            Ok(()) => {
-                self.preset_feedback = Some(format!("已删除「{name}」").into());
-                self.preset_feedback_is_error = false;
-                self.refresh_preset_names();
-                self.persist_preset_preferences();
-            }
-            Err(error) => {
-                self.preset_feedback = Some(format!("{error:#}").into());
-                self.preset_feedback_is_error = true;
-            }
-        }
-        cx.notify();
-    }
-
-    /// 确保预设目录存在后交给系统文件管理器显示；空目录也应可直接打开，方便手工管理。
-    pub(super) fn open_preset_folder(&mut self, cx: &mut Context<Self>) {
-        let Some(dir) = presets::directory() else {
-            self.preset_feedback = Some("找不到系统的配置目录".into());
-            self.preset_feedback_is_error = true;
-            cx.notify();
-            return;
-        };
-        match std::fs::create_dir_all(&dir) {
-            Ok(()) => {
-                cx.reveal_path(&dir);
-                self.preset_feedback = None;
-            }
-            Err(error) => {
-                self.preset_feedback = Some(format!("无法打开预设文件夹：{error}").into());
-                self.preset_feedback_is_error = true;
-            }
-        }
-        cx.notify();
-    }
-
-    fn refresh_preset_names(&mut self) {
-        let (names, previews, builtins) = preset_catalog(&self.preferences.values.preset_order);
-        self.preferences.values.preset_order = user_preset_order(&names, &builtins);
-        self.preset_names = names;
-        self.preset_previews = previews;
-        self.builtin_preset_names = builtins;
-    }
-}
-
-fn preset_catalog(
-    order: &[String],
-) -> (
-    Vec<SharedString>,
-    HashMap<SharedString, WatermarkPreset>,
-    HashSet<SharedString>,
-) {
-    let builtins = presets::builtin().unwrap_or_default();
-    let builtin_names = builtins
-        .iter()
-        .map(|(name, _)| SharedString::from(name.clone()))
-        .collect::<HashSet<_>>();
-    let mut names = Vec::new();
-    let mut previews = HashMap::new();
-
-    for (name, preset) in builtins {
-        let name = SharedString::from(name);
-        names.push(name.clone());
-        previews.insert(name, preset);
-    }
-
-    let mut user_names = presets::list().unwrap_or_default();
-    sort_preset_names(&mut user_names, order);
-    for name in user_names {
-        let name = SharedString::from(name);
-        if builtin_names.contains(&name) {
-            continue;
-        }
-        if let Ok(preset) = presets::load(&name) {
-            names.push(name.clone());
-            previews.insert(name, preset);
-        }
-    }
-
-    (names, previews, builtin_names)
-}
-
-fn user_preset_order(names: &[SharedString], builtins: &HashSet<SharedString>) -> Vec<String> {
-    names
-        .iter()
-        .filter(|name| !builtins.contains(*name))
-        .map(ToString::to_string)
-        .collect()
-}
-
-/// 稳定排序让未保存过顺序的新项留在末尾，并保留目录原有的字母顺序。
-fn sort_preset_names(names: &mut [String], order: &[String]) {
-    names.sort_by_key(|name| {
-        order
-            .iter()
-            .position(|saved| saved == name)
-            .unwrap_or(usize::MAX)
-    });
-}
-
-fn move_preset_name(
-    names: &mut Vec<SharedString>,
-    source: &str,
-    target: &str,
-    before: bool,
-) -> bool {
-    if source == target {
-        return false;
-    }
-    let Some(source_index) = names.iter().position(|name| name.as_ref() == source) else {
-        return false;
-    };
-    let Some(target_index) = names.iter().position(|name| name.as_ref() == target) else {
-        return false;
-    };
-    let slot = target_index + usize::from(!before);
-    let destination = slot - usize::from(source_index < slot);
-    if destination == source_index {
-        return false;
-    }
-    let name = names.remove(source_index);
-    names.insert(destination, name);
-    true
 }
 
 /// 由参数推出宽高比下拉该选哪一项。
@@ -1438,159 +1085,5 @@ fn format_ratio(value: f64) -> String {
         format!("{value:.0}")
     } else {
         format!("{value:.2}")
-    }
-}
-
-#[cfg(test)]
-mod preset_tests {
-    use super::*;
-    use gpui_kit::component::Root;
-    use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{TestAppContext, VisualTestContext, point, px};
-    use std::{cell::RefCell, rc::Rc};
-
-    fn workspace<'a>(
-        tag: &str,
-        cx: &'a mut TestAppContext,
-    ) -> (Entity<AppView>, &'a mut VisualTestContext, PathBuf) {
-        let path = std::env::temp_dir()
-            .join(format!(
-                "lumen-frame-preset-ui-{}-{tag}",
-                std::process::id()
-            ))
-            .join("settings.toml");
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-        cx.update(gpui_kit::init);
-        let view = Rc::new(RefCell::new(None));
-        let (_, cx) = cx.add_window_view({
-            let view_slot = view.clone();
-            let path = path.clone();
-            move |window, cx| {
-                let app = cx.new(|cx| AppView::new_with_settings_path(Some(path), window, cx));
-                view_slot.borrow_mut().replace(app.clone());
-                Root::new(app, window, cx)
-            }
-        });
-        let app = view.borrow().clone().unwrap();
-        app.update_in(cx, |app, _, cx| {
-            // 只替换目录展示数据，不写入用户的预设目录。
-            app.preset_names
-                .retain(|name| app.builtin_preset_names.contains(name));
-            for name in ["test-a", "test-b", "test-c"] {
-                app.preset_names.push(name.into());
-                app.preset_previews
-                    .insert(name.into(), preset_of(&WatermarkParams::default(), &[]));
-            }
-            app.preferences.values.preset_order =
-                user_preset_order(&app.preset_names, &app.builtin_preset_names);
-            cx.notify();
-        });
-        cx.run_until_parked();
-        (app, cx, path)
-    }
-
-    #[test]
-    fn saved_order_survives_removed_and_new_presets() {
-        let mut names = vec![
-            "a".to_owned(),
-            "b".to_owned(),
-            "c".to_owned(),
-            "new".to_owned(),
-        ];
-        sort_preset_names(
-            &mut names,
-            &["gone".into(), "c".into(), "a".into(), "c".into()],
-        );
-        assert_eq!(names, ["c", "a", "b", "new"]);
-    }
-
-    #[gpui_kit::test]
-    fn builtin_group_can_collapse_and_remember_its_state(cx: &mut TestAppContext) {
-        let (view, cx, path) = workspace("collapse", cx);
-        assert!(cx.debug_bounds("preset-card-16_9").is_some());
-        cx.update(|window, cx| {
-            window.click("builtin-presets-toggle", cx);
-            window.render_frame(cx);
-        });
-        assert!(view.read_with(cx, |app, _| {
-            app.preferences.values.builtin_presets_collapsed
-        }));
-        assert!(cx.debug_bounds("preset-card-16_9").is_none());
-        assert!(cx.debug_bounds("preset-card-test-a").is_some());
-        assert!(settings_store::load_at(&path).builtin_presets_collapsed);
-
-        // 折叠入口保持键盘可操作。
-        cx.update(|window, cx| window.press("enter", cx));
-        assert!(!view.read_with(cx, |app, _| {
-            app.preferences.values.builtin_presets_collapsed
-        }));
-        assert!(cx.debug_bounds("preset-card-16_9").is_some());
-        assert!(!settings_store::load_at(&path).builtin_presets_collapsed);
-        cx.update(|window, cx| window.press("space", cx));
-        cx.update(|window, cx| {
-            let restored =
-                cx.new(|cx| AppView::new_with_settings_path(Some(path.clone()), window, cx));
-            assert!(
-                restored
-                    .read(cx)
-                    .preferences
-                    .values
-                    .builtin_presets_collapsed
-            );
-        });
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
-    }
-
-    #[gpui_kit::test]
-    fn dragging_personal_presets_reorders_and_saves_without_loading(cx: &mut TestAppContext) {
-        let (view, cx, path) = workspace("reorder", cx);
-        view.update_in(cx, |app, _, cx| app.set_builtin_presets_collapsed(true, cx));
-        cx.run_until_parked();
-        let source = cx.debug_bounds("preset-card-test-a").unwrap();
-        let target = cx.debug_bounds("preset-card-test-c").unwrap();
-        cx.update(|window, cx| {
-            window.drag(
-                source.center(),
-                point(target.center().x, target.bottom() - px(8.0)),
-                cx,
-            );
-            window.render_frame(cx);
-        });
-        let order = view.read_with(cx, |app, _| {
-            assert!(app.preset_feedback.is_none(), "拖动不应触发载入预设");
-            app.preferences.values.preset_order.clone()
-        });
-        assert_eq!(order, ["test-b", "test-c", "test-a"]);
-        assert_eq!(settings_store::load_at(&path).preset_order, order);
-
-        // 向前拖动插入到目标上方。
-        let source = cx.debug_bounds("preset-card-test-a").unwrap();
-        let target = cx.debug_bounds("preset-card-test-b").unwrap();
-        cx.update(|window, cx| {
-            window.drag(
-                source.center(),
-                point(target.center().x, target.top() + px(8.0)),
-                cx,
-            );
-            window.render_frame(cx);
-        });
-        assert_eq!(
-            settings_store::load_at(&path).preset_order,
-            ["test-a", "test-b", "test-c"]
-        );
-
-        // 拖动后卡片保持焦点，可直接用键盘再移动一项。
-        cx.update(|window, cx| window.press("alt-down", cx));
-        assert_eq!(
-            settings_store::load_at(&path).preset_order,
-            ["test-b", "test-a", "test-c"]
-        );
-        let names_before = view.read_with(cx, |app, _| app.preset_names.clone());
-        view.update_in(cx, |app, _, cx| app.move_preset("test-a", "16_9", true, cx));
-        assert_eq!(
-            view.read_with(cx, |app, _| app.preset_names.clone()),
-            names_before
-        );
-        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

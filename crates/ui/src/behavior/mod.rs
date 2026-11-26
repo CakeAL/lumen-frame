@@ -5,4 +5,5 @@ mod commands;
 mod export;
 pub(super) mod import;
 pub(super) mod palette;
+pub(super) mod presets;
 pub(super) mod update;

@@ -1,5 +1,5 @@
 //! 外部操作与桌面共享 Session；文件/媒体工作使用冻结快照，结果回到 GPUI 主线程提交。
-use super::super::{AppView, ExportState, Thumbnail, page::settings};
+use super::super::{AppView, ExportState, page::settings};
 use crate::backend::{
     Command, CommandExecution, ErrorCode, ExportPhotosOutput, OperationError, Reply, Request,
     Session, bridge::CommandInbox, presets::WatermarkPreset, workspace::PhotoId,
@@ -59,7 +59,7 @@ impl AppView {
                                         work_command,
                                         Command::SavePreset { .. } | Command::DeletePreset { .. }
                                     ) {
-                                    Some(super::super::preset_catalog(&[]))
+                                    Some(super::presets::load_catalog(&[]))
                                 } else {
                                     None
                                 };
@@ -90,25 +90,11 @@ impl AppView {
                                 cx,
                             );
                             if reply.result.is_ok() {
-                                if let Some((mut names, previews, builtins)) = catalog {
-                                    names.sort_by_key(|name| {
-                                        if builtins.contains(name) {
-                                            (0, 0)
-                                        } else {
-                                            (
-                                                1,
-                                                this.preferences
-                                                    .values
-                                                    .preset_order
-                                                    .iter()
-                                                    .position(|saved| saved == name.as_ref())
-                                                    .unwrap_or(usize::MAX),
-                                            )
-                                        }
-                                    });
-                                    this.preset_names = names;
-                                    this.preset_previews = previews;
-                                    this.builtin_preset_names = builtins;
+                                if let Some(catalog) = catalog {
+                                    this.presets.apply_catalog(
+                                        catalog,
+                                        &this.preferences.values.preset_order,
+                                    );
                                     cx.notify();
                                 }
                                 if let Some(assets) = logos {
@@ -279,19 +265,19 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.thumbnails
-            .retain(|id, _| self.backend.workspace().photo(*id).is_some());
+        self.queue
+            .retain(|id| self.backend.workspace().photo(id).is_some());
         self.background_state
             .palettes
             .retain(|(id, _), _| self.backend.workspace().photo(*id).is_some());
         let added = self
             .photos()
             .iter()
-            .filter(|photo| !self.thumbnails.contains_key(&photo.id()))
+            .filter(|photo| self.queue.thumbnail(photo.id()).is_none())
             .map(|photo| (photo.id(), photo.path().to_path_buf()))
             .collect::<Vec<_>>();
         for (id, path) in added {
-            self.thumbnails.insert(id, Thumbnail::Pending);
+            self.queue.mark_pending(id);
             self.load_thumbnail(id, path, cx);
         }
         if before.text_groups != self.backend.current().text_groups

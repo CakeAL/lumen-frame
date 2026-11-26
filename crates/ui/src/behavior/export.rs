@@ -275,7 +275,7 @@ mod tests {
             );
             view.load_preset("文字在上", window, cx);
             assert_eq!(view.backend.params().custom_text, "第一张的标题");
-            view.preset_scope = PresetScope::AllPhotos;
+            view.presets.scope = PresetScope::AllPhotos;
             view.load_preset("16_9", window, cx);
             assert!(view.backend.defaults().params.custom_text.is_empty());
             let jobs = view.photo_export_jobs(ExportScope::AllPhotos, cx);
@@ -310,7 +310,7 @@ mod tests {
     fn export_freezes_each_photos_parameters_and_text(cx: &mut TestAppContext) {
         let (view, cx) = workspace(cx);
         view.update_in(cx, |view, window, cx| {
-            view.preset_scope = PresetScope::CurrentPhoto;
+            view.presets.scope = PresetScope::CurrentPhoto;
             view.load_preset("16_9", window, cx);
             view.text_groups[0].lines[0]
                 .template
@@ -367,7 +367,7 @@ mod tests {
     fn rotation_button_applies_to_all_photos_and_freezes_with_export(cx: &mut TestAppContext) {
         let (view, cx) = rendered_workspace(cx);
         view.update_in(cx, |view, window, cx| {
-            assert!(view.preset_scope == PresetScope::AllPhotos);
+            assert!(view.presets.scope == PresetScope::AllPhotos);
             view.add_photos(
                 vec![
                     concat!(
@@ -383,7 +383,7 @@ mod tests {
                 ],
                 cx,
             );
-            view.preset_scope = PresetScope::CurrentPhoto;
+            view.presets.scope = PresetScope::CurrentPhoto;
             view.load_preset("16_9", window, cx);
         });
         cx.run_until_parked();
@@ -402,7 +402,7 @@ mod tests {
             assert_eq!(view.backend.params().rotation, Rotation::Clockwise90);
             view.load_preset("基础样式", window, cx);
             assert_eq!(view.backend.params().rotation, Rotation::Clockwise90);
-            view.preset_scope = PresetScope::AllPhotos;
+            view.presets.scope = PresetScope::AllPhotos;
             view.load_preset("16_9", window, cx);
             view.add_photos(vec!["third.jpg".into()], cx);
             view.select_photo_at(2, window, cx);
@@ -475,7 +475,7 @@ mod tests {
         view.update_in(cx, |view, window, cx| {
             view.select_photo_at(1, window, cx);
             assert_eq!(view.backend.params().quality, 81);
-            view.preset_scope = PresetScope::CurrentPhoto;
+            view.presets.scope = PresetScope::CurrentPhoto;
             view.load_preset("基础样式", window, cx);
             assert_eq!(view.backend.params().quality, 81);
         });
@@ -492,7 +492,7 @@ mod tests {
         });
         cx.run_until_parked();
         view.update_in(cx, |view, window, cx| {
-            view.preset_scope = PresetScope::AllPhotos;
+            view.presets.scope = PresetScope::AllPhotos;
             view.load_preset("16_9", window, cx);
             view.add_photos(vec!["third.jpg".into()], cx);
             view.select_photo_at(2, window, cx);
@@ -524,7 +524,7 @@ mod tests {
             view.load_preset("基础样式", window, cx);
             view.select_photo_at(1, window, cx);
             view.load_preset("白色边框", window, cx);
-            view.preset_scope = PresetScope::AllPhotos;
+            view.presets.scope = PresetScope::AllPhotos;
             view.load_preset("16_9", window, cx);
             let global = view.current_watermark(cx);
             for job in view.photo_export_jobs(ExportScope::AllPhotos, cx) {
@@ -578,7 +578,7 @@ mod tests {
             view.select_photo_at(1, window, cx);
             assert_eq!(view.current_watermark(cx), expected);
             // 恢复默认只作用于当前照片，与预设应用范围无关。
-            view.preset_scope = PresetScope::AllPhotos;
+            view.presets.scope = PresetScope::AllPhotos;
             view.reset_params(window, cx);
             view.select_photo_at(0, window, cx);
             assert_eq!(view.backend.params().shadow_size, 0.);
