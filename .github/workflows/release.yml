@@ -77,10 +77,6 @@ jobs:
     needs: metadata
     runs-on: windows-2025
     env:
-      VCPKGRS_DYNAMIC: '1'
-      VCPKGRS_TRIPLET: x64-windows
-      # The overlay port reads this path after vcpkg isolates its build environment.
-      VCPKG_KEEP_ENV_VARS: VIPS_DEV_ROOT
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
@@ -88,32 +84,27 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Install vcpkg
+      - name: Download libvips 8.18.7 x64 development package
         shell: pwsh
         run: |
-          $env:VCPKG_ROOT = Join-Path $env:RUNNER_TEMP 'vcpkg'
-          "VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
-          if ($LASTEXITCODE -ne 0) { throw '克隆 vcpkg 失败' }
-          & (Join-Path $env:VCPKG_ROOT 'bootstrap-vcpkg.bat') -disableMetrics
-          if ($LASTEXITCODE -ne 0) { throw '安装 vcpkg 失败' }
-      - name: Download libvips 8.18.6 x64 development package
-        shell: pwsh
-        run: |
-          $assetName = 'vips-dev-x64-web-8.18.6.zip'
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/libvips/build-win64-mxe/releases/tags/v8.18.6' -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; 'X-GitHub-Api-Version' = '2022-11-28' }
+          $assetName = 'vips-dev-x64-web-8.18.7.zip'
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/libvips/build-win64-mxe/releases/tags/v8.18.7' -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; 'X-GitHub-Api-Version' = '2022-11-28' }
           $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
           if (-not $asset) { throw "上游 Release 中找不到 $assetName（Windows x86-64 不能使用 arm64 包）" }
           $zip = Join-Path $env:RUNNER_TEMP $assetName
           $extract = Join-Path $env:RUNNER_TEMP 'vips-dev'
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip
-          $expectedSha256 = '10086f2ccc8e2a861831facabab75fa1b80b4bd03f0a8447623ec581002aa4b2'
+          $expectedSha256 = '3a122eb3d588690008216f786338e2f9329dba3c3c2768b5933cf7299d549241'
           $actualSha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualSha256 -ne $expectedSha256) { throw "libvips 下载文件 SHA-256 不匹配：$actualSha256" }
           Expand-Archive -LiteralPath $zip -DestinationPath $extract
           $imports = @(Get-ChildItem -LiteralPath $extract -Filter libvips.lib -Recurse -File)
           if ($imports.Count -ne 1) { throw "预期一个 libvips.lib，实际找到 $($imports.Count) 个" }
           $vipsDir = Split-Path -Parent (Split-Path -Parent $imports[0].FullName)
+          foreach ($lib in @('libvips.lib', 'libglib-2.0.lib', 'libgobject-2.0.lib')) {
+            $libPath = Join-Path $vipsDir "lib\$lib"
+            if (-not (Test-Path -LiteralPath $libPath)) { throw "缺少 $libPath" }
+          }
           $dll = Join-Path $vipsDir 'bin\libvips-42.dll'
           if (-not (Test-Path -LiteralPath $dll)) { throw "缺少 $dll" }
           $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($dll))
@@ -125,14 +116,6 @@ jobs:
           } finally { $reader.Dispose() }
           if ($machine -ne 0x8664) { throw "libvips DLL 不是 x86-64（PE Machine: 0x$('{0:X4}' -f $machine)）" }
           "VIPS_DEV_ROOT=$vipsDir" >> $env:GITHUB_ENV
-      - name: Install libvips through local vcpkg overlay
-        shell: pwsh
-        run: |
-          if (-not $env:VIPS_DEV_ROOT -or -not (Test-Path -LiteralPath (Join-Path $env:VIPS_DEV_ROOT 'lib\libvips.lib'))) {
-            throw 'VIPS_DEV_ROOT 未指向已解压的 libvips 开发包'
-          }
-          & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install libvips:x64-windows "--overlay-ports=$env:GITHUB_WORKSPACE\vcpkg-overlay"
-          if ($LASTEXITCODE -ne 0) { throw 'vcpkg 安装 libvips 失败' }
       - name: Build and verify Windows package
         shell: pwsh
         run: ./script/bundle-windows.ps1 -VipsDir $env:VIPS_DEV_ROOT -Variant web -CreateZip

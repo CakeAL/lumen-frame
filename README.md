@@ -227,11 +227,11 @@ brew install pkgconf vips
 cargo run
 ```
 
-Windows x64 构建使用 vcpkg 的 `libvips:x64-windows` port。仓库的 overlay 使用官方
-`vips-dev-x64-web-8.18.6.zip` 开发包。设置 `VIPS_DEV_ROOT` 和 `VCPKG_KEEP_ENV_VARS` 后安装：
+Windows x64（MSVC）构建直接链接官方 `build-win64-mxe` 的 `vips-dev-x64-web-8.18.7.zip` 预编译开发包，无需 vcpkg。解压后将 `VIPS_DEV_ROOT` 指向解压根目录（或直接解压为仓库根目录的 `vips-dev-8.18`），并把其中的 `bin` 目录加入 `PATH`：
 
 ```powershell
-vcpkg install libvips:x64-windows --overlay-ports=.\vcpkg-overlay
+$env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-8.18'
+$env:PATH = "$env:VIPS_DEV_ROOT\bin;$env:PATH"
 cargo run
 ```
 

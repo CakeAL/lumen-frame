@@ -1,7 +1,7 @@
-# 链接 libvips 的搜索路径。
+# 链接 libvips 的搜索路径与覆盖配置。
 #
-# vips-sys 在 macOS 使用 pkg-config 探测，在 Windows MSVC 使用 vcpkg。
-# 下方保留 Homebrew 的链接搜索路径，Windows 则由 libvips port 提供库。
+# vips-sys 在 macOS 使用 pkg-config 探测，下方保留 Homebrew 的链接搜索路径；
+# Windows x64 MSVC 则直接链接官方 build-win64-mxe 预编译包，不经由 vcpkg。
 #
 # macOS：Homebrew 的 vips。
 # 用 `opt/` 而不是 `Cellar/<精确版本>`：后者会在 `brew upgrade vips` 之后失效。
@@ -19,10 +19,12 @@ rustflags = [
     "-L", "/usr/local/opt/gettext/lib",
 ]
 
-# Windows：当前工作区的 vcpkg 与 lumen-frame 同处于 vsc 目录。
-# vips-sys 会从 VCPKG_ROOT 探测安装的 libvips.lib 及其依赖。
-# 此相对路径以项目根目录为基准；其他目录布局可用环境变量覆盖。
-[env]
-VCPKG_ROOT = { value = "../vcpkg", relative = true, force = false }
-VCPKGRS_DYNAMIC = { value = "1", force = false }
-VCPKGRS_TRIPLET = { value = "x64-windows", force = false }
+# Windows x64 MSVC：跳过 vips-sys 默认的 vcpkg 探测，直接链接官方预编译包的导入库。
+# 官方 build-win64-mxe 归档中的导入库名为 libvips.lib / libglib-2.0.lib / libgobject-2.0.lib；
+# 库搜索路径由 `crates/core/build.rs` 按 `VIPS_DEV_ROOT` / `LIBVIPS_LIB_DIR` 注入。
+[target.x86_64-pc-windows-msvc.vips]
+rustc-link-lib = [
+    "dylib=libvips",
+    "dylib=libglib-2.0",
+    "dylib=libgobject-2.0",
+]

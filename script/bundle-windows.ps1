@@ -8,7 +8,7 @@
     拷到 exe 旁边」这件事本身就完成了打包，不需要改写引用，也不需要重签名。
 
 .PARAMETER VipsDir
-    解压好的 libvips Windows 目录，例如 C:\vips\vips-dev-w64-web-8.18.6。
+    解压好的 libvips Windows x64 目录（包含 bin\ 与 lib\），例如 C:\vips\vips-dev-8.18。
 
 .PARAMETER Variant
     用于提示格式支持差异：web（默认，体积小、支持 AVIF、无相机 RAW）或 all。
@@ -17,7 +17,7 @@
     同时生成可上传到 GitHub Releases 的带版本号 ZIP。
 
 .EXAMPLE
-    .\script\bundle-windows.ps1 -VipsDir C:\vips\vips-dev-w64-web-8.18.6
+    .\script\bundle-windows.ps1 -VipsDir C:\vips\vips-dev-8.18
 #>
 [CmdletBinding()]
 param(
@@ -34,21 +34,39 @@ $appIcon = Join-Path $root 'assets\app-icon\LumenFrame.ico'
 
 function Say($message) { Write-Host "==> $message" -ForegroundColor Cyan }
 
-if (-not (Test-Path (Join-Path $VipsDir 'bin'))) {
-    throw "在 $VipsDir 下找不到 bin\ 目录。请指向解压后的 vips-dev-w64-* 目录。"
+if (-not (Test-Path -LiteralPath $VipsDir)) {
+    throw "找不到 libvips 目录：$VipsDir"
 }
-if (-not (Test-Path $appIcon)) {
+$vipsRoot = (Resolve-Path -LiteralPath $VipsDir).Path
+if (-not (Test-Path -LiteralPath (Join-Path $vipsRoot 'bin'))) {
+    throw "在 $vipsRoot 下找不到 bin\ 目录。请指向解压后的 vips-dev-x64-* 根目录（例如 vips-dev-8.18）。"
+}
+foreach ($lib in @('libvips.lib', 'libglib-2.0.lib', 'libgobject-2.0.lib')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $vipsRoot "lib\$lib"))) {
+        throw "在 $vipsRoot\lib 下找不到 $lib。请指向官方 x64 开发包根目录。"
+    }
+}
+if (-not (Test-Path -LiteralPath $appIcon)) {
     throw "找不到 Windows 应用图标：$appIcon"
 }
 
 # ------------------------------------------------------------------ 1. 构建
 
 Say 'cargo build --release（会将 LumenFrame.ico 嵌入 exe）'
+$previousVipsDevRoot = $env:VIPS_DEV_ROOT
+$env:VIPS_DEV_ROOT = $vipsRoot
 Push-Location $root
 try {
     cargo build --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build --release 失败（退出码 $LASTEXITCODE）" }
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    if ($null -eq $previousVipsDevRoot) {
+        Remove-Item Env:VIPS_DEV_ROOT -ErrorAction SilentlyContinue
+    } else {
+        $env:VIPS_DEV_ROOT = $previousVipsDevRoot
+    }
+}
 
 # ------------------------------------------------------------------ 2. 组装
 
@@ -74,10 +92,10 @@ New-Item -ItemType Directory -Path $outDir | Out-Null
 Copy-Item (Join-Path $root "target\release\$exeName") $outDir
 
 Say '拷贝 libvips 及其依赖的 DLL'
-Copy-Item (Join-Path $VipsDir 'bin\*.dll') $outDir
+Copy-Item (Join-Path $vipsRoot 'bin\*.dll') $outDir
 
 # vips 的可选格式模块是运行期按 VIPS_LIBDIR 找的，布局要和 libvips 的约定一致。
-$moduleSource = Join-Path $VipsDir 'lib\vips-modules-8.18'
+$moduleSource = Join-Path $vipsRoot 'lib\vips-modules-8.18'
 if (Test-Path $moduleSource) {
     $moduleTarget = Join-Path $outDir 'vips-modules-8.18'
     New-Item -ItemType Directory -Path $moduleTarget | Out-Null

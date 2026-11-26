@@ -94,14 +94,14 @@ macOS 包使用完整 Homebrew libvips；具体 HEIC/AVIF/RAW 解码能力仍需
 
 ## Windows
 
-已在 Windows x64/MSVC 上用 libvips 8.18.6 开发包完成 Release 构建、DLL 导入校验、
-ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚本的 libvips 包。
+此前已在 Windows x64/MSVC 上用 libvips 8.18.6 开发包完成 Release 构建、DLL 导入校验、
+ZIP 解压与独立目录启动测试；当前 CI 与文档已升级至 8.18.7。实际格式支持仍取决于传给脚本的 libvips 包。
 
 ### 准备 libvips
 
-从 [build-win64-mxe v8.18.6](https://github.com/libvips/build-win64-mxe/releases/tag/v8.18.6)
-下载预编译包并解压。Windows x86-64 应选择 `vips-dev-x64-web-8.18.6.zip`；
-`vips-dev-arm64-web-8.18.6.zip` 是 Windows ARM64 包，不能用于本项目的 x86-64 构建。
+从 [build-win64-mxe v8.18.7](https://github.com/libvips/build-win64-mxe/releases/tag/v8.18.7)
+下载预编译包并解压。Windows x86-64 应选择 `vips-dev-x64-web-8.18.7.zip`；
+`vips-dev-arm64-web-8.18.7.zip` 是 Windows ARM64 包，不能用于本项目的 x86-64 构建。
 
 上游提供两种变体：
 
@@ -133,27 +133,29 @@ ZIP 解压与独立目录启动测试。实际格式支持仍取决于传给脚�
 `assets/app-icon/LumenFrame.ico` 嵌入 `lumen-frame.exe`。ICO 内含 16–256 px 的 8 组尺寸，
 因此资源管理器、任务栏和快捷方式可以各自选择合适分辨率。
 
+Windows x64 MSVC 构建**不再需要 vcpkg**：`.cargo/config.toml` 直接覆盖 `vips-sys` 的链接声明
+（`libvips.lib`、`libglib-2.0.lib`、`libgobject-2.0.lib`），`crates/core/build.rs` 按
+`VIPS_DEV_ROOT`（或 `LIBVIPS_LIB_DIR`）注入库搜索路径。若未设置环境变量，也会自动检查仓库根目录的
+`vips-dev-8.18\lib`。
+
 ```powershell
-# 设置 VCPKG_ROOT 和 VIPS_DEV_ROOT，再用本地 overlay 安装 libvips:x64-windows。
 # VIPS_DEV_ROOT 指向解压后的开发包根目录（下面有 include、lib、bin）。
-$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
-$env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-x64-web-8.18.6'
-$env:VCPKG_KEEP_ENV_VARS = 'VIPS_DEV_ROOT'
-& "$env:VCPKG_ROOT\vcpkg.exe" install libvips:x64-windows --overlay-ports=./vcpkg-overlay
+$env:VIPS_DEV_ROOT = 'C:\path\to\vips-dev-8.18'
 cargo build --release
+
+# 本地 cargo run / cargo test 需要把 bin 目录加入 PATH 以加载 DLL：
+$env:PATH = "$env:VIPS_DEV_ROOT\bin;$env:PATH"
+cargo run
 ```
-
-若之前用本仓库的旧 overlay 安装过 `vips:x64-windows`，先用
-`vcpkg remove vips:x64-windows` 卸载旧 port，避免它与 `libvips` 重复拥有同一组安装文件。
-
-vcpkg 默认清理 port 的构建环境变量；`VCPKG_KEEP_ENV_VARS` 让本地 overlay 的
-`portfile.cmake` 能读取 `VIPS_DEV_ROOT`。
 
 ### 打包
 
 ```powershell
-.\script\bundle-windows.ps1 -VipsDir $env:VIPS_DEV_ROOT -Variant web -CreateZip
+.\script\bundle-windows.ps1 -VipsDir 'C:\path\to\vips-dev-8.18' -Variant web -CreateZip
 ```
+
+打包脚本会在调用 `cargo build --release` 时自动将 `VIPS_DEV_ROOT` 指向 `-VipsDir`，
+无需提前配置其它环境变量。
 
 产物是 `dist\lumen-frame\` 和 `dist\Lumen-Frame-<版本>-x86_64-pc-windows-msvc.zip`。
 ZIP 用于 Release 和应用内更新，解压后 exe 与 DLL 并排放着，
@@ -177,7 +179,7 @@ Windows DLL 搜索会优先查找 exe 目录，因此这里不需要 macOS 那�
   建议用 Windows 机器或 CI 的 `windows-latest` runner 出包。
 - 配置和预设走 `dirs::config_dir()`，Windows 上是 `%APPDATA%\lumen-frame\presets`，
   代码不需要改。
-- 已验证打包程序可在不包含 vcpkg 或开发包路径的 PATH 下启动；发布前仍应手动检查
+- 已验证打包程序可在不包含开发包路径的 PATH 下启动；发布前仍应手动检查
   设置、常见格式的照片预览和导出。
 
 ---
