@@ -19,13 +19,7 @@ use crate::backend::export::{ExportScope, PhotoExportJob};
 impl AppView {
     fn photo_export_jobs(&self, scope: ExportScope, cx: &App) -> Vec<PhotoExportJob> {
         let current = self.current_watermark(cx);
-        let mut jobs = self.backend.export_jobs(scope);
-        for job in &mut jobs {
-            if Some(job.path.as_path()) == self.selected_path() {
-                job.watermark = current.clone();
-            }
-        }
-        jobs
+        self.backend.export_jobs_with_current(scope, &current)
     }
 
     /// 按每张照片各自的参数把队列全部导出。
@@ -449,7 +443,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let (view, cx) = rendered_workspace(cx);
         view.update_in(cx, |view, _, cx| {
-            view.settings_path = Some(path.clone());
+            view.preferences.path = Some(path.clone());
             view.add_photos(vec!["first.jpg".into(), "second.jpg".into()], cx);
         });
         cx.run_until_parked();

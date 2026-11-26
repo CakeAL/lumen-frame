@@ -97,7 +97,9 @@ impl AppView {
                                         } else {
                                             (
                                                 1,
-                                                this.preset_order
+                                                this.preferences
+                                                    .values
+                                                    .preset_order
                                                     .iter()
                                                     .position(|saved| saved == name.as_ref())
                                                     .unwrap_or(usize::MAX),
@@ -324,20 +326,9 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         use gpui_kit::component::{Theme, ThemeRegistry};
-        self.appearance = saved.appearance;
-        self.window_effects = saved.window_effects;
+        self.preferences.apply_saved(saved);
         crate::window_effects::set_enabled(saved.window_effects, cx);
-        self.light_theme = saved.light_theme.clone().map(Into::into);
-        self.dark_theme = saved.dark_theme.clone().map(Into::into);
-        self.interface_scale = saved
-            .interface_scale
-            .unwrap_or(settings::DEFAULT_INTERFACE_SCALE);
-        self.preview_max_edge = settings::preview_max_edge_from_settings(saved.preview_max_edge);
-        self.preview_background = saved.preview_background;
-        self.map_settings = saved.map.clone();
         self.sync_geocoding_controls(window, cx);
-        self.builtin_presets_collapsed = saved.builtin_presets_collapsed;
-        self.preset_order = saved.preset_order.clone();
         let (light, dark) = {
             let registry = ThemeRegistry::global(cx);
             (
@@ -349,29 +340,41 @@ impl AppView {
             theme.apply_config(&light);
             theme.apply_config(&dark);
         });
+        let light_name = self
+            .preferences
+            .values
+            .light_theme
+            .as_deref()
+            .map(SharedString::new)
+            .unwrap_or_else(|| light.name.clone());
+        let dark_name = self
+            .preferences
+            .values
+            .dark_theme
+            .as_deref()
+            .map(SharedString::new)
+            .unwrap_or_else(|| dark.name.clone());
         for (input, name) in [
-            (
-                &self.settings.light_theme,
-                self.light_theme.as_ref().unwrap_or(&light.name),
-            ),
-            (
-                &self.settings.dark_theme,
-                self.dark_theme.as_ref().unwrap_or(&dark.name),
-            ),
+            (&self.settings.light_theme, &light_name),
+            (&self.settings.dark_theme, &dark_name),
         ] {
             input.update(cx, |input, cx| {
                 input.set_selected_value(name, window, cx);
             });
         }
-        self.settings
-            .preview_background
-            .sync(self.preview_background, window, cx);
-        self.settings
-            .preview_max_edge
-            .sync(f64::from(self.preview_max_edge), window, cx);
+        self.settings.preview_background.sync(
+            self.preferences.values.preview_background,
+            window,
+            cx,
+        );
+        self.settings.preview_max_edge.sync(
+            f64::from(self.preferences.preview_max_edge()),
+            window,
+            cx,
+        );
         self.apply_theme_slots(cx);
         self.apply_appearance(window, cx);
-        settings::apply_interface_scale(self.interface_scale, window, cx);
+        settings::apply_interface_scale(self.preferences.interface_scale(), window, cx);
         self.refresh_preview(cx);
         cx.notify();
     }
@@ -584,7 +587,7 @@ mod tests {
             cx,
         );
         assert!(saved.result.is_ok(), "{saved:?}");
-        assert!(!view.read_with(cx, |view, _| view.window_effects));
+        assert!(!view.read_with(cx, |view, _| view.preferences.values.window_effects));
         assert!(!cx.read(crate::window_effects::enabled));
         drop(server);
         let unavailable = tokio::runtime::Runtime::new()

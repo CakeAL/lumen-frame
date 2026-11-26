@@ -30,7 +30,7 @@ use gpui_kit::{
 
 use crate::backend::media::ExifInfo;
 use crate::backend::motion_photo::{MotionPhotoOptions, export_motion_photo};
-use crate::backend::watermark::{DEFAULT_FONT, TextGroup, WatermarkParams};
+use crate::backend::watermark::{TextGroup, WatermarkParams};
 use crate::backend::workspace::{PhotoId, QueuedPhoto};
 use crate::backend::{
     presets::{self, WatermarkPreset},
@@ -124,10 +124,6 @@ pub struct AppView {
     photo_import: behavior::import::PhotoImportState,
 
     preset_names: Vec<SharedString>,
-    builtin_presets_collapsed: bool,
-    /// 只包含用户预设；新增项追加，删除项在目录刷新时清理。
-    preset_order: Vec<String>,
-    map_settings: crate::backend::geolocation::MapSettings,
     gps_windows: component::location_picker::GpsWindows,
     /// 拖动落点的预设名与前/后位置，不写入配置。
     preset_drop_target: Option<(SharedString, bool)>,
@@ -138,24 +134,9 @@ pub struct AppView {
     preset_feedback: Option<SharedString>,
     preset_feedback_is_error: bool,
 
-    /// 界面明暗的选择。真正的主题落在 GPUI 的全局 `Theme` 上，这里记住的是「用户选的是
-    /// 跟随系统还是指定明暗」，以及用来在设置页上显示当前选项。
-    appearance: AppearanceMode,
-    /// 原生窗口背景效果的本机偏好。
-    window_effects: bool,
-    /// 浅色/深色两个槽位各自选了哪套配色。`None` 表示用默认。
-    light_theme: Option<SharedString>,
-    dark_theme: Option<SharedString>,
-    /// 界面缩放的基础字号。
-    interface_scale: f32,
-    /// 预览底图的长边上限；它只影响预览速度和清晰度。
-    preview_max_edge: i32,
-    /// 照片展示区域的背景色；属于本机界面偏好，不属于导出参数。
-    preview_background: [u8; 3],
+    /// 应用级本机偏好、配置文件路径及保存反馈的唯一持有者。
+    preferences: behavior::appearance::PreferencesState,
     settings: SettingsControls,
-    settings_feedback: Option<SharedString>,
-    /// 由持久化层提供的配置路径，载入与保存始终使用同一个位置。
-    settings_path: Option<PathBuf>,
     update_state: UpdateState,
     /// 只接收命令；业务状态仍由 backend 唯一持有。窗口关闭时取消接收任务。
     external_commands: Option<gpui_kit::Task<()>>,
@@ -181,19 +162,8 @@ impl AppView {
             .map(settings_store::load_at)
             .unwrap_or_default();
         crate::window_effects::install(settings.window_effects, cx);
-        let mut params = WatermarkParams {
-            quality: settings.jpeg_quality.clamp(1, 100),
-            geocoding: settings.geocoding.clone(),
-            ..Default::default()
-        };
-        if let Some(folder) = settings.output_folder.clone() {
-            params.output_folder = Some(folder);
-        }
-        params.default_font = if settings.default_font.trim().is_empty() {
-            DEFAULT_FONT.to_owned()
-        } else {
-            settings.default_font.clone()
-        };
+        let mut params = WatermarkParams::default();
+        params.apply_loaded_settings(&settings);
         let text_group = TextGroup::default();
 
         let preview = cx.new(|_| WatermarkPreview::new());
@@ -232,13 +202,16 @@ impl AppView {
         crate::theme::install(cx);
         let (settings_controls, settings_subscriptions) =
             SettingsControls::new(&settings, &params.default_font, &font_names, window, cx);
+        let mut preferences =
+            behavior::appearance::PreferencesState::new(settings_path.clone(), settings);
+        preferences.values.preset_order = preset_order;
 
         // 系统在明暗之间切换时通知一次；只有「跟随系统」才需要响应。
         let mut subscriptions = subscriptions;
         subscriptions.extend(settings_subscriptions);
         subscriptions.push(cx.observe(&preview, |_, _, cx| cx.notify()));
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
-            if this.appearance == AppearanceMode::System {
+            if this.preferences.values.appearance == AppearanceMode::System {
                 Theme::sync_system_appearance(Some(window), cx);
                 cx.notify();
             }
@@ -247,7 +220,7 @@ impl AppView {
         let mut view = Self {
             page: AppPage::Watermark,
             backend: crate::backend::Session::new(global_watermark).with_storage(
-                crate::backend::StoragePaths::default().with_settings_file(settings_path.clone()),
+                crate::backend::StoragePaths::default().with_settings_file(settings_path),
             ),
             queue_focus: cx.focus_handle(),
             queue_scroll: ScrollHandle::new(),
@@ -272,33 +245,20 @@ impl AppView {
             export: ExportState::Idle,
             photo_import: Default::default(),
             preset_names,
-            builtin_presets_collapsed: settings.builtin_presets_collapsed,
-            preset_order,
             gps_windows: Default::default(),
-            map_settings: settings.map,
             preset_drop_target: None,
             preset_previews,
             builtin_preset_names,
             preset_feedback: None,
             preset_feedback_is_error: false,
-            appearance: settings.appearance,
-            window_effects: settings.window_effects,
-            light_theme: settings.light_theme.map(SharedString::from),
-            dark_theme: settings.dark_theme.map(SharedString::from),
-            interface_scale: settings
-                .interface_scale
-                .unwrap_or(settings::DEFAULT_INTERFACE_SCALE),
-            preview_max_edge: settings::preview_max_edge_from_settings(settings.preview_max_edge),
-            preview_background: settings.preview_background,
+            preferences,
             settings: settings_controls,
-            settings_feedback: None,
-            settings_path,
             update_state: UpdateState::Idle,
             external_commands: None,
             _subscriptions: subscriptions,
         };
         // 主题要在第一帧之前落好，否则会先闪一下默认的浅色。
-        settings::apply_interface_scale(view.interface_scale, window, cx);
+        settings::apply_interface_scale(view.preferences.interface_scale(), window, cx);
         view.apply_theme_slots(cx);
         view.apply_appearance(window, cx);
         view.start_automatic_update_check(window, cx);
@@ -419,7 +379,7 @@ impl AppView {
                 exif: photo.exif().cloned(),
                 params: self.backend.params().clone(),
                 text_groups: self.build_text_groups(cx),
-                max_edge: self.preview_max_edge,
+                max_edge: self.preferences.preview_max_edge(),
             },
             None => {
                 self.preview.update(cx, |preview, cx| preview.clear(cx));
@@ -992,10 +952,10 @@ impl AppView {
         collapsed: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.builtin_presets_collapsed == collapsed {
+        if self.preferences.values.builtin_presets_collapsed == collapsed {
             return;
         }
-        self.builtin_presets_collapsed = collapsed;
+        self.preferences.values.builtin_presets_collapsed = collapsed;
         self.preset_feedback = None;
         self.persist_preset_preferences();
         cx.notify();
@@ -1017,7 +977,8 @@ impl AppView {
             cx.notify();
             return;
         }
-        self.preset_order = user_preset_order(&self.preset_names, &self.builtin_preset_names);
+        self.preferences.values.preset_order =
+            user_preset_order(&self.preset_names, &self.builtin_preset_names);
         self.preset_feedback = None;
         self.persist_preset_preferences();
         cx.notify();
@@ -1030,6 +991,8 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let Some(index) = self
+            .preferences
+            .values
             .preset_order
             .iter()
             .position(|candidate| candidate == name)
@@ -1042,7 +1005,7 @@ impl AppView {
             index.checked_add(1)
         };
         if let Some(target) = target_index
-            .and_then(|index| self.preset_order.get(index))
+            .and_then(|index| self.preferences.values.preset_order.get(index))
             .cloned()
         {
             self.move_preset(name, &target, earlier, cx);
@@ -1051,7 +1014,7 @@ impl AppView {
 
     fn persist_preset_preferences(&mut self) {
         self.persist_settings();
-        if let Some(error) = self.settings_feedback.clone() {
+        if let Some(error) = self.preferences.feedback.clone() {
             self.preset_feedback = Some(error);
             self.preset_feedback_is_error = true;
         }
@@ -1358,8 +1321,8 @@ impl AppView {
     }
 
     fn refresh_preset_names(&mut self) {
-        let (names, previews, builtins) = preset_catalog(&self.preset_order);
-        self.preset_order = user_preset_order(&names, &builtins);
+        let (names, previews, builtins) = preset_catalog(&self.preferences.values.preset_order);
+        self.preferences.values.preset_order = user_preset_order(&names, &builtins);
         self.preset_names = names;
         self.preset_previews = previews;
         self.builtin_preset_names = builtins;
@@ -1518,7 +1481,8 @@ mod preset_tests {
                 app.preset_previews
                     .insert(name.into(), preset_of(&WatermarkParams::default(), &[]));
             }
-            app.preset_order = user_preset_order(&app.preset_names, &app.builtin_preset_names);
+            app.preferences.values.preset_order =
+                user_preset_order(&app.preset_names, &app.builtin_preset_names);
             cx.notify();
         });
         cx.run_until_parked();
@@ -1548,21 +1512,31 @@ mod preset_tests {
             window.click("builtin-presets-toggle", cx);
             window.render_frame(cx);
         });
-        assert!(view.read_with(cx, |app, _| app.builtin_presets_collapsed));
+        assert!(view.read_with(cx, |app, _| {
+            app.preferences.values.builtin_presets_collapsed
+        }));
         assert!(cx.debug_bounds("preset-card-16_9").is_none());
         assert!(cx.debug_bounds("preset-card-test-a").is_some());
         assert!(settings_store::load_at(&path).builtin_presets_collapsed);
 
         // 折叠入口保持键盘可操作。
         cx.update(|window, cx| window.press("enter", cx));
-        assert!(!view.read_with(cx, |app, _| app.builtin_presets_collapsed));
+        assert!(!view.read_with(cx, |app, _| {
+            app.preferences.values.builtin_presets_collapsed
+        }));
         assert!(cx.debug_bounds("preset-card-16_9").is_some());
         assert!(!settings_store::load_at(&path).builtin_presets_collapsed);
         cx.update(|window, cx| window.press("space", cx));
         cx.update(|window, cx| {
             let restored =
                 cx.new(|cx| AppView::new_with_settings_path(Some(path.clone()), window, cx));
-            assert!(restored.read(cx).builtin_presets_collapsed);
+            assert!(
+                restored
+                    .read(cx)
+                    .preferences
+                    .values
+                    .builtin_presets_collapsed
+            );
         });
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
@@ -1584,7 +1558,7 @@ mod preset_tests {
         });
         let order = view.read_with(cx, |app, _| {
             assert!(app.preset_feedback.is_none(), "拖动不应触发载入预设");
-            app.preset_order.clone()
+            app.preferences.values.preset_order.clone()
         });
         assert_eq!(order, ["test-b", "test-c", "test-a"]);
         assert_eq!(settings_store::load_at(&path).preset_order, order);

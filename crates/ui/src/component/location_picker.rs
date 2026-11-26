@@ -192,7 +192,7 @@ impl LocationPicker {
     ) -> Self {
         let settings = app
             .upgrade()
-            .map(|owner| owner.read(cx).map_settings.clone())
+            .map(|owner| owner.read(cx).preferences.values.map.clone())
             .unwrap_or_default();
         // 控件和地图请求共享同一次读取的偏好，测试可注入离线服务。
         let service = build_service(&settings);
@@ -297,10 +297,10 @@ impl LocationPicker {
                 self.service = Some(service);
                 self.active_settings = settings.clone();
                 let saved = self.app.update(cx, |app, cx| {
-                    app.map_settings = settings;
+                    app.preferences.values.map = settings;
                     app.persist_settings();
                     cx.notify();
-                    match &app.settings_feedback {
+                    match &app.preferences.feedback {
                         Some(message) => Err(anyhow::anyhow!("{message}")),
                         None => Ok(()),
                     }
@@ -1022,7 +1022,7 @@ mod tests {
                         .unwrap();
                     app.backend.workspace_mut().select(first);
                     // 腾讯底图的点击回填仍须使用 WGS 84，且保留原照片身份。
-                    app.map_settings = MapSettings::default()
+                    app.preferences.values.map = MapSettings::default()
                         .with_provider(crate::backend::geolocation::MapProvider::Tencent);
                     (first, second)
                 });

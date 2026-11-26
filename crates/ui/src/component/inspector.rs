@@ -1120,7 +1120,7 @@ impl AppView {
                             .flex_shrink_0()
                             .child(
                                 AccordionItem::new()
-                                    .open(!self.builtin_presets_collapsed)
+                                    .open(!self.preferences.values.builtin_presets_collapsed)
                                     // GPUI 的 Button 角色已将 Enter/Space 转为点击，统一走 on_change。
                                     .header(AccordionHeader::new(
                                         AccordionTrigger::new("builtin-presets-toggle")
@@ -1143,11 +1143,17 @@ impl AppView {
                                             })
                                             .child(muted_text("内置预设示例", cx))
                                             .child(
-                                                Icon::new(if self.builtin_presets_collapsed {
-                                                    IconName::ChevronRight
-                                                } else {
-                                                    IconName::ChevronDown
-                                                })
+                                                Icon::new(
+                                                    if self
+                                                        .preferences
+                                                        .values
+                                                        .builtin_presets_collapsed
+                                                    {
+                                                        IconName::ChevronRight
+                                                    } else {
+                                                        IconName::ChevronDown
+                                                    },
+                                                )
                                                 .xsmall()
                                                 .text_color(cx.theme().muted_foreground),
                                             )

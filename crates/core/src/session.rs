@@ -38,16 +38,7 @@ impl Session {
     pub fn from_storage(storage: super::StoragePaths) -> Result<Self> {
         let settings = crate::settings::load_at(storage.settings()?);
         let mut session = Self::default().with_storage(storage);
-        session.current.params.quality = settings.jpeg_quality.clamp(1, 100);
-        session.current.params.geocoding = settings.geocoding;
-        if let Some(folder) = settings.output_folder {
-            session.current.params.output_folder = Some(folder);
-        }
-        session.current.params.default_font = if settings.default_font.trim().is_empty() {
-            crate::watermark::DEFAULT_FONT.to_owned()
-        } else {
-            settings.default_font
-        };
+        session.current.params.apply_loaded_settings(&settings);
         session.current.params.custom_logos =
             crate::logos::snapshot(&crate::logos::library_in(session.storage.logos()?)?);
         session.defaults = session.current.clone();
@@ -120,13 +111,9 @@ impl Session {
         self.changed();
     }
     fn environment(&self, watermark: &mut WatermarkPreset) {
-        let params = &mut watermark.params;
-        params.output_folder = self.params().output_folder.clone();
-        params.default_font = self.params().default_font.clone();
-        params.geocoding = self.params().geocoding.clone();
-        params.custom_logos = self.params().custom_logos.clone();
-        params.rotation = self.params().rotation;
-        params.quality = self.params().quality;
+        watermark
+            .params
+            .apply_environment(&self.params().environment());
     }
     pub fn watermark_for(&self, id: PhotoId) -> Result<WatermarkPreset> {
         self.workspace.photo(id).context("照片已移除或不存在")?;
@@ -277,17 +264,43 @@ impl Session {
         }
     }
     pub fn export_jobs(&self, scope: ExportScope) -> Vec<PhotoExportJob> {
+        self.export_jobs_with_selected(scope, None)
+    }
+
+    /// 供桌面宿主在只读视图中冻结导出任务：按稳定 `PhotoId` 替换选中照片的当前草稿。
+    pub fn export_jobs_with_current(
+        &self,
+        scope: ExportScope,
+        current: &WatermarkPreset,
+    ) -> Vec<PhotoExportJob> {
+        self.export_jobs_with_selected(scope, Some(current))
+    }
+
+    fn export_jobs_with_selected(
+        &self,
+        scope: ExportScope,
+        selected_override: Option<&WatermarkPreset>,
+    ) -> Vec<PhotoExportJob> {
+        let selected_id = self.workspace.selected_id();
         self.workspace
             .photos()
             .iter()
-            .filter(|p| {
-                matches!(scope, ExportScope::AllPhotos)
-                    || Some(p.id()) == self.workspace.selected_id()
-            })
-            .map(|p| PhotoExportJob {
-                path: p.path().to_path_buf(),
-                exif: p.exif_override().cloned(),
-                watermark: self.watermark_for(p.id()).expect("队列身份有效"),
+            .filter(|p| matches!(scope, ExportScope::AllPhotos) || Some(p.id()) == selected_id)
+            .map(|p| {
+                let watermark = if Some(p.id()) == selected_id
+                    && let Some(override_watermark) = selected_override
+                {
+                    let mut copy = override_watermark.clone();
+                    self.environment(&mut copy);
+                    copy
+                } else {
+                    self.watermark_for(p.id()).expect("队列身份有效")
+                };
+                PhotoExportJob {
+                    path: p.path().to_path_buf(),
+                    exif: p.exif_override().cloned(),
+                    watermark,
+                }
             })
             .collect()
     }

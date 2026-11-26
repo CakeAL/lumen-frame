@@ -605,7 +605,7 @@ impl AppView {
                     .overflow_hidden()
                     .p_5()
                     .gap_4()
-                    .bg(rgb_to_hsla(self.preview_background))
+                    .bg(rgb_to_hsla(self.preferences.values.preview_background))
                     .child(self.render_image_panel(
                         "黑白底图",
                         self.render_black_and_white_preview(cx),
@@ -805,7 +805,7 @@ impl AppView {
                     .min_h_0()
                     .p_5()
                     .gap_3()
-                    .bg(rgb_to_hsla(self.preview_background))
+                    .bg(rgb_to_hsla(self.preferences.values.preview_background))
                     .child(
                         div()
                             .text_sm()

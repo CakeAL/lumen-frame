@@ -375,7 +375,7 @@ impl AppView {
             .min_h_0()
             .items_center()
             .justify_center()
-            .bg(rgb_to_hsla(self.preview_background))
+            .bg(rgb_to_hsla(self.preferences.values.preview_background))
             .p_6()
             .child(content)
     }

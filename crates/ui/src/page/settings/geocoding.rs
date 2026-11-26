@@ -136,7 +136,8 @@ impl AppView {
             self.backend.params_mut().geocoding = settings;
             self.persist_settings();
             self.settings.geocoding.feedback = self
-                .settings_feedback
+                .preferences
+                .feedback
                 .as_ref()
                 .map(|message| (message.to_string(), true));
             self.refresh_preview(cx);

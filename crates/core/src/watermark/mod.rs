@@ -211,7 +211,68 @@ impl Default for WatermarkParams {
     }
 }
 
+/// 本机环境与运行期导出上下文，不随可复用水印预设写入磁盘。
+#[derive(Debug, Clone, PartialEq)]
+pub struct WatermarkEnvironment {
+    pub output_folder: Option<PathBuf>,
+    pub default_font: String,
+    pub geocoding: crate::geocoding::GeocodingSettings,
+    pub custom_logos: BTreeMap<String, Arc<Vec<u8>>>,
+    pub quality: i32,
+    pub rotation: Rotation,
+}
+
 impl WatermarkParams {
+    pub fn environment(&self) -> WatermarkEnvironment {
+        WatermarkEnvironment {
+            output_folder: self.output_folder.clone(),
+            default_font: self.default_font.clone(),
+            geocoding: self.geocoding.clone(),
+            custom_logos: self.custom_logos.clone(),
+            quality: self.quality,
+            rotation: self.rotation,
+        }
+    }
+
+    pub fn apply_environment(&mut self, env: &WatermarkEnvironment) {
+        self.output_folder = env.output_folder.clone();
+        self.default_font = env.default_font.clone();
+        self.geocoding = env.geocoding.clone();
+        self.custom_logos = env.custom_logos.clone();
+        self.quality = env.quality;
+        self.rotation = env.rotation;
+    }
+
+    /// 从启动时读取的本机偏好初始化导出环境；未配置输出目录时保留默认目录。
+    pub fn apply_loaded_settings(&mut self, settings: &crate::settings::AppSettings) {
+        self.quality = settings.jpeg_quality.clamp(1, 100);
+        self.geocoding = settings.geocoding.clone();
+        if let Some(folder) = settings.output_folder.clone() {
+            self.output_folder = Some(folder);
+        }
+        self.default_font = if settings.default_font.trim().is_empty() {
+            DEFAULT_FONT.to_owned()
+        } else {
+            settings.default_font.clone()
+        };
+    }
+
+    /// 同步显式保存的完整应用设置到当前导出环境，允许清空输出目录。
+    pub fn apply_saved_settings(&mut self, settings: &crate::settings::AppSettings) {
+        self.output_folder = settings.output_folder.clone();
+        self.quality = settings.jpeg_quality.clamp(1, 100);
+        self.default_font = settings.default_font.clone();
+        self.geocoding = settings.geocoding.clone();
+    }
+
+    /// 将当前会话持有的本机导出环境写回 `AppSettings` 快照。
+    pub fn write_to_settings(&self, settings: &mut crate::settings::AppSettings) {
+        settings.output_folder = self.output_folder.clone();
+        settings.jpeg_quality = self.quality;
+        settings.default_font = self.default_font.clone();
+        settings.geocoding = self.geocoding.clone();
+    }
+
     pub fn background_kind(&self) -> BackgroundKind {
         if self.gradient_background {
             BackgroundKind::Gradient

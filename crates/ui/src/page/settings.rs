@@ -488,7 +488,8 @@ impl AppView {
                                 )
                                 .child(content)
                                 .when_some(
-                                    self.settings_feedback
+                                    self.preferences
+                                        .feedback
                                         .clone()
                                         .filter(|_| category != SettingsCategory::Geocoding),
                                     |this, feedback| this.child(description(feedback)),
@@ -554,10 +555,10 @@ impl AppView {
     fn render_appearance_settings(&self, cx: &Context<Self>) -> impl IntoElement {
         let appearance_index = APPEARANCES
             .iter()
-            .position(|(_, mode)| *mode == self.appearance);
+            .position(|(_, mode)| *mode == self.preferences.values.appearance);
         let scale_index = INTERFACE_SCALES
             .iter()
-            .position(|(_, size)| (size - self.interface_scale).abs() < 0.5);
+            .position(|(_, size)| (size - self.preferences.interface_scale()).abs() < 0.5);
         v_flex()
             .w_full()
             .gap_6()
@@ -572,7 +573,7 @@ impl AppView {
                             .child(
                                 Switch::new("settings-window-effects")
                                     .label("窗口毛玻璃")
-                                    .checked(self.window_effects)
+                                    .checked(self.preferences.values.window_effects)
                                     .disabled(!crate::window_effects::supported())
                                     .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                         this.set_window_effects(*checked, cx)
@@ -724,13 +725,13 @@ mod tests {
             }
         });
         let view = owner.borrow().clone().unwrap();
-        assert!(view.read_with(cx, |view, _| view.window_effects));
+        assert!(view.read_with(cx, |view, _| view.preferences.values.window_effects));
         if crate::window_effects::supported() {
             cx.update(|window, cx| window.click("0-1", cx));
             cx.run_until_parked();
             cx.update(|window, cx| window.click("settings-window-effects", cx));
             cx.run_until_parked();
-            assert!(!view.read_with(cx, |view, _| view.window_effects));
+            assert!(!view.read_with(cx, |view, _| view.preferences.values.window_effects));
             assert!(!crate::backend::settings::load_at(&path).window_effects);
             assert!(!cx.read(crate::window_effects::enabled));
         }
@@ -738,7 +739,7 @@ mod tests {
             view.reset_appearance_defaults(window, cx)
         });
         cx.run_until_parked();
-        assert!(view.read_with(cx, |view, _| view.window_effects));
+        assert!(view.read_with(cx, |view, _| view.preferences.values.window_effects));
         assert!(crate::backend::settings::load_at(&path).window_effects);
         let _ = std::fs::remove_dir_all(directory);
     }

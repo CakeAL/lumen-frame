@@ -1103,11 +1103,7 @@ impl Session {
                     "JPEG 质量必须在 1 至 100 之间"
                 );
                 super::settings::save_at(self.storage().settings()?, &settings)?;
-                let params = self.params_mut();
-                params.output_folder = settings.output_folder;
-                params.quality = settings.jpeg_quality;
-                params.default_font = settings.default_font;
-                params.geocoding = settings.geocoding;
+                self.params_mut().apply_saved_settings(&settings);
                 json!(true)
             }
             ListLogos => logos_output(super::logos::library_in(self.storage().logos()?)?),
