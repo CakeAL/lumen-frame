@@ -59,11 +59,8 @@ pub(crate) fn composite_over(
     })
 }
 
-pub(crate) fn copy_with_layout(
+pub(crate) fn with_interpretation(
     image: &VipsImage,
-    width: i32,
-    height: i32,
-    bands: i32,
     interpretation: VipsInterpretation,
 ) -> vips::Result<VipsImage> {
     ensure_vips();
@@ -71,12 +68,6 @@ pub(crate) fn copy_with_layout(
         vips_sys::vips_copy(
             image.as_ptr(),
             out,
-            c"width".as_ptr(),
-            width,
-            c"height".as_ptr(),
-            height,
-            c"bands".as_ptr(),
-            bands,
             c"interpretation".as_ptr(),
             interpretation,
             ptr::null::<i8>(),
@@ -100,7 +91,11 @@ pub(crate) fn extract_bands(image: &VipsImage, first: i32, count: i32) -> vips::
 
 pub(crate) fn linear_uchar(image: &VipsImage, a: &[f64], b: &[f64]) -> vips::Result<VipsImage> {
     ensure_vips();
-    assert_eq!(a.len(), b.len());
+    if a.is_empty() || a.len() != b.len() || a.len() > i32::MAX as usize {
+        return Err(Error::Other(
+            "linear_uchar requires equal nonempty a/b arrays with an i32 length".into(),
+        ));
+    }
     write_operation(VipsImage::new()?, |out| unsafe {
         vips_sys::vips_linear(
             image.as_ptr(),
@@ -124,6 +119,11 @@ pub(crate) fn add_alpha(image: &VipsImage) -> vips::Result<VipsImage> {
 
 pub(crate) fn constant_like(image: &VipsImage, values: &[f64]) -> vips::Result<VipsImage> {
     ensure_vips();
+    if values.is_empty() || values.len() > i32::MAX as usize {
+        return Err(Error::Other(
+            "constant_like requires a nonempty values slice with an i32 length".into(),
+        ));
+    }
     write_operation(VipsImage::new()?, |out| {
         let raw = unsafe {
             vips_sys::vips_image_new_from_image(
@@ -227,13 +227,6 @@ pub(crate) fn seeded_noise(width: i32, height: i32, sigma: f64) -> vips::Result<
     })
 }
 
-pub(crate) fn srgb_to_scrgb(image: &VipsImage) -> vips::Result<VipsImage> {
-    ensure_vips();
-    write_operation(VipsImage::new()?, |out| unsafe {
-        vips_sys::vips_sRGB2scRGB(image.as_ptr(), out, ptr::null::<i8>())
-    })
-}
-
 pub(crate) fn max_pair(a: &VipsImage, b: &VipsImage) -> vips::Result<VipsImage> {
     ensure_vips();
     write_operation(VipsImage::new()?, |out| unsafe {
@@ -261,12 +254,12 @@ pub fn decode_image_buffer(bytes: &[u8]) -> vips::Result<VipsImage> {
     Ok(decoded)
 }
 
-/// SVG 按最终尺寸栅格化，导出放大时不放大低分辨率的中间位图。
-pub(crate) fn load_logo_at_height(
+/// 若素材为 SVG，按目标高度重新栅格化，避免导出放大低分辨率中间位图；非 SVG 返回 `None`。
+pub(crate) fn rerasterize_svg_at_height(
     bytes: &[u8],
-    natural: VipsImage,
+    natural_height: u32,
     height: f64,
-) -> vips::Result<VipsImage> {
+) -> vips::Result<Option<VipsImage>> {
     ensure_vips();
     let loader =
         unsafe { vips_sys::vips_foreign_find_load_buffer(bytes.as_ptr().cast(), bytes.len()) };
@@ -276,9 +269,9 @@ pub(crate) fn load_logo_at_height(
             .windows(3)
             .any(|part| part.eq_ignore_ascii_case(b"svg"));
     if !is_svg {
-        return Ok(natural);
+        return Ok(None);
     }
-    let scale = height.max(1.0) / natural.height() as f64;
+    let scale = height.max(1.0) / natural_height.max(1) as f64;
     write_operation(VipsImage::new_memory()?, |out| unsafe {
         vips_sys::vips_svgload_buffer(
             bytes.as_ptr().cast_mut().cast(),
@@ -289,6 +282,7 @@ pub(crate) fn load_logo_at_height(
             ptr::null::<i8>(),
         )
     })
+    .map(Some)
 }
 
 /// 将 vips 图像求值为连续像素内存，并在 libvips 失败时返回错误。
@@ -308,4 +302,18 @@ pub fn image_metadata_string(image: &VipsImage, name: &str) -> Result<String> {
     let text = unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() };
     unsafe { vips_sys::g_free(value.cast()) };
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_uchar_and_constant_like_reject_invalid_slices() {
+        ensure_vips();
+        let black = vips::black(4, 4).unwrap();
+        assert!(linear_uchar(&black, &[], &[]).is_err());
+        assert!(linear_uchar(&black, &[1.0], &[0.0, 1.0]).is_err());
+        assert!(constant_like(&black, &[]).is_err());
+    }
 }

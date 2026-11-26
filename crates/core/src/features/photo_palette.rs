@@ -1,6 +1,7 @@
 //! 可复用的照片色卡提取。只分析缩小后的 SDR 颜色，不修改原图或 HDR 元数据。
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock},
@@ -11,7 +12,7 @@ use anyhow::{Context as _, Result, ensure};
 use auto_palette::{ImageData, Palette};
 use vips::{VipsBandFormat, VipsInterpretation, VipsSize};
 
-use crate::media::{ensure_vips, image_write_to_memory, vips::VipsImage};
+use crate::media::{ensure_vips, vips::VipsImage};
 use crate::watermark::{BackgroundGradient, BackgroundKind, PaletteTheme, WatermarkParams};
 
 #[derive(PartialEq)]
@@ -81,20 +82,22 @@ pub fn extract_with_theme(
 
 fn load_palette(path: &Path) -> Result<Palette<f64>> {
     ensure_vips();
-    // thumbnail 使用解码器缩小能力，并按 EXIF 摆正；统一经过 libvips 支持原有格式。
-    let source = VipsImage::from_file(path).context("读取照片失败")?;
-    let image = source.thumbnail(192, 192, VipsSize::VIPS_SIZE_DOWN)?;
+    // thumbnail_file 在解码阶段直接 shrink-on-load 并按 EXIF 摆正，避免先解码整张高像素原图。
+    let image = VipsImage::thumbnail_file(path, 192, 192, VipsSize::VIPS_SIZE_DOWN)
+        .context("读取照片失败")?;
     let image = image.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB)?;
     let image = image.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
-    let pixels = image_write_to_memory(&image)?;
-    let rgba = match image.bands() {
-        3 => pixels
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        4 => pixels,
+    let pixels = image.write_to_memory_owned()?;
+    let rgba: Cow<'_, [u8]> = match image.bands() {
+        3 => {
+            let src = pixels.as_slice().as_chunks::<3>().0;
+            let mut out = Vec::with_capacity(src.len() * 4);
+            for &[r, g, b] in src {
+                out.extend_from_slice(&[r, g, b, 255]);
+            }
+            Cow::Owned(out)
+        }
+        4 => Cow::Borrowed(pixels.as_slice()),
         bands => anyhow::bail!("取色不支持 {bands} 个颜色通道，请转换为 RGB 照片"),
     };
     let image = ImageData::new(image.width(), image.height(), &rgba)?;

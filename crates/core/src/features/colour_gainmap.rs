@@ -3,7 +3,7 @@
 //! 新的 gain map 记录从黑白 SDR 底图恢复到原始 RGB 的逐通道增益。输入已有 gain map
 //! 时，会将其 HDR 高光叠加在原始 SDR 亮度之上再重新编码。
 
-use crate::media::vips::{copy_with_layout, linear_uchar, max_pair, srgb_to_scrgb};
+use crate::media::vips::{linear_uchar, max_pair, with_interpretation};
 use anyhow::Result;
 use std::path::Path;
 use vips::{VipsBandFormat, VipsInterpretation};
@@ -23,7 +23,7 @@ pub fn load_black_and_white_with_colour_gainmap(
     rotation: Rotation,
 ) -> Result<VipsImage> {
     let base = load_base_image(path)?;
-    let source_sdr = srgb_to_scrgb(&base)?;
+    let source_sdr = base.colourspace(VipsInterpretation::VIPS_INTERPRETATION_scRGB)?;
     let target_hdr = if gain_map::get_gainmap(&base).is_some() {
         // 有些原 Ultra HDR 的 HDR intent 会比它的 SDR 底图更暗。使用 SDR 彩色图作为
         // 下限，只叠加原 gain map 中确实更亮的部分，避免彩色预览整体被压暗。
@@ -36,7 +36,7 @@ pub fn load_black_and_white_with_colour_gainmap(
     let black_and_white = base.colourspace(VipsInterpretation::VIPS_INTERPRETATION_B_W)?;
     let mut black_and_white =
         black_and_white.colourspace(VipsInterpretation::VIPS_INTERPRETATION_sRGB)?;
-    let base_sdr = srgb_to_scrgb(&black_and_white)?;
+    let base_sdr = black_and_white.colourspace(VipsInterpretation::VIPS_INTERPRETATION_scRGB)?;
     let (colour_gainmap, min_boost, max_boost) = encode_rgb_gainmap(&base_sdr, &target_hdr)?;
     gain_map::set_gainmap(&mut black_and_white, &colour_gainmap);
     gain_map::set_scale_factor(&mut black_and_white, 1.0);
@@ -89,12 +89,6 @@ fn encode_rgb_gainmap(
         gainmap.bands() as u8,
         VipsBandFormat::VIPS_FORMAT_UCHAR,
     )?;
-    let gainmap = copy_with_layout(
-        &gainmap,
-        gainmap.width() as i32,
-        gainmap.height() as i32,
-        gainmap.bands() as i32,
-        VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-    )?;
+    let gainmap = with_interpretation(&gainmap, VipsInterpretation::VIPS_INTERPRETATION_sRGB)?;
     Ok((gainmap, min_boost, max_boost))
 }

@@ -1,6 +1,6 @@
-use crate::media::vips::{constant_like, copy_with_layout, decode_image_buffer, interpretation};
+use crate::media::vips::{constant_like, decode_image_buffer, interpretation, with_interpretation};
 use crate::media::{ensure_vips, vips::VipsImage};
-use std::path::Path;
+use std::{ffi::CStr, path::Path};
 use vips::{Result, VipsBandFormat};
 
 /// 如果图片带可解码的 Ultra HDR gain map，返回它。
@@ -15,15 +15,18 @@ pub fn set_gainmap(img: &mut VipsImage, gainmap: &VipsImage) {
     unsafe {
         let raw = img.as_ptr();
         let gm = gainmap.as_ptr();
-        let name = std::ffi::CString::new("gainmap").unwrap();
-        vips_sys::vips_image_set_image(raw, name.as_ptr(), gm);
+        vips_sys::vips_image_set_image(raw, c"gainmap".as_ptr(), gm);
 
         // jpegsave 以 gainmap-data 的存在来切换到 uhdrsave。新建的普通 JPEG 没有这项，
         // 即使已有 "gainmap" 图像也会被当作普通 JPEG 保存。uhdrsave 会优先使用上面的
         // 未压缩 gainmap，因此这里的单字节 blob 只作为保存路径标记，不会写入输出。
         let marker = 0u8;
-        let name = std::ffi::CString::new("gainmap-data").unwrap();
-        vips_sys::vips_image_set_blob_copy(raw, name.as_ptr(), (&marker as *const u8).cast(), 1);
+        vips_sys::vips_image_set_blob_copy(
+            raw,
+            c"gainmap-data".as_ptr(),
+            (&marker as *const u8).cast(),
+            1,
+        );
     }
 }
 
@@ -40,9 +43,7 @@ pub fn has_icc_profile(img: &VipsImage) -> bool {
 pub fn set_scale_factor(img: &mut VipsImage, scale: f64) {
     ensure_vips();
     unsafe {
-        let raw = img.as_ptr();
-        let name = std::ffi::CString::new("gainmap-scale-factor").unwrap();
-        vips_sys::vips_image_set_double(raw, name.as_ptr(), scale);
+        vips_sys::vips_image_set_double(img.as_ptr(), c"gainmap-scale-factor".as_ptr(), scale);
     }
 }
 
@@ -58,33 +59,30 @@ pub fn set_rgb_gainmap_metadata(
     ensure_vips();
     unsafe {
         let raw = img.as_ptr();
-        let set_array = |name: &str, values: &[f64; 3]| {
-            let name = std::ffi::CString::new(name).unwrap();
+        let set_array = |name: &CStr, values: &[f64; 3]| {
             vips_sys::vips_image_set_array_double(raw, name.as_ptr(), values.as_ptr(), 3);
         };
-        let set_double = |name: &str, value: f64| {
-            let name = std::ffi::CString::new(name).unwrap();
+        let set_double = |name: &CStr, value: f64| {
             vips_sys::vips_image_set_double(raw, name.as_ptr(), value);
         };
-        let set_int = |name: &str, value: i32| {
-            let name = std::ffi::CString::new(name).unwrap();
+        let set_int = |name: &CStr, value: i32| {
             vips_sys::vips_image_set_int(raw, name.as_ptr(), value);
         };
 
-        set_array("gainmap-min-content-boost", &min_content_boost);
-        set_array("gainmap-max-content-boost", &max_content_boost);
-        set_array("gainmap-gamma", &[1.0; 3]);
-        set_array("gainmap-offset-sdr", &[1.0 / 64.0; 3]);
-        set_array("gainmap-offset-hdr", &[1.0 / 64.0; 3]);
-        set_double("gainmap-hdr-capacity-min", 1.0);
+        set_array(c"gainmap-min-content-boost", &min_content_boost);
+        set_array(c"gainmap-max-content-boost", &max_content_boost);
+        set_array(c"gainmap-gamma", &[1.0; 3]);
+        set_array(c"gainmap-offset-sdr", &[1.0 / 64.0; 3]);
+        set_array(c"gainmap-offset-hdr", &[1.0 / 64.0; 3]);
+        set_double(c"gainmap-hdr-capacity-min", 1.0);
         set_double(
-            "gainmap-hdr-capacity-max",
+            c"gainmap-hdr-capacity-max",
             max_content_boost
                 .into_iter()
                 .fold(1.0, f64::max)
                 .min(TARGET_DISPLAY_BOOST),
         );
-        set_int("gainmap-use-base-cg", 1);
+        set_int(c"gainmap-use-base-cg", 1);
     }
 }
 
@@ -260,7 +258,7 @@ pub fn make_watermark_gainmap(
 
     let interp = interpretation(original_gainmap);
     let background = background.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
-    copy_with_layout(&background, gw, gh, gm_bands, interp)
+    with_interpretation(&background, interp)
 }
 
 fn neutral_image(width: i32, height: i32, bands: i32, neutral: f64) -> Result<VipsImage> {

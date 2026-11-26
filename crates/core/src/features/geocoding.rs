@@ -277,16 +277,26 @@ fn fresh(entry: &CachedResponse) -> bool {
             Duration::from_secs(15)
         }
 }
+fn http_client() -> Result<&'static reqwest::blocking::Client> {
+    static CLIENT: OnceLock<std::result::Result<reqwest::blocking::Client, String>> =
+        OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(8))
+                .connect_timeout(Duration::from_secs(4))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!("无法初始化高德连接：{error}"))
+}
 fn request(key: &RequestKey) -> Result<Value> {
     request_at(key, ENDPOINT)
 }
 fn request_at(key: &RequestKey, endpoint: &str) -> Result<Value> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .connect_timeout(Duration::from_secs(4))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .context("无法初始化高德连接")?;
+    let client = http_client()?;
     let response = client
         .get(endpoint)
         .query(&[

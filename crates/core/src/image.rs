@@ -8,7 +8,7 @@ use vips::{VipsBandFormat, VipsSize};
 use crate::{
     features::colour_gainmap,
     gainmap as gain_map,
-    media::{ExifInfo, ensure_vips, image_write_to_memory, load_base_image, vips::VipsImage},
+    media::{ExifInfo, ensure_vips, load_base_image, vips::VipsImage},
     photo::Photo,
     rotation::Rotation,
     watermark::{TextGroup, WatermarkParams},
@@ -71,7 +71,14 @@ pub fn render_preview_with_regions(job: &PreviewJob) -> Result<RenderedPreview> 
 pub fn render_thumbnail(path: &Path) -> Result<RasterImage> {
     // 缩略图和预览合成会并发跑在后台线程池里，谁先到都得先初始化 libvips。
     ensure_vips();
-    let base = load_scaled(path, THUMBNAIL_MAX_EDGE).context("读取缩略图")?;
+    // 缩略图仅单趟读取 SDR 像素、不使用 gain map，可用 thumbnail_file 直接 shrink-on-load。
+    let base = VipsImage::thumbnail_file(
+        path,
+        THUMBNAIL_MAX_EDGE as u32,
+        THUMBNAIL_MAX_EDGE as u32,
+        VipsSize::VIPS_SIZE_DOWN,
+    )
+    .context("读取缩略图")?;
     rasterize(&base).context("转换缩略图")
 }
 
@@ -153,6 +160,9 @@ pub fn export_gainmap(path: &Path, output: &Path) -> Result<bool> {
 ///
 /// `Size::Down` 只缩小不放大：比预览尺寸还小的原图保持原样，放大只会让预览更糊。
 /// `thumbnail` 会按 EXIF orientation 自动摆正，与 [`load_base_image`] 一致。
+/// 不能改为 `VipsImage::thumbnail_file`：后者使用单趟 `VIPS_ACCESS_SEQUENTIAL`（会触发
+/// 分层预览多次读取 PNG 时的 `out of order read`），且 shrink-on-load 会破坏 MPF
+/// Ultra HDR 图片的 `gainmap-data`。
 pub fn load_scaled(path: &Path, max_edge: i32) -> Result<VipsImage> {
     ensure_vips();
     anyhow::ensure!(
@@ -229,19 +239,19 @@ pub(crate) fn rasterize(img: &VipsImage) -> Result<RasterImage> {
     if width == 0 || height == 0 {
         bail!("尺寸非法：{width}x{height}");
     }
-    let mut pixels = image_write_to_memory(&img).context("生成预览像素失败")?;
-    match img.bands() {
-        4 => {}
+    let raw = img.write_to_memory_owned().context("生成预览像素失败")?;
+    let pixels = match img.bands() {
+        4 => raw.as_slice().to_vec(),
         3 => {
-            pixels = pixels
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .flat_map(|p| [p[0], p[1], p[2], 255])
-                .collect()
+            let src = raw.as_slice().as_chunks::<3>().0;
+            let mut rgba = Vec::with_capacity(src.len() * 4);
+            for &[r, g, b] in src {
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+            rgba
         }
         bands => bail!("不支持的通道数：{bands}"),
-    }
+    };
     Ok(RasterImage {
         width,
         height,

@@ -192,7 +192,7 @@ impl Photo {
             let [r, g, b] = params.background;
             let background = [r as f64, g as f64, b as f64];
             let mut flattened =
-                flatten_rgb(&watermark, background).context("flatten image failed")?;
+                flatten_rgb(watermark, background).context("flatten image failed")?;
 
             // libuhdr 只接受边长不超过 8192 的 Ultra HDR 图像。普通 JPEG 不走这条
             // 编码器，绝不能因为同一个上限被悄悄缩小；只有确实带 gain map 的输出才缩放。
@@ -214,8 +214,7 @@ impl Photo {
             }
             crate::media::jpeg::update_thumbnail(&mut flattened)?;
 
-            // 保留源图的 ICC（如 Display P3），让照片保持原色域。
-            // profile: None 表示不要用 libvips 默认的 sRGB profile 覆盖它。
+            // 保留源图的 ICC（如 Display P3）与 EXIF，让照片保持原色域和元数据。
             flattened
                 .write_jpeg(&output_path, Some(params.quality))
                 .context("save jpg failed")?;
@@ -310,7 +309,7 @@ impl layers::LayerRenderer for VipsLayerRenderer<'_> {
                 img
             });
         }
-        // 独立 GObject 引用，不能依赖 vips crate 的浅拷贝 Clone。
+        // 复制一个独立句柄供图层管线使用。
         Ok(self.rounded.as_ref().unwrap().copy()?)
     }
 

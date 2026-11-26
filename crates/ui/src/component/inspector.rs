@@ -1954,7 +1954,11 @@ mod tests {
         assert!(phases.len() >= 2);
         // 无辅助功能适配器的测试平台也能捕获根因：同帧开始登记焦点后，子树不得再切换焦点。
         assert!(
-            phases.chunks_exact(2).all(|frame| frame[0] == frame[1]),
+            phases
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| frame[0] == frame[1]),
             "展开内容在 prepaint 中更改了焦点，原生辅助功能会重复登记：{phases:?}"
         );
     }

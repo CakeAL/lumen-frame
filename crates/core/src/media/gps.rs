@@ -80,14 +80,14 @@ fn rational_triplet(value: LatLng) -> String {
         .join(" ")
 }
 
-fn set(image: &VipsImage, tag: &str, value: &str) -> Result<()> {
+fn set(image: &mut VipsImage, tag: &str, value: &str) -> Result<()> {
     let tag = CString::new(format!("exif-ifd3-{tag}"))?;
     let value = CString::new(value)?;
     unsafe { vips_sys::vips_image_set_string(image.as_ptr(), tag.as_ptr(), value.as_ptr()) };
     Ok(())
 }
 
-fn remove(image: &VipsImage, tag: &str) -> Result<()> {
+fn remove(image: &mut VipsImage, tag: &str) -> Result<()> {
     let tag = CString::new(format!("exif-ifd3-{tag}"))?;
     unsafe { vips_sys::vips_image_remove(image.as_ptr(), tag.as_ptr()) };
     Ok(())

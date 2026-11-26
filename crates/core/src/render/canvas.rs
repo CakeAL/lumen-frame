@@ -1,5 +1,5 @@
 use crate::media::vips::{
-    add_alpha, composite_over, constant_like, copy_with_layout, scale_shadow, shadow_blur,
+    add_alpha, composite_over, constant_like, scale_shadow, shadow_blur, with_interpretation,
 };
 use crate::media::{ensure_vips, vips::VipsImage};
 use vips::{Result, VipsBandFormat, VipsInterpretation};
@@ -100,13 +100,13 @@ pub fn new_canvas(
         background_img.gaussblur(params.blur_sigma)
     }?;
     let canvas = add_alpha(&canvas)?;
-    let canvas = rgba_srgb(&canvas, canvas_w, canvas_h)?;
+    let canvas = rgba_srgb(&canvas)?;
     let canvas = if params.background_grain
         && params.grain_strength.is_finite()
         && params.grain_strength > 0.0
     {
         let grain = super::grain::apply(&canvas, img_h, params.grain_strength)?;
-        rgba_srgb(&grain, canvas_w, canvas_h)?
+        rgba_srgb(&grain)?
     } else {
         canvas
     };
@@ -223,7 +223,7 @@ pub(crate) fn shadow_layer(
     let shadow_rgb = constant_like(&shadow_alpha, &params.shadow_color.map(f64::from))?;
     // RGB + Alpha → RGBA
     let shadow = shadow_rgb.bandjoin2(&shadow_alpha)?;
-    let shadow = rgba_srgb(&shadow, shadow_w, shadow_h)?;
+    let shadow = rgba_srgb(&shadow)?;
     Ok(Some((
         shadow,
         (img_w - mask_w) / 2 - margin_x,
@@ -231,15 +231,9 @@ pub(crate) fn shadow_layer(
     )))
 }
 
-fn rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {
+fn rgba_srgb(image: &VipsImage) -> Result<VipsImage> {
     let cast = image.cast(VipsBandFormat::VIPS_FORMAT_UCHAR)?;
-    copy_with_layout(
-        &cast,
-        width,
-        height,
-        4,
-        VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-    )
+    with_interpretation(&cast, VipsInterpretation::VIPS_INTERPRETATION_sRGB)
 }
 
 #[cfg(test)]

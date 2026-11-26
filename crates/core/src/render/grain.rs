@@ -19,7 +19,7 @@ pub(super) fn apply(background: &VipsImage, photo_height: i32, strength: f64) ->
         Some(height as f64 / noise_height as f64),
         Some(VipsKernel::VIPS_KERNEL_LINEAR),
     )?;
-    let rgb = extract_bands(&background, 0_i32, 3_i32)?;
+    let rgb = extract_bands(background, 0_i32, 3_i32)?;
     // libvips 将单通道噪声广播到 RGB，避免产生彩色斑点。
     let rgb = rgb.add(&noise)?;
     let alpha = background.extract_band(3_i32)?;

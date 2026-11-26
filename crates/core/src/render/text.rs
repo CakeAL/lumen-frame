@@ -1,4 +1,6 @@
-use crate::media::vips::{add_alpha, copy_with_layout, decode_image_buffer, load_logo_at_height};
+use crate::media::vips::{
+    add_alpha, decode_image_buffer, rerasterize_svg_at_height, with_interpretation,
+};
 use std::sync::{Arc, LazyLock};
 
 use nom_exif::ExifDateTime;
@@ -6,12 +8,14 @@ use regex::Regex;
 use vips::{Error as VipsError, Result, VipsAngle, VipsBandFormat, VipsInterpretation};
 
 use crate::{
-    media::{ExifInfo, Rational, image_write_to_memory, vips::VipsImage},
+    media::{ExifInfo, Rational, vips::VipsImage},
     watermark::{
         DEFAULT_TIME_FORMAT, Placement, Text, TextAlign, TextBorder, TextDirection, TextGroup,
         TextParams, TextSpan, TextStyle, WatermarkParams, rich_text::style_at,
     },
 };
+
+static TEMPLATE_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{([^{}]+)\}").unwrap());
 
 pub type SvgString = String;
 
@@ -34,25 +38,19 @@ impl TextGroupRegion {
         canvas_size: (i32, i32),
         rotation: crate::rotation::Rotation,
     ) -> anyhow::Result<Option<Self>> {
-        let bytes = image_write_to_memory(layer)?;
-        let width = layer.width() as usize;
-        let (mut left, mut top, mut right, mut bottom) =
-            (layer.width() as i32, layer.height() as i32, 0, 0);
-        for (ix, pixel) in bytes.as_chunks::<4>().0.iter().enumerate() {
-            if pixel[3] != 0 {
-                let (x, y) = ((ix % width) as i32, (ix / width) as i32);
-                left = left.min(x);
-                top = top.min(y);
-                right = right.max(x + 1);
-                bottom = bottom.max(y + 1);
-            }
-        }
+        crate::media::ensure_vips();
+        let bytes = layer.write_to_memory_owned()?;
+        let Some((left, top, right, bottom)) =
+            alpha_bounds(bytes.as_slice(), layer.width() as usize)
+        else {
+            return Ok(None);
+        };
         let region = Self {
             group_ix,
-            x: left,
-            y: top,
-            width: right - left,
-            height: bottom - top,
+            x: left as i32,
+            y: top as i32,
+            width: (right - left) as i32,
+            height: (bottom - top) as i32,
         };
         Ok(region.positioned(group_ix, origin, canvas_size, rotation))
     }
@@ -224,7 +222,7 @@ impl Text {
             4,
             VipsBandFormat::VIPS_FORMAT_UCHAR,
         )?;
-        let img = set_rgba_srgb(&img, width, total_h as i32)?;
+        let img = set_rgba_srgb(&img)?;
         Ok(Some(img))
     }
 }
@@ -417,9 +415,8 @@ fn styled_template_segments(
     custom_text: &str,
 ) -> Vec<Segment> {
     let mut chars = Vec::new();
-    let fields = Regex::new(r"\{([^{}]+)\}").unwrap();
     let mut last = 0;
-    for caps in fields.captures_iter(template) {
+    for caps in TEMPLATE_FIELD_RE.captures_iter(template) {
         let token = caps.get(0).unwrap();
         for (offset, ch) in template[last..token.start()].char_indices() {
             chars.push((ch, style_at(spans, base + last + offset)));
@@ -741,7 +738,7 @@ fn frame_line(line: PreparedLine, border: &TextBorder, img_h: i32) -> Result<Pre
         4,
         VipsBandFormat::VIPS_FORMAT_UCHAR,
     )?;
-    let image = set_rgba_srgb(&image, w as i32, h as i32)?;
+    let image = set_rgba_srgb(&image)?;
     let image = super::text_border::apply(image, border, img_h)?;
     Ok(PreparedLine {
         width: image.width() as i32,
@@ -840,7 +837,8 @@ fn draw_logo(
     if bands != 4 {
         return Err(VipsError::Vips("logo image must be RGBA".into()));
     }
-    let data = logo.write_to_memory()?;
+    let buffer = logo.write_to_memory_owned()?;
+    let data = buffer.as_slice();
     let dx0 = x;
     let dy0 = y + y_off;
 
@@ -926,7 +924,7 @@ fn to_rgba(img: VipsImage) -> Result<VipsImage> {
         }
     };
 
-    set_rgba_srgb(&rgba, rgba.width() as i32, rgba.height() as i32)
+    set_rgba_srgb(&rgba)
 }
 
 pub(crate) fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result<VipsImage> {
@@ -944,16 +942,28 @@ pub(crate) fn scale_logo(img: VipsImage, target_w: i32, target_h: i32) -> Result
 /// 避免裁掉透明边缘后又放大一张过小的位图；素材库里的原文件保持原样。
 fn load_custom_logo(bytes: &[u8], height: f64) -> Result<Option<VipsImage>> {
     let natural = to_rgba(crate::media::load_logo_image(bytes)?)?;
-    let pixels = natural.write_to_memory()?;
-    let Some((_, top, _, bottom)) = alpha_bounds(&pixels, natural.width() as usize) else {
+    let natural_bounds = {
+        let pixels = natural.write_to_memory_owned()?;
+        alpha_bounds(pixels.as_slice(), natural.width() as usize)
+    };
+    let Some((left, top, right, bottom)) = natural_bounds else {
         return Ok(None);
     };
     let raster_h = height * natural.height() as f64 / (bottom - top) as f64;
-    let raster = to_rgba(load_logo_at_height(bytes, natural, raster_h)?)?;
-    let pixels = raster.write_to_memory()?;
-    let Some((left, top, right, bottom)) = alpha_bounds(&pixels, raster.width() as usize) else {
-        return Ok(None);
-    };
+    let (raster, (left, top, right, bottom)) =
+        if let Some(svg) = rerasterize_svg_at_height(bytes, natural.height(), raster_h)? {
+            let raster = to_rgba(svg)?;
+            let bounds = {
+                let pixels = raster.write_to_memory_owned()?;
+                alpha_bounds(pixels.as_slice(), raster.width() as usize)
+            };
+            let Some(bounds) = bounds else {
+                return Ok(None);
+            };
+            (raster, bounds)
+        } else {
+            (natural, (left, top, right, bottom))
+        };
     let cropped = raster.crop(
         left as i32,
         top as i32,
@@ -978,14 +988,8 @@ pub(crate) fn alpha_bounds(pixels: &[u8], width: usize) -> Option<(usize, usize,
     (bottom != 0).then_some((left, top, right, bottom))
 }
 
-fn set_rgba_srgb(image: &VipsImage, width: i32, height: i32) -> Result<VipsImage> {
-    copy_with_layout(
-        &image,
-        width,
-        height,
-        4,
-        VipsInterpretation::VIPS_INTERPRETATION_sRGB,
-    )
+fn set_rgba_srgb(image: &VipsImage) -> Result<VipsImage> {
+    with_interpretation(image, VipsInterpretation::VIPS_INTERPRETATION_sRGB)
 }
 
 /// 根据给定的模板生成文字。
@@ -1002,11 +1006,10 @@ pub fn render_watermark_template(
     time_format: &str,
     custom_text: &str,
 ) -> String {
-    let re = Regex::new(r"\{([^{}]+)\}").unwrap();
     let mut out = String::new();
     let mut last = 0usize;
 
-    for caps in re.captures_iter(template) {
+    for caps in TEMPLATE_FIELD_RE.captures_iter(template) {
         let whole = caps.get(0).unwrap();
         if whole.start() > last {
             out.push_str(&template[last..whole.start()]);
@@ -1199,14 +1202,24 @@ fn dedupe_model_brand(model: &str, make: &str) -> String {
         return model.trim().to_string();
     }
     let model = model.trim();
-    let make_lower = make.to_lowercase();
-    if model.len() >= make_lower.len() && model[..make_lower.len()].to_lowercase() == make_lower {
-        let rest = &model[make_lower.len()..];
+    if let Some(rest) = strip_prefix_ignore_case(model, &make) {
         return rest
             .trim_start_matches(|c: char| c.is_whitespace() || c == '-' || c == '_')
             .to_string();
     }
     model.to_string()
+}
+
+/// 按字符逐个忽略大小写剥离前缀，避免按字节长度切片在多字节 UTF-8 字符中间 panic。
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut text_chars = text.char_indices();
+    for prefix_ch in prefix.chars() {
+        let (_, text_ch) = text_chars.next()?;
+        if !text_ch.to_lowercase().eq(prefix_ch.to_lowercase()) {
+            return None;
+        }
+    }
+    Some(text_chars.as_str())
 }
 
 fn format_fnumber(value: &Rational) -> String {
@@ -1346,6 +1359,16 @@ mod time_format_tests {
             render_exif_template("{拍摄日期}", &exif, "%Y-%m-%d"),
             fallback
         );
+    }
+
+    #[test]
+    fn dedupe_model_brand_handles_multibyte_utf8_without_panicking() {
+        // 品牌字节数落在中文型号的多字节字符内部时不得 panic。
+        assert_eq!(dedupe_model_brand("华为 P70", "HUAWEI"), "华为 P70");
+        assert_eq!(dedupe_model_brand("松典 DC201", "松典"), "DC201");
+        assert_eq!(dedupe_model_brand("大疆-Pocket 3", "大疆"), "Pocket 3");
+        assert_eq!(dedupe_model_brand("xiaomi_15", "Xiaomi"), "15");
+        assert_eq!(dedupe_model_brand("İPhone 16", "İ"), "Phone 16");
     }
 }
 
