@@ -4588,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-frame"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4609,7 +4609,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-frame-core"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4639,7 +4639,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-frame-mcp"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4654,7 +4654,7 @@ dependencies = [
 
 [[package]]
 name = "lumen-frame-ui"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "anyhow",
  "cartography",
