@@ -195,8 +195,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')" = "$GITHUB_SHA"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release.json"
-          jq -e '.draft == true' "$RUNNER_TEMP/release.json"
+          # The REST lookup by tag only returns published releases. Resolve the draft's ID first.
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/release.json"
+          jq -e --arg tag "$RELEASE_TAG" '.draft == true and .tag_name == $tag' "$RUNNER_TEMP/release.json"
           for suffix in macOS-arm64.dmg macOS-x86_64.dmg aarch64-apple-darwin.zip x86_64-apple-darwin.zip x86_64-pc-windows-msvc.zip; do
             jq -e --arg name "Lumen-Frame-$RELEASE_VERSION-$suffix" \
               'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' "$RUNNER_TEMP/release.json"
