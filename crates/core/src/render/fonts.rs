@@ -235,5 +235,5 @@ impl FontBackend {
 #[ctor::ctor(unsafe)]
 fn init_test_fonts() {
     // 测试线程不能创建 macOS 平台，须在测试运行器启动工作线程前取得字体接口。
-    init_font_backend(gpui_kit::platform::current_platform(true).text_system());
+    crate::initialize_native_text();
 }

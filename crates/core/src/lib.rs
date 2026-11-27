@@ -21,7 +21,10 @@ pub use crate::persistence::{logos, presets, settings};
 
 /// 无窗口宿主在主线程初始化原生字体服务；桌面宿主仍注入与窗口共用的字体系统。
 pub fn initialize_native_text() {
-    crate::render::init_font_backend(gpui_kit::platform::current_platform(true).text_system());
+    // GPUI 在 Windows 的 headless 模式下只提供空字体后端。创建本机平台以取得
+    // DirectWrite 字体服务，MCP 宿主仍无需打开应用窗口。
+    let platform = gpui_kit::platform::current_platform(!cfg!(target_os = "windows"));
+    crate::render::init_font_backend(platform.text_system());
 }
 
 pub mod features;

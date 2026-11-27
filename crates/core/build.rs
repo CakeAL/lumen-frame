@@ -8,6 +8,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=VIPS_DEV_ROOT");
     println!("cargo:rerun-if-env-changed=LIBVIPS_LIB_DIR");
 
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // libvips 的 pkg-config 元数据可能将 GLib 标为私有依赖，但 Rust 封装直接调用其符号。
+        println!("cargo:rustc-link-lib=dylib=glib-2.0");
+        println!("cargo:rustc-link-lib=dylib=gobject-2.0");
+        return;
+    }
+
     // 仅在 Windows x64 MSVC 目标上生效，与 `.cargo/config.toml` 的
     // `[target.x86_64-pc-windows-msvc.vips]` 覆盖配对使用。
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
